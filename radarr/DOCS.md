@@ -1,10 +1,10 @@
-## *Config*
+## **Config**
 
-### *Option:* `Port`
+### **Option:** `Port`
 
 Default is `7878`
 
-### *Option:* `Config_Folder`
+### **Option:** `Config_Folder`
 
 You can change the application data folder 
 
