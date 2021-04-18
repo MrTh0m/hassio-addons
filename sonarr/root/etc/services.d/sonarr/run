@@ -1,0 +1,8 @@
+#!/usr/bin/env bashio
+
+
+cd /app/sonarr/bin || exit
+
+exec \
+  s6-setuidgid abc mono --debug Sonarr.exe \
+  -nobrowser -data=$(bashio::config 'Config_Folder')

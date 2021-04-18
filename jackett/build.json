@@ -1,0 +1,6 @@
+{
+  "build_from": {
+    "armv7": "linuxserver/jackett:arm32v7-latest"
+  },
+  "args": {}
+}

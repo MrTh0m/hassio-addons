@@ -1,0 +1,29 @@
+{
+ "name": "Sonarr",
+ "version": "2",
+ "slug": "sonarr",
+ "webui": "http://[HOST]:[PORT:8989]",
+ "description": "Sonarr is a PVR for Usenet and BitTorrent users. It can monitor multiple RSS feeds for new episodes of your favorite shows and will grab, sort and rename them. It can also be configured to automatically upgrade the quality of files already downloaded when a better quality format becomes available.",
+ "arch": ["armv7"],
+ "startup": "services",
+ "boot": "auto",
+ "ports": {
+  "8989/tcp": 8989
+ },
+ "ports_description": {
+    "8989/tcp": "WebUI (Not Requered for ingress.)"
+},
+  "map": ["share:rw","config:rw"],
+  "options": {
+    "Config_Folder": "/config/docker/sonarr2"
+  },
+  "schema": {
+      "Config_Folder": "str"
+  },
+  "ingress": true,
+  "ingress_port": 8989,
+  "ingress_entry": "",
+  "panel_title": "Sonarr",
+  "host_network": false,
+  "panel_icon": "mdi:progress-download"
+}
