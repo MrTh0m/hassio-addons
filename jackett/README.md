@@ -16,7 +16,7 @@
 [armhf-badge]: https://img.shields.io/badge/armhf-no-red.svg?style=for-the-badge
 [armv7-badge]: https://img.shields.io/badge/armv7-yes-green.svg?style=for-the-badge
 [i386-badge]: https://img.shields.io/badge/i386-no-red.svg?style=for-the-badge
-[install-url]: https://my.home-assistant.io/redirect/supervisor_addon?addon=243ffc37_container-stats
+[install-url]: https://my.home-assistant.io/redirect/supervisor_addon?addon=f2da88f1_jackett
 [stage-badge]: https://img.shields.io/badge/Addon%20stage-experimental%20🧪-yellow.svg?style=for-the-badge
 
 [install-badge]: https://img.shields.io/badge/Install%20on%20my-Home%20Assistant-41BDF5?logo=home-assistant&style=for-the-badge
