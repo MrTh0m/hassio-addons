@@ -2,5 +2,7 @@
   "build_from": {
     "armv7": "linuxserver/jackett:arm32v7-latest"
   },
-  "args": {}
+  "args": {
+	  "BASHIO_VERSION": "0.13.0"
+	  }
 }
