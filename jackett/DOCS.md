@@ -2,5 +2,5 @@
 
 There is no config.
 
-Application data are store at `/config/docker/Jacket`
+Application data are stored at `/config/docker/Jackett`
 
