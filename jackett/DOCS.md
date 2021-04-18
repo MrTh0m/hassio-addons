@@ -1,4 +1,4 @@
-## Config
+## **Config**
 
 There is no config.
 
