@@ -2,7 +2,7 @@
 
 ### `Port`
 
-Default is `8989`
+Default is `7878`
 
 ### `Config_Folder`
 
