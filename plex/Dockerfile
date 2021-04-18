@@ -47,9 +47,6 @@ COPY rootfs /
 
 # Copy data
 COPY data/run.sh /
-RUN echo "devtmpfs /dev_ devtmpfs rw,relatime,size=1965288k,nr_inodes=182901,mode=777 0 0" >> /etc/fstab
-RUN mkdir /nas
-RUN mount /dev/sdb1 /nas
 #CMD [ "/run.sh" ]
 
 
