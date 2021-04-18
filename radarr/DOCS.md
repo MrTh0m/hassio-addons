@@ -1,14 +1,14 @@
 ## Config
 
-### Port
+### `Port`
 
-### Export Data
+Default is `8989`
 
 ### `Config_Folder`
 
 You can change the application data folder 
 
-Addon default is `/config/docker/radarr`
+Addon default path is `/config/docker/radarr`
 
-To store in HomeAssistant default folder for addons use : `/data/`
+To store in HomeAssistant default addons path, use : `/data/`
 
