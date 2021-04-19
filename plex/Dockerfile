@@ -48,7 +48,7 @@ COPY rootfs /
 
 # Copy data
 COPY data/run.sh /
-CMD [ "/run.sh" ]
+#CMD [ "/run.sh" ]
 
 
 # Build arguments
