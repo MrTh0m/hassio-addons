@@ -3,7 +3,7 @@
 # Home Assistant Community Add-on: Plex Media Server
 # Initializes all kinds of stuff on the first run of the Plex Media Server
 # ==============================================================================
-readonly prefs="/data/Plex Media Server/Preferences.xml"
+readonly prefs="/$(bashio::config 'Config_Folder')/Preferences.xml"
 
 function getPref {
     local key="$1"
