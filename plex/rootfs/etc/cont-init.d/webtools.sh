@@ -3,14 +3,16 @@
 # Home Assistant Community Add-on: Plex Media Server
 # Enables the WebTools plugin if the user requested that
 # ==============================================================================
+Config_Folder=$(bashio::config 'Config_Folder')
+
 if bashio::config.true 'webtools' && ! bashio::fs.directory_exists \
-        "$(bashio::config 'Config_Folder')/Plug-ins/WebTools.bundle"; then
+        "$(Config_Folder)/Plug-ins/WebTools.bundle"; then
     bashio::log.info 'Enabling WebTools plugin...'
-    mkdir -p "/data/Plex Media Server/Plug-ins/"
+    mkdir -p "$(Config_Folder)/Plex Media Server/Plug-ins/"
     ln -s "/opt/WebTools.bundle" "/data/Plex Media Server/Plug-ins/"
 fi
 
 if bashio::config.false 'webtools' && bashio::fs.directory_exists \
-        "$(bashio::config 'Config_Folder')/Plug-ins/WebTools.bundle"; then
-    rm -f "$(bashio::config 'Config_Folder')/Plug-ins/WebTools.bundle"
+        "$(Config_Folder)/Plug-ins/WebTools.bundle"; then
+    rm -f "$(Config_Folder)/Plug-ins/WebTools.bundle"
 fi
