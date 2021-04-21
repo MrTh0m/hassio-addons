@@ -40,13 +40,13 @@
   "homeassistant_api": false,
   "host_network": true,
   "options": {
-    "Config_Folder": "/config/docker/Plex",
+    "Config_Folder": "/config/docker/Plex2",
     "claim_code": "",
     "webtools": false,
 	"moredisks": ["<PARTITION LABEL>"]
   },
   "schema": {
-    "Config_Folder": "list(/Data|/config/docker/Plex)?",
+    "Config_Folder": "list(/Data|/config/docker/Plex2)?",
     "log_level": "list(trace|debug|info|notice|warning|error|fatal)?",
     "claim_code": "str",
     "webtools": "bool",
