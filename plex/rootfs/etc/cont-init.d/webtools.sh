@@ -4,6 +4,7 @@
 # Enables the WebTools plugin if the user requested that
 # ==============================================================================
 
+bashio::log.info 'WebTools...'
 
 if bashio::config.true 'webtools' && ! bashio::fs.directory_exists \
         "$(bashio::config 'Config_Folder')/Plug-ins/WebTools.bundle"; then
