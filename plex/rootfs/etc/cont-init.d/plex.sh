@@ -5,7 +5,7 @@
 # ==============================================================================
 bashio::log.info 'Plex.sh running get prefs...'
 
-readonly prefs="/$(bashio::config 'Config_Folder')/Preferences.xml"
+readonly prefs="/$(bashio::config 'Config_Folder')/Plex Media Server/Preferences.xml"
 
 function getPref {
     local key="$1"
