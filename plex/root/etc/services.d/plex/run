@@ -1,4 +1,4 @@
-#!/usr/bin/with-contenv bash
+#!/usr/bin/with-contenv bashio
 
 
 if [ -n "${UMASK_SET}" ] && [ -z "${UMASK}" ]; then
@@ -6,9 +6,15 @@ if [ -n "${UMASK_SET}" ] && [ -z "${UMASK}" ]; then
   umask ${UMASK_SET}
 fi
 
-echo "Starting Plex Media Server."
-export PLEX_MEDIA_SERVER_INFO_MODEL=$(uname -m)
-export PLEX_MEDIA_SERVER_INFO_PLATFORM_VERSION=$(uname -r)
-exec \
-	s6-setuidgid abc \
-	/usr/lib/plexmediaserver/Plex\ Media\ Server
+bashio::log.info 'Starting the Plex Media Server...'
+
+
+export LD_LIBRARY_PATH=/usr/lib/plexmediaserver
+export PLEX_MEDIA_SERVER_HOME=/usr/lib/plexmediaserver
+export PLEX_MEDIA_SERVER_MAX_PLUGIN_PROCS=6
+export PLEX_MEDIA_SERVER_INFO_DEVICE="Hass.io"
+bashio::log.info "configuration files... $(bashio::config 'Config_Folder')"
+export PLEX_MEDIA_SERVER_APPLICATION_SUPPORT_DIR=$(bashio::config 'Config_Folder')
+
+# Run the Plex Media Server
+exec /usr/lib/plexmediaserver/Plex\ Media\ Server
