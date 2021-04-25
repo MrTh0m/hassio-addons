@@ -1,10 +1,51 @@
-ARG BUILD_FROM
-FROM ${BUILD_FROM}
+# Setup base system
+ARG BUILD_ARCH
+#=amd64
+RUN \
+    apt-get update \
+    \
+    && apt-get install -y --no-install-recommends \
+        xmlstarlet=1.6.1-2 \
+        uuid-runtime=2.31.1-0.4ubuntu3.7 \
+        unrar=1:5.5.8-1 \
+        unzip=6.0-21ubuntu1 \
+    \
+    && if [ "${BUILD_ARCH}" = "aarch64" ]; then ARCH="aarch64"; fi \
+    && if [ "${BUILD_ARCH}" = "amd64" ]; then ARCH="x86_64"; fi \
+    && if [ "${BUILD_ARCH}" = "armv7" ]; then ARCH="armv7hf"; fi \
+    && if [ "${BUILD_ARCH}" = "i386" ]; then ARCH="x86"; fi \
+    \
+    && curl -J -L -o /tmp/plexmediaserver.tgz \
+        "https://downloads.plex.tv/plex-media-server-new/1.21.3.4046-3c1c83ba4/synology/PlexMediaServer-1.21.3.4046-3c1c83ba4-${ARCH}.spk" \
+    \
+    && mkdir /usr/lib/plexmediaserver \
+    && tar -xOf /tmp/plexmediaserver.tgz package.tgz | tar -xzf - -C /usr/lib/plexmediaserver/ \
+    \
+    && curl -J -L -o /tmp/webtool.zip \
+        "https://github.com/ukdtom/WebTools.bundle/releases/download/3.0.0/WebTools.bundle.zip" \
+    && unzip -d /opt  /tmp/webtool.zip \
+    && apt-get -y upgrade cifs-utils \
+    \
+    && apt-get -y remove --purge unzip \
+    && apt-get -y autoremove \
+    && apt-get -y clean \
+    \
+    && rm -fr \
+        /tmp/* \
+        /var/{cache,log}/* \
+        /var/lib/apt/lists/*
+# Copy root filesystem
+COPY rootfs /
+
+# Copy data
+COPY data/run.sh /
+#CMD [ "/run.sh" ]
 
 
-
-COPY root/ /
-
+# Build arguments
+ARG BUILD_DATE
+ARG BUILD_REF
+ARG BUILD_VERSION
 # Labels
 LABEL \
     io.hass.name="Plex Media Server" \
@@ -19,6 +60,3 @@ LABEL \
     org.label-schema.schema-version="1.0" \
     org.label-schema.url="https://github.com/MrTh0m/addon-plex/" \
     org.label-schema.usage="https://github.com/MrTh0m/addon-plex/blob/master/README.md" \
-    org.label-schema.vcs-ref=${BUILD_REF} \
-    org.label-schema.vcs-url="https://github.com/hassio-addons/addon-plex" \
-    org.label-schema.vendor="Home Assistant Community Add-ons"
