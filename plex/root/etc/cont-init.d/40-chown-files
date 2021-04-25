@@ -1,0 +1,25 @@
+#!/usr/bin/with-contenv bashio
+
+# create folders
+if [ ! -d "$(bashio::config 'Config_Folder')" ]; then \
+mkdir -p "$(bashio::config 'Config_Folder')"
+chown -R abc:abc /config
+fi
+
+# check Library permissions
+PUID=${PUID:-911}
+if [ ! "$(stat -c %u /config/Library)" = "$PUID" ]; then
+	echo "Change in ownership detected, please be patient while we chown existing files"
+	echo "This could take some time"
+	chown abc:abc -R \
+	/config/Library
+fi
+
+# remove plex pid after unclean stop
+[[ -f "$(bashio::config 'Config_Folder')/Plex Media Server/plexmediaserver.pid" ]] && \
+  rm -f "$(bashio::config 'Config_Folder')/Plex Media Server/plexmediaserver.pid"
+
+# permissions (non-recursive) on config root and folders
+chown abc:abc \
+	/config \
+	/config/*
