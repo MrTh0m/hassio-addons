@@ -40,7 +40,7 @@
   "homeassistant_api": false,
   "host_network": true,
   "options": {
-    "Config_Folder": "/config/docker/Plex2",
+    "Config_Folder": "/config/docker/Plex",
     "claim_code": "",
     "webtools": false,
 	"moredisks": ["<PARTITION LABEL>"]
