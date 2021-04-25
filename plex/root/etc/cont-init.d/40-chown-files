@@ -1,8 +1,8 @@
-#!/usr/bin/with-contenv bash
+#!/usr/bin/with-contenv bashio
 
 # create folders
-if [ ! -d "${PLEX_MEDIA_SERVER_APPLICATION_SUPPORT_DIR}" ]; then \
-mkdir -p "${PLEX_MEDIA_SERVER_APPLICATION_SUPPORT_DIR}"
+if [ ! -d "$(bashio::config 'Config_Folder')" ]; then \
+mkdir -p "$(bashio::config 'Config_Folder')"
 chown -R abc:abc /config
 fi
 
@@ -16,8 +16,8 @@ if [ ! "$(stat -c %u /config/Library)" = "$PUID" ]; then
 fi
 
 # remove plex pid after unclean stop
-[[ -f "/config/Library/Application Support/Plex Media Server/plexmediaserver.pid" ]] && \
-  rm -f "/config/Library/Application Support/Plex Media Server/plexmediaserver.pid"
+[[ -f "$(bashio::config 'Config_Folder')/Plex Media Server/plexmediaserver.pid" ]] && \
+  rm -f "$(bashio::config 'Config_Folder')/Plex Media Server/plexmediaserver.pid"
 
 # permissions (non-recursive) on config root and folders
 chown abc:abc \
