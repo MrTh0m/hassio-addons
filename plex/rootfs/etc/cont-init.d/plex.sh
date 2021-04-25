@@ -97,4 +97,6 @@ EOF
 
     mkdir -p "/share/transcode"
     setPref "TranscoderTempDirectory" "/share/transcode"
+else
+	bashio::log.info "Plex.sh Prefs found in $(bashio::config 'Config_Folder')"
 fi
