@@ -1,24 +1,27 @@
-#!/usr/bin/with-contenv bash
+#!/usr/bin/with-contenv bashio
 
-if grep -qs "PlexOnlineToken" "/config/Library/Application Support/Plex Media Server/Preferences.xml" || [ -z "$PLEX_CLAIM" ]; then
+if grep -qs "PlexOnlineToken" "$(bashio::config 'Config_Folder')/Plex Media Server/Preferences.xml" || [ -z "$PLEX_CLAIM" ]; then
 	exit 0
 fi
-PREFNAME="/config/Library/Application Support/Plex Media Server/Preferences.xml"
+PREFNAME="$(bashio::config 'Config_Folder')/Plex Media Server/Preferences.xml"
 if [ ! -f "${PREFNAME}" ]; then
 	UMASK_SET="${UMASK_SET:-022}"
 	umask "$UMASK_SET"
 	echo "Temporarily starting Plex Media Server."
+	bashio::log.info 'Temporarily starting Plex Media Server.'
 	export PLEX_MEDIA_SERVER_INFO_MODEL=$(uname -m)
 	export PLEX_MEDIA_SERVER_INFO_PLATFORM_VERSION=$(uname -r)
 	s6-setuidgid abc /bin/bash -c \
 		'LD_LIBRARY_PATH=/usr/lib/plexmediaserver:/usr/lib/plexmediaserver/lib /usr/lib/plexmediaserver/Plex\ Media\ Server' & PID=$!
 	echo "Waiting for Plex to generate its config"
-	DBNAME="/config/Library/Application Support/Plex Media Server/Plug-in Support/Databases/com.plexapp.plugins.library.db-wal"
+	bashio::log.info 'Waiting for Plex to generate its config'
+	DBNAME="$(bashio::config 'Config_Folder')/Plex Media Server/Plug-in Support/Databases/com.plexapp.plugins.library.db-wal"
 	until [ -f "${DBNAME}" ]; do
 		sleep 1
 	done
 	while true; do
 		echo "Waiting for database creation to complete..."
+		bashio::log.info 'Waiting for database creation to complete...'
 		if [ -z "${COMPARE_MD5+x}" ]; then
 			COMPARE_MD5=$(md5sum "${DBNAME}"| cut -c1-8)
 			sleep 3
@@ -37,6 +40,7 @@ if [ ! -f "${PREFNAME}" ]; then
 	done
 	while true; do
 		echo "Waiting for pref file creation to complete..."
+		bashio::log.info 'Waiting for pref file creation to complete...'
 		if [ -z "${PREF_COMPARE_MD5+x}" ]; then
 			PREF_COMPARE_MD5=$(md5sum "${PREFNAME}"| cut -c1-8)
 			sleep 3
@@ -51,14 +55,18 @@ if [ ! -f "${PREFNAME}" ]; then
 		fi
 	done
 	echo "Stopping Plex to claim server"
+	bashio::log.info 'Stopping Plex to claim server'
 	while ps -p $PID > /dev/null; do
 		kill $PID
 		sleep 1
 	done
 	echo "Plex stopped"
 fi
-
-ProcessedMachineIdentifier=$(sed -n "s/^.*ProcessedMachineIdentifier=\"\([^\"]*\)\".*$/\1/p" "${PREFNAME}")
+bashio::log.debug "Generating unique serial & client id's..."
+serial=$(uuidgen)
+ProcessedMachineIdentifier=$(sha1sum <<< "${serial} - Hass.io Plex add-on" | cut -b 1-40)
+#ProcessedMachineIdentifier=$(sed -n "s/^.*ProcessedMachineIdentifier=\"\([^\"]*\)\".*$/\1/p" "${PREFNAME}")
+PLEX_CLAIM=$(bashio::config 'claim_code')
 PlexOnlineToken="$(curl -X POST \
 	-H 'X-Plex-Client-Identifier: '"${ProcessedMachineIdentifier}" \
 	-H 'X-Plex-Product: Plex Media Server'\
@@ -66,7 +74,7 @@ PlexOnlineToken="$(curl -X POST \
 	-H 'X-Plex-Provides: server' \
 	-H 'X-Plex-Platform: Linux' \
 	-H 'X-Plex-Platform-Version: 1.0' \
-	-H 'X-Plex-Device-Name: PlexMediaServer' \
+	-H 'X-Plex-Device-Name: Hass.io' \
 	-H 'X-Plex-Device: Linux' \
 	"https://plex.tv/api/claim/exchange?token=${PLEX_CLAIM}" \
 	| sed -n 's/.*<authentication-token>\(.*\)<\/authentication-token>.*/\1/p')"
