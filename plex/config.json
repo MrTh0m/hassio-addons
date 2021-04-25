@@ -6,7 +6,7 @@
   "url": "https://github.com/MrTh0m/addon-plex",
   "webui": "http://[HOST]:[PORT:32400]/web",
   "startup": "services",
-  "arch": ["armv7"],
+   "arch": ["aarch64", "amd64", "armv7", "i386"],
   "map": ["config:rw", "share:rw", "ssl"],
   "boot": "auto",
   "ports": {
