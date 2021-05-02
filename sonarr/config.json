@@ -11,7 +11,7 @@
   "8989/tcp": 8989
  },
  "ports_description": {
-    "8989/tcp": "WebUI (Not Requered for ingress.)"
+    "8989/tcp": "WebUI"
 },
   "map": ["share:rw","config:rw"],
   "options": {
