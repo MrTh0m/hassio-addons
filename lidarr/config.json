@@ -10,19 +10,14 @@
   "8686/tcp": 8686
  },
  "ports_description": {
-    "8686/tcp": "WebUI (Not Requered for ingress.)"
+    "8686/tcp": "WebUI"
 },
   "map": ["share:rw","config:rw"],
   "options": {
-    "Config_Folder": "/config/docker/lidarr"
+    "Config_Folder (HA Addon's default : /data)": "/config/docker/lidarr"
   },
   "schema": {
       "Config_Folder": "str"
   },
-  "ingress": true,
-  "ingress_port": 8686,
-  "ingress_entry": "",
-  "panel_title": "Lidarr",
-  "host_network": false,
-  "panel_icon": "mdi:progress-download"
+  "host_network": false
 }
