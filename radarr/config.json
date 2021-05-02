@@ -18,12 +18,7 @@
     "Config_Folder": "/config/docker/radarr"
   },
   "schema": {
-      "Config_Folder": "str"
+      "Config_Folder": "list(/data|/config/docker/radarr)"
   },
-  "ingress": true,
-  "ingress_port": 7878,
-  "ingress_entry": "",
-  "panel_title": "Radarr",
-  "host_network": false,
-  "panel_icon": "mdi:progress-download"
+  "host_network": false
 }
