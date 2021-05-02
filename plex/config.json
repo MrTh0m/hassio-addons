@@ -46,7 +46,7 @@
 	"moredisks": ["<PARTITION LABEL>"]
   },
   "schema": {
-    "Config_Folder": "list(/Data|/config/docker/Plex)?",
+    "Config_Folder": "list(/data|/config/docker/Plex)?",
     "log_level": "list(trace|debug|info|notice|warning|error|fatal)?",
     "claim_code": "str",
     "webtools": "bool",
