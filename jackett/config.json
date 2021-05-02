@@ -14,13 +14,7 @@
   "9117/tcp": 9117
  },
  "ports_description": {
-    "9117/tcp": "WebUI (Not Requered for ingress.)"
+    "9117/tcp": "WebUI"
 },
- "ingress": true,
- "ingress_port": 9117,
- "ingress_entry": "app/Jackett/Content",
- "host_network": false,
- "panel_title": "Jackett",
- "panel_icon": "mdi:progress-download"
-  
+ "host_network": false
 }
