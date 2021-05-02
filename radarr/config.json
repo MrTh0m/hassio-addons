@@ -11,7 +11,7 @@
   "7878/tcp": 7878
  },
  "ports_description": {
-    "7878/tcp": "WebUI (Not Requered for ingress.)"
+    "7878/tcp": "WebUI"
 },
   "map": ["share:rw","config:rw"],
   "options": {
