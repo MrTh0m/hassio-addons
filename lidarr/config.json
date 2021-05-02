@@ -14,10 +14,10 @@
 },
   "map": ["share:rw","config:rw"],
   "options": {
-    "Config_Folder (HA Addon's default : /data)": "/config/docker/lidarr"
+    "Config_Folder": "/config/docker/lidarr"
   },
   "schema": {
-      "Config_Folder": "str"
+      "Config_Folder": "list(/data|/config/docker/lidarr)"
   },
   "host_network": false
 }
