@@ -1,0 +1,17 @@
+{
+ "name": "FlareSolverr",
+ "version": "1",
+ "slug": "flaresolverr",
+  "webui": "http://[HOST]:[PORT:8191]",
+ "description": "FlareSolverr is a proxy server to bypass Cloudflare protection",
+ "arch": ["armv7"],
+ "startup": "services",
+ "boot": "auto",
+ "ports": {
+  "8191/tcp": 8191
+ },
+ "ports_description": {
+    "8191/tcp": "WebUI"
+},
+  "host_network": false
+}
