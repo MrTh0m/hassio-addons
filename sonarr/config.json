@@ -15,15 +15,10 @@
 },
   "map": ["share:rw","config:rw"],
   "options": {
-    "Config_Folder": "/config/docker/sonarr2"
+    "Config_Folder": "/config/docker/sonarr"
   },
   "schema": {
-      "Config_Folder": "str"
+      "Config_Folder": "list(/data|/config/docker/sonarr)"
   },
-  "ingress": true,
-  "ingress_port": 8989,
-  "ingress_entry": "",
-  "panel_title": "Sonarr",
-  "host_network": false,
-  "panel_icon": "mdi:progress-download"
+  "host_network": false
 }
