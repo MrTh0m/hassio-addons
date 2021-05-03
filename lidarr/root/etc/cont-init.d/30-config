@@ -1,6 +1,11 @@
 #!/usr/bin/with-contenv bash
 
 # permissions
+chmod -R 755 \
+    /app/lidarr/bin \
+    /config \
+	/share
+
 chown -R abc:abc \
     /app/lidarr/bin \
     /config \
