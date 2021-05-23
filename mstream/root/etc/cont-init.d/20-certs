@@ -1,0 +1,12 @@
+#!/usr/bin/env bashio
+
+# make our folders
+[[ ! -d /$(bashio::config 'Config_Folder')/keys ]] && \
+mkdir -p \
+    /$(bashio::config 'Config_Folder')/keys
+
+# create keys
+[[ ! -e /$(bashio::config 'Config_Folder')/keys/certificate.pem ]] && \
+    openssl req -x509 -nodes -days 3650 \
+    -newkey rsa:2048 -keyout /$(bashio::config 'Config_Folder')/keys/private-key.pem  -out /$(bashio::config 'Config_Folder')/keys/certificate.pem \
+    -subj "/CN=mstream"

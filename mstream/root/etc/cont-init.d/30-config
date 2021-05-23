@@ -1,0 +1,14 @@
+#!/usr/bin/env bashio
+
+# make folders
+mkdir -p \
+    /$(bashio::config 'Config_Folder')/{album-art,db}
+
+# copy config.json if doesn't exist
+[[ ! -e /$(bashio::config 'Config_Folder')/config.json ]] && \
+    cp /defaults/config.json /$(bashio::config 'Config_Folder')/config.json
+
+# permissions
+chown abc:abc -R \
+    /$(bashio::config 'Config_Folder') 
+    

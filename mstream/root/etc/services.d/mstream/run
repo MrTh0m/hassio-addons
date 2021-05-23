@@ -1,0 +1,11 @@
+#!/usr/bin/env bashio
+
+cd /opt/mstream || exit
+
+if [ "$USE_JSON" == "true" ]; then
+    exec \
+        s6-setuidgid abc mstream -j /$(bashio::config 'Config_Folder')/config.json
+else
+    exec \
+        s6-setuidgid abc mstream -m /$(bashio::config 'Music_Folder') -I /$(bashio::config 'Config_Folder')/album-art/ -d /$(bashio::config 'Config_Folder')/db/ -u ${USER} -x ${PASSWORD}
+fi
