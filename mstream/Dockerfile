@@ -1,8 +1,6 @@
 ARG BUILD_FROM
 FROM ${BUILD_FROM}
 
-COPY root/ /
-
 ARG \
     BASHIO_VERSION
 
