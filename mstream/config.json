@@ -3,6 +3,7 @@
  "version": "1",
  "slug": "mstream",
  "webui": "http://[HOST]:[PORT:3000]",
+ "url": "https://hub.docker.com/r/linuxserver/mstream",
  "description": "mStream is a suite of open source software that lets you sync and stream your music between all your devices. Get started by using mStream Express to turn your computer into an mStream server. Think of mStream as your own private cloud.",
  "arch": ["armv7"],
  "startup": "services",
