@@ -1,5 +1,5 @@
 {
- "name": "mstream",
+ "name": "mStream",
  "version": "1",
  "slug": "mstream",
  "webui": "http://[HOST]:[PORT:3000]",
