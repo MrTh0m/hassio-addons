@@ -8,6 +8,9 @@ ARG \
 
 WORKDIR /usr/src
 
+# Set shell
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+
 RUN \
 	echo "**** Install BASHIO ****" && \
     apt-get update && \
