@@ -1,6 +1,6 @@
 {
   "build_from": {
-    "armv7": "ghcr.io/linuxserver/mstream:latest"
+    "armv7": "ghcr.io/linuxserver/mstream:arm32v7-latest"
   },
   "args": {
 	  "BASHIO_VERSION": "0.13.0"
