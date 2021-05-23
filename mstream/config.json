@@ -1,0 +1,25 @@
+{
+ "name": "mstream",
+ "version": "1",
+ "slug": "mstream",
+ "description": "mStream is a suite of open source software that lets you sync and stream your music between all your devices. Get started by using mStream Express to turn your computer into an mStream server. Think of mStream as your own private cloud.",
+ "arch": ["armv7"],
+ "startup": "services",
+ "boot": "auto",
+ "ports": {
+  "3000/tcp": 3000
+ },
+ "ports_description": {
+    "3000/tcp": "WebUI"
+},
+  "map": ["share:rw","config:rw"],
+  "options": {
+    "Config_Folder": "/config/docker/mstream"
+	"Music_Folder": "/config/docker/mstream"
+  },
+  "schema": {
+      "Config_Folder": "list(/data|/config/docker/mstream)"
+      "Music_Folder": "list(/mnt/data/supervisor/share/music|/mnt/data/supervisor/share/musique)"
+  },
+  "host_network": false
+}
