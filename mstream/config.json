@@ -16,11 +16,11 @@
   "map": ["share:rw","config:rw"],
   "options": {
     "Config_Folder": "/config/docker/mstream",
-	"Music_Folder": "/config/docker/mstream"
+	"Music_Folder": "/share/musique"
   },
   "schema": {
       "Config_Folder": "list(/data|/config/docker/mstream)",
-      "Music_Folder": "list(/mnt/data/supervisor/share/music|/mnt/data/supervisor/share/musique)"
+      "Music_Folder": "list(/music|/share/musique)"
   },
   "host_network": false
 }
