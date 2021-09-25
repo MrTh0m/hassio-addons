@@ -25,7 +25,6 @@ RUN \
     \
     && curl -J -L -o /tmp/plexmediaserver.tgz \
         "https://downloads.plex.tv/plex-media-server-new/1.24.3.5033-757abe6b4/synology/PlexMediaServer-1.24.3.5033-757abe6b4-${ARCH}.spk" \
-        #"https://downloads.plex.tv/plex-media-server-new/1.21.3.4046-3c1c83ba4/synology/PlexMediaServer-1.21.3.4046-3c1c83ba4-${ARCH}.spk" \
     \
     && mkdir /usr/lib/plexmediaserver \
     && tar -xOf /tmp/plexmediaserver.tgz package.tgz | tar -xzf - -C /usr/lib/plexmediaserver/ \
