@@ -72,6 +72,10 @@ RUN a2enconf bsa-allowoverride
 # ── Bootstrap runtime (fuseau horaire + provisionnement du mot de passe) ───
 COPY rootfs-run/bsa-bootstrap.php /usr/local/bin/bsa-bootstrap.php
 
+# ── Publication Discovery Supervisor (détection auto par l'intégration HACS) ─
+COPY rootfs-run/bsa-publish-discovery.sh /usr/local/bin/bsa-publish-discovery.sh
+RUN chmod a+x /usr/local/bin/bsa-publish-discovery.sh
+
 COPY run.sh /
 RUN chmod a+x /run.sh
 

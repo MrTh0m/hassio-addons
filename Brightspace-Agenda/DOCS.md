@@ -33,7 +33,12 @@ l'installation PWA, les liens de partage et l'intégration HACS.
   - liens de partage en lecture seule (`?share=TOKEN`) ;
   - flux ICS abonnables (`?action=export_ics&token=...`) ;
   - polling de l'**intégration HACS** `Brightspace_agenda_HACS`, à pointer
-    vers `http://<ip>:8099/api.php`.
+    vers `http://<ip>:8099/api.php` ;
+  - connexion depuis l'**APK Android** en mode connecté : renseigne
+    `http://<ip>:8099` comme URL de serveur, jamais une URL Ingress.
+    L'Ingress exige une session Home Assistant déjà authentifiée dans un
+    navigateur ; un appel HTTP direct depuis l'APK n'en a pas et sera rejeté,
+    quelle que soit l'URL utilisée.
 
 ## Premier démarrage
 
@@ -54,7 +59,9 @@ aux mises à jour et redémarrages du conteneur. Une sauvegarde Home Assistant
 classique (Paramètres -> Système -> Sauvegardes) inclut ce volume si l'addon
 y est inclus.
 
-Pour repartir de zéro (nouveau mot de passe, nouvelle installation) : `/data` est le volume persistant de l'addon, conçu pour survivre aux redémarrages et aux reconstructions d'image, c'est voulu. Je n'ai en revanche pas de certitude sur le fait qu'une désinstallation classique via le Supervisor vide bien ce volume dans toutes les versions de Home Assistant. Si après une désinstallation/réinstallation tu retrouves une ancienne valeur (ex. l'URL ICS déjà pré-remplie), passe par un addon type **Studio Code Server** ou **Samba** pour vérifier directement le contenu du dossier de données de l'addon sur l'hôte et le vider à la main si besoin, avant de réinstaller.
+Pour repartir de zéro (nouveau mot de passe, nouvelle installation) : `/data` est le volume persistant de l'addon, conçu pour survivre aux redémarrages et aux reconstructions d'image, c'est voulu. **Signalé (18/07/2026) : même en cochant "Supprimer également les données de l'application" lors de la désinstallation, les anciennes données (compte, URL ICS) réapparaissent à la réinstallation.** Deux causes possibles à distinguer avant de conclure :
+1. Cache navigateur (session/cookie encore valide) plutôt que `/data` réellement conservé : teste en navigation privée.
+2. `/data` effectivement pas vidé par le Supervisor pour cet addon : vérifie directement via un addon type **Studio Code Server** ou **Terminal & SSH** si `config.json`/`state.json` existent encore juste après une désinstallation avec suppression des données cochée.
 
 ## Particularités techniques : deux correctifs Ingress-only
 
