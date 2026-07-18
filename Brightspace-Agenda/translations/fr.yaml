@@ -2,14 +2,15 @@ configuration:
   timezone:
     name: Fuseau horaire
     description: >-
-      Fuseau horaire PHP/serveur utilise par l'app pour l'export ICS
+      Fuseau horaire PHP/serveur utilisé par l'app pour l'export ICS
       (ex. Europe/Paris).
   dashboard_password:
-    name: Mot de passe du tableau de bord (premier demarrage uniquement)
+    name: Mot de passe du tableau de bord (obligatoire)
     description: >-
-      Si renseigne et qu'aucune configuration n'existe encore, cree
-      automatiquement le compte "mode connecte" au premier demarrage.
-      Laisser vide pour configurer manuellement via /setup.php. Sans effet
-      une fois data/config.json deja cree.
+      Obligatoire : l'app fonctionne toujours en "mode connecté", qui
+      nécessite un compte. Utilisé uniquement au premier démarrage pour le
+      créer automatiquement. Sans effet une fois data/config.json déjà créé
+      (change le mot de passe depuis les Paramètres de l'app, ou via
+      /setup.php, à partir de là).
 network:
-  8099/tcp: Interface web (acces direct, installation PWA, liens de partage, polling HACS)
+  8099/tcp: Interface web (accès direct, installation PWA, liens de partage, polling HACS)
