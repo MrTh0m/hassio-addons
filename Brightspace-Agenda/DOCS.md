@@ -59,7 +59,7 @@ aux mises à jour et redémarrages du conteneur. Une sauvegarde Home Assistant
 classique (Paramètres -> Système -> Sauvegardes) inclut ce volume si l'addon
 y est inclus.
 
-Pour repartir de zéro (nouveau mot de passe, nouvelle installation) : `/data` est le volume persistant de l'addon, conçu pour survivre aux redémarrages et aux reconstructions d'image, c'est voulu. **Signalé (18/07/2026) : même en cochant "Supprimer également les données de l'application" lors de la désinstallation, les anciennes données (compte, URL ICS) réapparaissent à la réinstallation.** Deux causes possibles à distinguer avant de conclure :
+Pour repartir de zéro (nouveau mot de passe, nouvelle installation) : `/data` est le volume persistant de l'addon, conçu pour survivre aux redémarrages et aux reconstructions d'image, c'est voulu. **Problème connu : même en cochant "Supprimer également les données de l'application" lors de la désinstallation, les anciennes données (compte, URL ICS) peuvent réapparaître à la réinstallation.** Deux causes possibles à distinguer avant de conclure :
 1. Cache navigateur (session/cookie encore valide) plutôt que `/data` réellement conservé : teste en navigation privée.
 2. `/data` effectivement pas vidé par le Supervisor pour cet addon : vérifie directement via un addon type **Studio Code Server** ou **Terminal & SSH** si `config.json`/`state.json` existent encore juste après une désinstallation avec suppression des données cochée.
 

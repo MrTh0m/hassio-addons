@@ -33,10 +33,12 @@ ports_description:
 # qui nécessite toujours un compte. Pas de valeur par défaut ci-dessous
 # volontairement : le Supervisor bloque le démarrage tant qu'il n'est pas
 # renseigné, il ne peut donc pas y avoir de mode connecté sans mot de passe.
-# Accès à l'API Supervisor pour publier le service Discovery
-# (permet à l'intégration HACS de détecter l'addon automatiquement)
+# Accès à l'API Supervisor pour publier le service Discovery (permet à
+# l'intégration HACS de détecter l'addon automatiquement).
+# manager (pas default) : role requis par l'API Supervisor pour POST
+# /discovery, sous peine de 403. A verifier au premier build.
 hassio_api: true
-hassio_role: default
+hassio_role: manager
 
 options:
   timezone: "Europe/Paris"
