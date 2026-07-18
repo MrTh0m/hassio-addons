@@ -1,5 +1,19 @@
 # Changelog - addon Brightspace Agenda
 
+## 1.0.0 - 2026-07-18 (mise à jour 2)
+
+### En cours d'investigation : 503 systématique sur api.php sous Ingress
+- Confirmé par les logs Apache : `api.php` renvoie 503 (`code: NO_WRITE`) sur
+  tout appel, `is_writable(DATA_DIR)` échouant côté processus Apache/www-data
+  alors que `bsa-bootstrap.php` (exécuté en root au démarrage) écrit sans
+  problème dans le même dossier. `proxy.php` et les fichiers statiques ne
+  sont pas concernés (aucune dépendance à `DATA_DIR`).
+- Diagnostic temporaire ajouté dans `run.sh` (bloc marqué `DIAGNOSTIC
+  TEMPORAIRE`, à retirer une fois la cause confirmée) : compare les
+  permissions réelles de `/data`, simule un test d'écriture en `www-data`,
+  et recherche une éventuelle directive `open_basedir` côté SAPI Apache
+  (qui n'affecterait pas le CLI utilisé par le bootstrap).
+
 ## 1.0.0 - 2026-07-18 (mise à jour)
 
 ### Corrections sur la publication Discovery
