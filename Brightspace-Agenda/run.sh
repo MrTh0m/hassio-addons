@@ -18,5 +18,12 @@ chown -R www-data:www-data "$DATA_DIR"
 
 php -f /usr/local/bin/bsa-bootstrap.php
 
+# Publication du service Discovery Supervisor en arrière-plan.
+# Le script attend que config.json soit prêt avant de publier, donc
+# il n'y a pas de race condition avec le bootstrap ci-dessus.
+# L'exécution en arrière-plan (&) évite de bloquer le démarrage d'Apache
+# si le Supervisor est temporairement indisponible.
+sh /usr/local/bin/bsa-publish-discovery.sh &
+
 echo "[Brightspace Agenda] Démarrage Apache sur le port 8099 (Ingress + accès direct)"
 exec apache2-foreground
