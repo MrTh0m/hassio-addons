@@ -1,0 +1,15 @@
+configuration:
+  timezone:
+    name: Timezone
+    description: >-
+      PHP/server timezone used by the app for ICS export timestamps
+      (e.g. Europe/Paris).
+  dashboard_password:
+    name: Dashboard password (first boot only)
+    description: >-
+      If set and no configuration exists yet, automatically creates the
+      "connected mode" account on first start. Leave empty to configure
+      manually via /setup.php. Has no effect once data/config.json already
+      exists.
+network:
+  8099/tcp: Web UI (direct access, PWA install, share links, HACS polling)

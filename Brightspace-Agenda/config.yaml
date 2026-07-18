@@ -1,0 +1,37 @@
+name: "Brightspace Agenda"
+version: "1.0.0"
+slug: "brightspace_agenda"
+description: >-
+  Suivi des devoirs, live sessions et ateliers de groupe pour tout
+  etablissement utilisant Brightspace by D2L. Auto-heberge directement
+  depuis Home Assistant, panneau lateral inclus.
+url: "https://github.com/MrTh0m/Brightspace_agenda"
+arch:
+  - amd64
+  - aarch64
+  - armv7
+startup: application
+boot: auto
+
+# Panneau gauche (Ingress) : acces authentifie via la session Home Assistant
+ingress: true
+ingress_port: 8099
+panel_icon: mdi:calendar-clock
+panel_title: "Brightspace Agenda"
+
+# Acces direct sur le meme port : installation PWA, liens de partage (?share=TOKEN),
+# flux ICS abonnables (?action=export_ics) et polling de l'integration HACS,
+# qui ne passent pas par la session Home Assistant et ont donc besoin d'une URL stable.
+ports:
+  8099/tcp: 8099
+ports_description:
+  8099/tcp: "Acces direct (PWA, partage, export ICS, polling HACS)"
+
+# /data est fourni automatiquement par le Supervisor et persiste entre les mises a jour :
+# c'est ce dossier qui accueille data/config.json et data/state.json de l'app (voir DOCS.md).
+options:
+  timezone: "Europe/Paris"
+  dashboard_password: ""
+schema:
+  timezone: "str"
+  dashboard_password: "password"
