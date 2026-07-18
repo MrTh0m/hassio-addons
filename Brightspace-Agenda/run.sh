@@ -19,22 +19,24 @@ chown -R www-data:www-data "$DATA_DIR"
 php -f /usr/local/bin/bsa-bootstrap.php
 
 # ─────────────────────────────────────────────────────────────────────────
-# DIAGNOSTIC TEMPORAIRE (à retirer une fois le 503 sur api.php expliqué) :
-# is_writable(DATA_DIR) échoue côté Apache/www-data alors que le bootstrap
-# ci-dessus (root) écrit sans problème dans le même dossier. On compare
-# permissions reelles et test d'ecriture simule en www-data pour trancher
-# entre un problème d'ownership et une restriction open_basedir du SAPI
-# Apache (qui n'affecterait pas le CLI utilise par le bootstrap).
-echo "[Brightspace Agenda][DIAG] ls -la /data :"
-ls -la /data
-echo "[Brightspace Agenda][DIAG] ls -la -L /var/www/html/data (via symlink) :"
-ls -la -L /var/www/html/data 2>&1
-echo "[Brightspace Agenda][DIAG] test d'ecriture simule en www-data :"
-su -s /bin/sh www-data -c 'test -w /data && echo "[Brightspace Agenda][DIAG] /data : WRITABLE pour www-data" || echo "[Brightspace Agenda][DIAG] /data : NON WRITABLE pour www-data"'
-echo "[Brightspace Agenda][DIAG] open_basedir eventuel (CLI) :"
-php -i 2>/dev/null | grep -i open_basedir || echo "[Brightspace Agenda][DIAG] (aucune sortie php -i)"
-echo "[Brightspace Agenda][DIAG] open_basedir eventuel dans les fichiers ini Apache :"
-grep -ri open_basedir /usr/local/etc/php/php.ini /usr/local/etc/php/conf.d/*.ini 2>/dev/null || echo "[Brightspace Agenda][DIAG] aucune directive open_basedir trouvee dans les .ini"
+# DIAGNOSTIC TEMPORAIRE v2 (à retirer une fois le 503 sur api.php expliqué) :
+# Le v1 testait /data (la cible reelle) et disait WRITABLE, mais le code PHP
+# teste DATA_DIR = __DIR__.'/data' = /var/www/html/data (le lien symbolique
+# lui-meme), pas /data directement. Ce v2 teste le bon chemin, avec is_writable()
+# et is_dir() de PHP directement (memes fonctions qu'api.php, executees en
+# www-data), et ajoute un contrôle AppArmor : un chemin accédé via un lien
+# symbolique peut être mediatise differemment d'un acces direct par un
+# profil de confinement, meme quand les permissions Unix classiques sont ok.
+echo "[Brightspace Agenda][DIAG] test -w/-d sur /var/www/html/data (chemin reellement teste par PHP) :"
+su -s /bin/sh www-data -c 'test -d /var/www/html/data && echo "[Brightspace Agenda][DIAG] is_dir shell : OK" || echo "[Brightspace Agenda][DIAG] is_dir shell : ECHEC"'
+su -s /bin/sh www-data -c 'test -w /var/www/html/data && echo "[Brightspace Agenda][DIAG] is_writable shell : OK" || echo "[Brightspace Agenda][DIAG] is_writable shell : ECHEC"'
+echo "[Brightspace Agenda][DIAG] memes tests via les fonctions PHP exactes (is_dir/is_writable), en www-data :"
+su -s /bin/sh www-data -c "php -r 'var_dump(is_dir(\"/var/www/html/data\")); var_dump(is_writable(\"/var/www/html/data\"));'"
+echo "[Brightspace Agenda][DIAG] stat -L /var/www/html/data (cible reelle apres resolution du lien) :"
+stat -L /var/www/html/data 2>&1
+echo "[Brightspace Agenda][DIAG] confinement AppArmor de ce process :"
+cat /proc/self/attr/current 2>&1 || echo "[Brightspace Agenda][DIAG] pas d'info AppArmor accessible"
+dmesg 2>/dev/null | grep -i apparmor | tail -5 || echo "[Brightspace Agenda][DIAG] dmesg indisponible ou aucune ligne apparmor"
 # ─────────────────────────────────────────────────────────────────────────
 
 # Publication du service Discovery Supervisor en arrière-plan.

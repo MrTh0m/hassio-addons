@@ -1,5 +1,23 @@
 # Changelog - addon Brightspace Agenda
 
+## 1.0.0 - 2026-07-18 (mise à jour 3)
+
+### Diagnostic 503 corrigé (v1 testait le mauvais chemin)
+- Le premier diagnostic testait `/data` (la cible réelle du lien symbolique)
+  et concluait à tort que www-data pouvait écrire. Le log confirme pourtant
+  que le 503 persiste (`code: NO_WRITE`) sur `api.php?action=ping`, seul
+  point de sortie 503 possible pour cette action (l'autre, `NOT_CONFIGURED`,
+  exclut explicitement `ping`).
+- En cause : le code PHP teste `DATA_DIR = __DIR__.'/data'`, donc
+  `/var/www/html/data` (le **lien symbolique lui-même**), pas `/data`
+  directement. Un chemin accédé via un lien symbolique peut être médiatisé
+  différemment par un profil de confinement même quand les permissions
+  Unix classiques sont correctes de bout en bout.
+- Diagnostic v2 dans `run.sh` : teste le bon chemin (`/var/www/html/data`)
+  avec `is_dir()`/`is_writable()` de PHP directement (mêmes fonctions
+  qu'`api.php`, exécutées en `www-data`), ajoute `stat -L` sur le chemin
+  résolu et un contrôle AppArmor (`/proc/self/attr/current`, `dmesg`).
+
 ## 1.0.0 - 2026-07-18 (mise à jour 2)
 
 ### En cours d'investigation : 503 systématique sur api.php sous Ingress
