@@ -1,8 +1,11 @@
 # Changelog - addon Brightspace Agenda
 
-## 1.0.0 - 2026-07-18
+## 1.0.0 - 2026-07-18 (mise à jour)
 
-Première version de l'addon.
+### Corrections sur la publication Discovery
+- **`curl` (binaire CLI) installé**, absent de l'image jusqu'ici : seuls `libcurl4-openssl-dev` (en-têtes de dev) et l'extension PHP curl étaient installés, aucun des deux ne fournit `/usr/bin/curl`. `bsa-publish-discovery.sh` échouait donc silencieusement à chaque démarrage (erreur "command not found" avalue par son propre `|| echo "{}"`).
+- **`hassio_role` remonté à `manager`** (était `default`) : role requis par l'API Supervisor pour publier un service Discovery (`POST /discovery`), sous peine de 403.
+- **Interpolation JSON→PHP fragile corrigée** dans `bsa-publish-discovery.sh` : les réponses de l'API Supervisor étaient collées directement dans une chaîne PHP via le shell (escaping incomplet, incohérent entre les deux usages). Remplacé par des fichiers temporaires lus via `file_get_contents()`, qui élimine le problème par construction plutôt que de rafistiner l'escaping.
 
 ### Correctifs (suite au retour de test après installation)
 - **Bug Ingress critique corrigé : import ICS et appels API cassés sous le
@@ -20,7 +23,7 @@ Première version de l'addon.
   (`icon-192.png`/`icon-512.png`), au lieu d'un glyphe générique généré.
 - **Badges d'architecture ajoutés** dans `README.md` (style shields.io).
 - **Branche source corrigée : `main` au lieu de `dev`**. `dev` est la branche
-  de travail active de Thomas (potentiellement instable à tout moment) : un
+  de travail active (potentiellement instable à tout moment) : un
   addon public ne doit jamais builder dessus. Vérifié via `origin/HEAD` du
   dépôt local (`E:\GIT\Brightspace_agenda`) que `main` est bien la branche
   par défaut/stable sur GitHub. `ARG BSA_REF` passe de `dev` à `main`.

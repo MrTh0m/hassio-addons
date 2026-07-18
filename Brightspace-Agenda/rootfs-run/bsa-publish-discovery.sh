@@ -7,14 +7,26 @@
 #
 # Appelé depuis run.sh en arrière-plan, après le bootstrap PHP.
 # Attend que config.json soit disponible avant de publier.
+#
+# Les réponses JSON de l'API Supervisor sont toujours écrites dans des
+# fichiers temporaires, jamais interpolées directement dans une chaîne PHP
+# via le shell : un JSON contenant un guillemet simple ou un backslash
+# casserait une interpolation naïve, même sans intention malveillante
+# (le contenu vient de l'API Supervisor, pas d'un attaquant, mais autant
+# rester robuste).
 
 set -e
 
 CONFIG_FILE="/data/config.json"
 SUPERVISOR_URL="http://supervisor"
 MAX_WAIT=30   # secondes max pour attendre config.json
+TMP_INFO="/tmp/bsa-discovery-info.json"
+TMP_RESULT="/tmp/bsa-discovery-result.json"
 
 log() { echo "[Brightspace Agenda][Discovery] $1"; }
+
+cleanup() { rm -f "$TMP_INFO" "$TMP_RESULT"; }
+trap cleanup EXIT
 
 # ── Attente de config.json ─────────────────────────────────────────────────
 i=0
@@ -41,13 +53,16 @@ fi
 # ── Lecture du port mappé via l'API Supervisor ─────────────────────────────
 # On interroge /addons/self/info pour obtenir le port réellement mappé par
 # l'utilisateur (qui peut différer du port par défaut 8099).
-ADDON_INFO=$(curl -sf \
+if ! curl -sf \
     -H "Authorization: Bearer ${SUPERVISOR_TOKEN}" \
     -H "Content-Type: application/json" \
-    "${SUPERVISOR_URL}/addons/self/info" 2>/dev/null || echo "{}")
+    "${SUPERVISOR_URL}/addons/self/info" -o "$TMP_INFO"; then
+    log "AVERTISSEMENT : appel à /addons/self/info échoué (curl), port par défaut 8099 utilisé."
+    echo '{}' > "$TMP_INFO"
+fi
 
 PORT=$(php -r "
-    \$info = json_decode('$(echo "$ADDON_INFO" | sed "s/'/\\\\'/" | tr -d '\n')', true);
+    \$info = json_decode(file_get_contents('${TMP_INFO}'), true);
     \$net  = \$info['data']['network'] ?? [];
     foreach (\$net as \$k => \$v) {
         if (strpos((string)\$k, '8099') !== false && \$v !== null) {
@@ -64,19 +79,23 @@ log "Token récupéré, port mappé : ${PORT}. Publication en cours..."
 PAYLOAD=$(printf '{"service":"brightspace_agenda","config":{"token":"%s","port":%s}}' \
     "$TOKEN" "$PORT")
 
-RESULT=$(curl -sf \
+if ! curl -sf \
     -X POST \
     -H "Authorization: Bearer ${SUPERVISOR_TOKEN}" \
     -H "Content-Type: application/json" \
     -d "$PAYLOAD" \
-    "${SUPERVISOR_URL}/discovery" 2>/dev/null || echo '{"error":"curl_failed"}')
+    "${SUPERVISOR_URL}/discovery" -o "$TMP_RESULT"; then
+    log "AVERTISSEMENT : publication Discovery échouée (curl). L'intégration HACS devra être configurée manuellement."
+    exit 0
+fi
 
-if echo "$RESULT" | grep -q '"uuid"'; then
+if grep -qF '"uuid"' "$TMP_RESULT"; then
     UUID=$(php -r "
-        \$r = json_decode('$(echo "$RESULT" | tr -d '\n')', true);
+        \$r = json_decode(file_get_contents('${TMP_RESULT}'), true);
         echo \$r['data']['uuid'] ?? \$r['uuid'] ?? 'unknown';
     ")
     log "Service Discovery publié avec succès (uuid: ${UUID}, port: ${PORT})."
 else
-    log "AVERTISSEMENT : publication Discovery échouée. L'intégration HACS devra être configurée manuellement. Réponse : ${RESULT}"
+    RESULT_BODY=$(cat "$TMP_RESULT")
+    log "AVERTISSEMENT : publication Discovery échouée. L'intégration HACS devra être configurée manuellement. Réponse : ${RESULT_BODY}"
 fi

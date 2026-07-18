@@ -11,7 +11,7 @@ ARG BUILD_VERSION
 ARG BUILD_ARCH
 # Référence du dépôt public à récupérer au build (branche, tag ou commit).
 # main = branche par défaut/stable sur GitHub (vérifié via origin/HEAD).
-# dev est la branche de travail active de Thomas, potentiellement instable :
+# dev est la branche de travail active (potentiellement instable à tout moment) :
 # à ne jamais utiliser pour un build d'addon public.
 # Pour une version d'addon "figée" et reproductible, épingler un tag/commit
 # plutôt que main directement.
@@ -26,14 +26,17 @@ LABEL \
     org.opencontainers.image.source="https://github.com/MrTh0m/Brightspace_agenda" \
     org.opencontainers.image.licenses="MIT"
 
-# ── Extensions PHP requises par api.php/proxy.php (curlFetch) ──────────────
+# ── Extensions PHP requises par api.php/proxy.php (curlFetch) + curl CLI ───
 # docker-php-ext-install compile l'extension depuis les sources : il faut les
 # en-têtes de dev de libcurl (absentes de l'image de base), pas seulement la
 # lib runtime. On ne purge pas libcurl4-openssl-dev après coup : l'extension
 # compilée en a besoin aussi à l'exécution (risque de casse au démarrage
 # sinon), le gain de taille ne vaut pas ce risque.
+# Le paquet curl (binaire CLI, distinct de libcurl4-openssl-dev et de
+# l'extension PHP) est nécessaire pour bsa-publish-discovery.sh, qui appelle
+# curl directement en shell, pas depuis du code PHP.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends libcurl4-openssl-dev \
+    && apt-get install -y --no-install-recommends libcurl4-openssl-dev curl \
     && docker-php-ext-install curl \
     && a2enmod rewrite headers \
     && rm -rf /var/lib/apt/lists/*
