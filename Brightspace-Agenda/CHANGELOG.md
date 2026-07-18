@@ -1,5 +1,20 @@
 # Changelog - addon Brightspace Agenda
 
+## 1.0.0 - 2026-07-18 (mise à jour 4)
+
+### Diagnostic 503 v3
+- v2 a confirmé une divergence nette : root voit `/var/www/html/data` comme
+  un dossier normal (`stat -L`, `0755 www-data:www-data`), mais `www-data`
+  échoue sur `is_dir()`/`is_writable()` du même chemin (shell **et** PHP,
+  de façon identique). Le confinement AppArmor `docker-default` est actif,
+  mais s'il bloquait ce chemin, root devrait l'être aussi (AppArmor filtre
+  par processus confiné, pas par UID), ce qui n'est pas le cas observé.
+- v3 dans `run.sh` isole la cause : compare `/data` direct vs
+  `/var/www/html/data` (lien) pour `www-data` via PHP, vérifie l'UID
+  effectif réel sous `su`, liste les permissions de traversée à chaque
+  niveau du chemin, et ajoute `namei -mo` si disponible pour une vue
+  complète en une seule commande.
+
 ## 1.0.0 - 2026-07-18 (mise à jour 3)
 
 ### Diagnostic 503 corrigé (v1 testait le mauvais chemin)

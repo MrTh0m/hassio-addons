@@ -39,6 +39,24 @@ cat /proc/self/attr/current 2>&1 || echo "[Brightspace Agenda][DIAG] pas d'info 
 dmesg 2>/dev/null | grep -i apparmor | tail -5 || echo "[Brightspace Agenda][DIAG] dmesg indisponible ou aucune ligne apparmor"
 # ─────────────────────────────────────────────────────────────────────────
 
+# ─────────────────────────────────────────────────────────────────────────
+# DIAGNOSTIC TEMPORAIRE v3 (à retirer une fois le 503 sur api.php expliqué) :
+# v2 a confirme que root voit /var/www/html/data comme un dossier normal
+# (stat -L, 0755 www-data:www-data) mais que www-data lui-meme echoue sur
+# is_dir()/is_writable() du MEME chemin. v3 isole si le probleme est
+# specifique a la traversee du lien symbolique ou touche /data en general
+# pour www-data via PHP, verifie que su change bien d'UID effectif, et
+# inspecte chaque niveau du chemin (permissions de traversee).
+echo "[Brightspace Agenda][DIAG] UID effectif sous su www-data :"
+su -s /bin/sh www-data -c 'id'
+echo "[Brightspace Agenda][DIAG] is_dir/is_writable PHP sur /data DIRECTEMENT (sans passer par le lien), en www-data :"
+su -s /bin/sh www-data -c "php -r 'var_dump(is_dir(\"/data\")); var_dump(is_writable(\"/data\"));'"
+echo "[Brightspace Agenda][DIAG] ls -la sur chaque niveau du chemin :"
+ls -ld / /var /var/www /var/www/html /var/www/html/data /data 2>&1
+echo "[Brightspace Agenda][DIAG] namei (detail complet du chemin, si disponible) :"
+namei -mo /var/www/html/data 2>&1 || echo "[Brightspace Agenda][DIAG] namei indisponible"
+# ─────────────────────────────────────────────────────────────────────────
+
 # Publication du service Discovery Supervisor en arrière-plan.
 # Le script attend que config.json soit prêt avant de publier, donc
 # il n'y a pas de race condition avec le bootstrap ci-dessus.
