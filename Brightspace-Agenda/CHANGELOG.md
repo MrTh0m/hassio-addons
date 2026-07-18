@@ -4,6 +4,21 @@
 
 Premiere version de l'addon.
 
+### Correctifs (suite au premier essai d'installation en echec)
+- **Branche source corrigee : `main` au lieu de `dev`**. `dev` est la branche
+  de travail active de Thomas (potentiellement instable a tout moment) : un
+  addon public ne doit jamais builder dessus. Verifie via `origin/HEAD` du
+  depot local (`E:\GIT\Brightspace_agenda`) que `main` est bien la branche
+  par defaut/stable sur GitHub. `ARG BSA_REF` passe de `dev` a `main`.
+- **Build Docker corrige** : `docker-php-ext-install curl` echouait
+  (`Package 'libcurl', required by 'virtual:world', not found`) car il
+  manquait les en-tetes de dev de libcurl (`libcurl4-openssl-dev`), non
+  fournies par l'image de base `php:8.2-apache`. Ajoutees avant la
+  compilation de l'extension.
+- **`arch: armv7` retire** de `config.yaml` : valeur signalee comme
+  deprecated par le Supervisor (`App config 'arch' uses deprecated values
+  ['armv7']`). L'hote observe dans le log est en `aarch64`, deja couvert.
+
 ### Ajouts
 - Conteneur Docker `php:8.2-apache` construit directement depuis le depot
   public [MrTh0m/Brightspace_agenda](https://github.com/MrTh0m/Brightspace_agenda)

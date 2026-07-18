@@ -10,9 +10,12 @@ FROM php:8.2-apache
 ARG BUILD_VERSION
 ARG BUILD_ARCH
 # Reference du depot public a recuperer au build (branche, tag ou commit).
+# main = branche par defaut/stable sur GitHub (verifie via origin/HEAD).
+# dev est la branche de travail active de Thomas, potentiellement instable :
+# a ne jamais utiliser pour un build d'addon public.
 # Pour une version d'addon "figee" et reproductible, epingler un tag/commit
-# plutot que la branche de developpement dev.
-ARG BSA_REF=dev
+# plutot que main directement.
+ARG BSA_REF=main
 
 LABEL \
     io.hass.version="${BUILD_VERSION}" \
@@ -24,8 +27,16 @@ LABEL \
     org.opencontainers.image.licenses="MIT"
 
 # ── Extensions PHP requises par api.php/proxy.php (curlFetch) ──────────────
-RUN docker-php-ext-install curl \
-    && a2enmod rewrite headers
+# docker-php-ext-install compile l'extension depuis les sources : il faut les
+# en-tetes de dev de libcurl (absents de l'image de base), pas seulement la
+# lib runtime. On ne purge pas libcurl4-openssl-dev apres coup : l'extension
+# compilee en a besoin aussi a l'execution (risque de casse au demarrage
+# sinon), le gain de taille ne vaut pas ce risque.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends libcurl4-openssl-dev \
+    && docker-php-ext-install curl \
+    && a2enmod rewrite headers \
+    && rm -rf /var/lib/apt/lists/*
 
 # ── Recuperation de la webapp depuis le depot public ────────────────────────
 # Pas de copie locale dans ce depot d'addon : evite un 4e point de

@@ -67,15 +67,18 @@ ton instance Home Assistant est servie en HTTP en local. Voir
 
 ## Mises a jour
 
-L'addon recupere le code source depuis la branche/tag `dev` du depot public
-au moment du **build** de l'image (`ARG BSA_REF` dans le `Dockerfile`), pas a
+L'addon recupere le code source depuis la branche/tag `main` (branche stable
+par defaut du depot, pas `dev` qui est la branche de travail active) au
+moment du **build** de l'image (`ARG BSA_REF` dans le `Dockerfile`), pas a
 l'execution. Pour publier une nouvelle version de l'addon :
 
-1. Epingle `BSA_REF` sur le tag/commit voulu (recommande plutot que `dev`
-   pour une version publiee, afin d'avoir un build reproductible).
-2. Incremente `version` dans `config.yaml`.
-3. Ajoute une entree dans `CHANGELOG.md`.
-4. Reconstruis l'addon depuis l'onglet **Infos** (bouton **Reconstruire**).
+1. Merge les changements valides de `dev` vers `main` dans le depot app.
+2. Epingle `BSA_REF` sur le tag/commit voulu (recommande plutot que `main`
+   directement pour une version publiee, afin d'avoir un build reproductible).
+3. Incremente `version` dans `config.yaml` (ce qui casse aussi le cache Docker
+   du `git clone`, voir plus haut).
+4. Ajoute une entree dans `CHANGELOG.md`.
+5. Reconstruis l'addon depuis l'onglet **Infos** (bouton **Reconstruire**).
 
 ## Support
 

@@ -9,7 +9,6 @@ url: "https://github.com/MrTh0m/Brightspace_agenda"
 arch:
   - amd64
   - aarch64
-  - armv7
 startup: application
 boot: auto
 
