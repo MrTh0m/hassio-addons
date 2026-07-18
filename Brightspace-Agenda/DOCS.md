@@ -1,83 +1,94 @@
 # Brightspace Agenda - addon Home Assistant
 
-Auto-hebergement de [Brightspace Agenda](https://github.com/MrTh0m/Brightspace_agenda)
-directement depuis Home Assistant : conteneur Docker gere par le Supervisor,
-panneau dans le menu lateral (Ingress), et une URL directe stable pour
-l'installation PWA, les liens de partage et l'integration HACS.
+Auto-hébergement de [Brightspace Agenda](https://github.com/MrTh0m/Brightspace_agenda)
+directement depuis Home Assistant : conteneur Docker géré par le Supervisor,
+panneau dans le menu latéral (Ingress), et une URL directe stable pour
+l'installation PWA, les liens de partage et l'intégration HACS.
 
 ## Installation
 
-1. Ajoute ce depot dans **Parametres -> Modules complementaires -> Boutique du
-   Supervisor -> ⋮ -> Depots** : `https://github.com/MrTh0m/hassio-addons`
-2. Installe **Brightspace Agenda**, configure les options si besoin (voir
-   ci-dessous), puis demarre l'addon.
-3. Le panneau **Brightspace Agenda** apparait dans le menu lateral de Home
+1. Ajoute ce dépôt dans **Paramètres -> Modules complémentaires -> Boutique du
+   Supervisor -> ⋮ -> Dépôts** : `https://github.com/MrTh0m/hassio-addons`
+2. Installe **Brightspace Agenda**, renseigne `dashboard_password` dans
+   l'onglet **Configuration** (obligatoire, voir ci-dessous), puis démarre
+   l'addon.
+3. Le panneau **Brightspace Agenda** apparaît dans le menu latéral de Home
    Assistant.
 
 ## Configuration (onglet "Configuration" de l'addon)
 
 | Option | Description |
 |---|---|
-| `timezone` | Fuseau horaire PHP du conteneur, utilise pour l'export ICS (`date('c')`). Par defaut `Europe/Paris`. |
-| `dashboard_password` | Optionnel. Renseigne uniquement au tout premier demarrage : cree automatiquement le compte "mode connecte" (equivalent de passer par `/setup.php`). Laisse vide pour configurer manuellement. Sans effet une fois `data/config.json` deja cree, meme si tu changes cette valeur ensuite. |
+| `timezone` | Fuseau horaire PHP du conteneur, utilisé pour l'export ICS (`date('c')`). Par défaut `Europe/Paris`. |
+| `dashboard_password` | **Obligatoire.** L'app fonctionne toujours en mode connecté, qui nécessite un compte. Utilisé uniquement au tout premier démarrage pour créer ce compte automatiquement (équivalent de passer par `/setup.php`). Sans effet une fois `data/config.json` déjà créé, même si tu changes cette valeur ensuite : le mot de passe se change alors depuis les Paramètres de l'app ou via `/setup.php`. |
 
-## Deux facons d'y acceder
+## Deux façons d'y accéder
 
-- **Panneau lateral (Ingress)** : acces authentifie via ta session Home
+- **Panneau latéral (Ingress)** : accès authentifié via ta session Home
   Assistant, pratique au quotidien. C'est ce que tu ouvres depuis le menu.
-- **URL directe** `http://<ip-de-ton-serveur-ha>:8099/` : necessaire pour tout
-  ce qui ne passe pas par une session Home Assistant deja ouverte dans le
+- **URL directe** `http://<ip-de-ton-serveur-ha>:8099/` : nécessaire pour tout
+  ce qui ne passe pas par une session Home Assistant déjà ouverte dans le
   navigateur :
-  - installation en PWA (Ajouter a l'ecran d'accueil) ;
+  - installation en PWA (Ajouter à l'écran d'accueil) ;
   - liens de partage en lecture seule (`?share=TOKEN`) ;
   - flux ICS abonnables (`?action=export_ics&token=...`) ;
-  - polling de l'**integration HACS** `Brightspace_agenda_HACS`, a pointer
+  - polling de l'**intégration HACS** `Brightspace_agenda_HACS`, à pointer
     vers `http://<ip>:8099/api.php`.
 
-## Premiere configuration du mode connecte
+## Premier démarrage
 
-Deux options, au choix :
+Renseigne `dashboard_password` dans la configuration de l'addon **avant** le
+tout premier démarrage : le compte "mode connecté" est créé automatiquement
+à ce moment-là. Une fois `data/config.json` créé, cette option n'a plus
+d'effet, le mot de passe se change alors depuis les **Paramètres** de l'app
+ou via `/setup.php`.
 
-- **Automatique** : renseigne `dashboard_password` dans la configuration de
-  l'addon avant le tout premier demarrage (ou avant de recreer `data/`).
-- **Manuelle** : laisse `dashboard_password` vide et visite
-  `http://<ip>:8099/setup.php` (ou via le panneau Ingress) comme sur un
-  hebergement classique.
+L'URL ICS Brightspace se configure toujours depuis les **Paramètres** de
+l'app elle-même (jamais stockée dans la configuration Home Assistant).
 
-Dans les deux cas, l'URL ICS Brightspace se configure ensuite depuis les
-**Parametres** de l'app elle-meme (jamais stockee dans la configuration
-Home Assistant).
-
-## Persistance des donnees
+## Persistance des données
 
 `data/config.json` et `data/state.json` vivent dans `/data`, le volume
 persistant standard fourni par le Supervisor pour cet addon : ils survivent
-aux mises a jour et redemarrages du conteneur. Une sauvegarde Home Assistant
-classique (Parametres -> Systeme -> Sauvegardes) inclut ce volume si l'addon
+aux mises à jour et redémarrages du conteneur. Une sauvegarde Home Assistant
+classique (Paramètres -> Système -> Sauvegardes) inclut ce volume si l'addon
 y est inclus.
 
-## Particularite technique : cookie de session et Ingress
+Pour repartir de zéro (nouveau mot de passe, nouvelle installation) : `/data` est le volume persistant de l'addon, conçu pour survivre aux redémarrages et aux reconstructions d'image, c'est voulu. Je n'ai en revanche pas de certitude sur le fait qu'une désinstallation classique via le Supervisor vide bien ce volume dans toutes les versions de Home Assistant. Si après une désinstallation/réinstallation tu retrouves une ancienne valeur (ex. l'URL ICS déjà pré-remplie), passe par un addon type **Studio Code Server** ou **Samba** pour vérifier directement le contenu du dossier de données de l'addon sur l'hôte et le vider à la main si besoin, avant de réinstaller.
 
-Le code source recupere depuis le depot public est utilise tel quel, a une
-exception pres : le flag `Secure` du cookie de session est rendu
-"Ingress-aware" (suit l'en-tete `X-Forwarded-Proto`) au moment du build de
-l'image Docker, pour que la connexion au mode "connecte" fonctionne meme si
-ton instance Home Assistant est servie en HTTP en local. Voir
-`rootfs-build/patch-ingress-cookie.sh` pour le detail exact du correctif.
+## Particularités techniques : deux correctifs Ingress-only
 
-## Mises a jour
+Le code source récupéré depuis le dépôt public est utilisé tel quel, à deux
+exceptions près, appliquées uniquement au moment du build de l'image Docker
+(jamais dans le dépôt de l'app lui-même) :
 
-L'addon recupere le code source depuis la branche/tag `main` (branche stable
-par defaut du depot, pas `dev` qui est la branche de travail active) au
-moment du **build** de l'image (`ARG BSA_REF` dans le `Dockerfile`), pas a
-l'execution. Pour publier une nouvelle version de l'addon :
+- **Cookie de session** : le flag `Secure` suit désormais l'en-tête
+  `X-Forwarded-Proto` au lieu d'être toujours `true`, pour que la connexion
+  au mode connecté fonctionne même si Home Assistant est servi en HTTP en
+  local. Voir `rootfs-build/patch-ingress-cookie.sh`.
+- **Base des appels API** : `API_ORIGIN` (utilisé pour tous les appels à
+  `api.php`/`proxy.php`) était fixé en dur à une chaîne vide, ce qui produit
+  des chemins absolus (`/api.php`, `/proxy.php`). Ça fonctionne en accès
+  direct mais casse tout appel réseau sous le panneau Ingress, qui sert la
+  page sous un préfixe de session (`/api/hassio_ingress/<token>/...`) que
+  ces chemins absolus ignorent. Corrigé en calculant la base dynamiquement
+  depuis `location.pathname`. Voir `rootfs-build/patch-ingress-baseurl.sh`.
+  **C'est ce correctif qui résout l'échec d'import ICS
+  ("Vérifie que proxy.php est bien uploadé...")** rencontré sous Ingress.
 
-1. Merge les changements valides de `dev` vers `main` dans le depot app.
-2. Epingle `BSA_REF` sur le tag/commit voulu (recommande plutot que `main`
-   directement pour une version publiee, afin d'avoir un build reproductible).
-3. Incremente `version` dans `config.yaml` (ce qui casse aussi le cache Docker
+## Mises à jour
+
+L'addon récupère le code source depuis la branche/tag `main` (branche stable
+par défaut du dépôt, pas `dev` qui est la branche de travail active) au
+moment du **build** de l'image (`ARG BSA_REF` dans le `Dockerfile`), pas à
+l'exécution. Pour publier une nouvelle version de l'addon :
+
+1. Merge les changements validés de `dev` vers `main` dans le dépôt app.
+2. Épingle `BSA_REF` sur le tag/commit voulu (recommandé plutôt que `main`
+   directement pour une version publiée, afin d'avoir un build reproductible).
+3. Incrémente `version` dans `config.yaml` (ce qui casse aussi le cache Docker
    du `git clone`, voir plus haut).
-4. Ajoute une entree dans `CHANGELOG.md`.
+4. Ajoute une entrée dans `CHANGELOG.md`.
 5. Reconstruis l'addon depuis l'onglet **Infos** (bouton **Reconstruire**).
 
 ## Support

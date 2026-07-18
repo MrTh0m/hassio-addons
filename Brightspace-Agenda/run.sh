@@ -1,14 +1,14 @@
 #!/bin/sh
-# run.sh - point d'entree du conteneur (voir Dockerfile : CMD [ "/run.sh" ])
+# run.sh - point d'entrée du conteneur (voir Dockerfile : CMD [ "/run.sh" ])
 set -e
 
 DATA_DIR="/data"
 
-echo "[Brightspace Agenda] Preparation du stockage persistant (${DATA_DIR})"
+echo "[Brightspace Agenda] Préparation du stockage persistant (${DATA_DIR})"
 
 # /data est fourni et persiste automatiquement par le Supervisor Home Assistant.
 # On le fait pointer vers le dossier data/ attendu par l'app (chemin relatif en
-# dur cote PHP : __DIR__.'/data') sans toucher au code source d'api.php/setup.php.
+# dur côté PHP : __DIR__.'/data') sans toucher au code source d'api.php/setup.php.
 if [ -e /var/www/html/data ] && [ ! -L /var/www/html/data ]; then
     rm -rf /var/www/html/data
 fi
@@ -18,5 +18,5 @@ chown -R www-data:www-data "$DATA_DIR"
 
 php -f /usr/local/bin/bsa-bootstrap.php
 
-echo "[Brightspace Agenda] Demarrage Apache sur le port 8099 (Ingress + acces direct)"
+echo "[Brightspace Agenda] Démarrage Apache sur le port 8099 (Ingress + accès direct)"
 exec apache2-foreground

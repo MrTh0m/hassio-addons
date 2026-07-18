@@ -9,12 +9,12 @@ FROM php:8.2-apache
 
 ARG BUILD_VERSION
 ARG BUILD_ARCH
-# Reference du depot public a recuperer au build (branche, tag ou commit).
-# main = branche par defaut/stable sur GitHub (verifie via origin/HEAD).
+# Référence du dépôt public à récupérer au build (branche, tag ou commit).
+# main = branche par défaut/stable sur GitHub (vérifié via origin/HEAD).
 # dev est la branche de travail active de Thomas, potentiellement instable :
-# a ne jamais utiliser pour un build d'addon public.
-# Pour une version d'addon "figee" et reproductible, epingler un tag/commit
-# plutot que main directement.
+# à ne jamais utiliser pour un build d'addon public.
+# Pour une version d'addon "figée" et reproductible, épingler un tag/commit
+# plutôt que main directement.
 ARG BSA_REF=main
 
 LABEL \
@@ -22,15 +22,15 @@ LABEL \
     io.hass.type="app" \
     io.hass.arch="${BUILD_ARCH}" \
     org.opencontainers.image.title="Brightspace Agenda" \
-    org.opencontainers.image.description="Suivi des devoirs, live sessions et ateliers Brightspace by D2L, auto-heberge" \
+    org.opencontainers.image.description="Suivi des devoirs, live sessions et ateliers Brightspace by D2L, auto-hébergé" \
     org.opencontainers.image.source="https://github.com/MrTh0m/Brightspace_agenda" \
     org.opencontainers.image.licenses="MIT"
 
 # ── Extensions PHP requises par api.php/proxy.php (curlFetch) ──────────────
 # docker-php-ext-install compile l'extension depuis les sources : il faut les
-# en-tetes de dev de libcurl (absents de l'image de base), pas seulement la
-# lib runtime. On ne purge pas libcurl4-openssl-dev apres coup : l'extension
-# compilee en a besoin aussi a l'execution (risque de casse au demarrage
+# en-têtes de dev de libcurl (absentes de l'image de base), pas seulement la
+# lib runtime. On ne purge pas libcurl4-openssl-dev après coup : l'extension
+# compilée en a besoin aussi à l'exécution (risque de casse au démarrage
 # sinon), le gain de taille ne vaut pas ce risque.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends libcurl4-openssl-dev \
@@ -38,11 +38,12 @@ RUN apt-get update \
     && a2enmod rewrite headers \
     && rm -rf /var/lib/apt/lists/*
 
-# ── Recuperation de la webapp depuis le depot public ────────────────────────
-# Pas de copie locale dans ce depot d'addon : evite un 4e point de
-# synchronisation en plus des 3 deja existants (web, APK www/, APK assets/public/).
+# ── Récupération de la webapp depuis le dépôt public ────────────────────────
+# Pas de copie locale dans ce dépôt d'addon : évite un 4e point de
+# synchronisation en plus des 3 déjà existants (web, APK www/, APK assets/public/).
 COPY rootfs-build/patch-ingress-cookie.sh /usr/local/bin/patch-ingress-cookie.sh
-RUN chmod a+x /usr/local/bin/patch-ingress-cookie.sh \
+COPY rootfs-build/patch-ingress-baseurl.sh /usr/local/bin/patch-ingress-baseurl.sh
+RUN chmod a+x /usr/local/bin/patch-ingress-cookie.sh /usr/local/bin/patch-ingress-baseurl.sh \
     && apt-get update \
     && apt-get install -y --no-install-recommends git ca-certificates \
     && rm -rf /var/www/html/* \
@@ -51,7 +52,8 @@ RUN chmod a+x /usr/local/bin/patch-ingress-cookie.sh \
           /tmp/bsa/manifest.json /tmp/bsa/sw.js /var/www/html/ \
     && (cp /tmp/bsa/icon-192.png /tmp/bsa/icon-512.png /tmp/bsa/apple-touch-icon.png /var/www/html/ 2>/dev/null || true) \
     && /usr/local/bin/patch-ingress-cookie.sh \
-    && rm -rf /tmp/bsa /usr/local/bin/patch-ingress-cookie.sh \
+    && /usr/local/bin/patch-ingress-baseurl.sh \
+    && rm -rf /tmp/bsa /usr/local/bin/patch-ingress-cookie.sh /usr/local/bin/patch-ingress-baseurl.sh \
     && apt-get purge -y --auto-remove git \
     && rm -rf /var/lib/apt/lists/*
 
@@ -62,8 +64,8 @@ RUN grep -q "^Listen 80$" /etc/apache2/ports.conf \
     && sed -i 's/<VirtualHost \*:80>/<VirtualHost *:8099>/' /etc/apache2/sites-available/000-default.conf
 
 # ── Apache : .htaccess de l'app (protection data/) ──────────────────────────
-# Fichier de conf dedie plutot qu'un sed sur apache2.conf : voir le
-# commentaire dans bsa-allowoverride.conf pour le detail du risque evite.
+# Fichier de conf dédié plutôt qu'un sed sur apache2.conf : voir le
+# commentaire dans bsa-allowoverride.conf pour le détail du risque évité.
 COPY rootfs-build/bsa-allowoverride.conf /etc/apache2/conf-available/bsa-allowoverride.conf
 RUN a2enconf bsa-allowoverride
 
