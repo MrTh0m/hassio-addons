@@ -63,9 +63,9 @@ Pour repartir de zéro (nouveau mot de passe, nouvelle installation) : `/data` e
 1. Cache navigateur (session/cookie encore valide) plutôt que `/data` réellement conservé : teste en navigation privée.
 2. `/data` effectivement pas vidé par le Supervisor pour cet addon : vérifie directement via un addon type **Studio Code Server** ou **Terminal & SSH** si `config.json`/`state.json` existent encore juste après une désinstallation avec suppression des données cochée.
 
-## Particularités techniques : deux correctifs Ingress-only
+## Particularités techniques : trois correctifs appliqués au build
 
-Le code source récupéré depuis le dépôt public est utilisé tel quel, à deux
+Le code source récupéré depuis le dépôt public est utilisé tel quel, à trois
 exceptions près, appliquées uniquement au moment du build de l'image Docker
 (jamais dans le dépôt de l'app lui-même) :
 
@@ -82,6 +82,17 @@ exceptions près, appliquées uniquement au moment du build de l'image Docker
   depuis `location.pathname`. Voir `rootfs-build/patch-ingress-baseurl.sh`.
   **C'est ce correctif qui résout l'échec d'import ICS
   ("Vérifie que proxy.php est bien uploadé...")** rencontré sous Ingress.
+- **Emplacement de `DATA_DIR`** : `api.php`/`setup.php` lisent la variable
+  d'environnement `BSA_DATA_DIR` (définie sur `/data` dans le `Dockerfile`)
+  au lieu de calculer un chemin relatif (`__DIR__.'/data'`) qui passait par
+  un lien symbolique depuis `/var/www/html/data`. Ce lien traversait deux
+  points de montage différents (couche d'image du conteneur d'un côté,
+  volume `/data` du Supervisor de l'autre), ce que le confinement AppArmor
+  des addons bloque même quand les permissions Unix classiques sont
+  correctes de bout en bout. **C'est ce correctif qui résout le 503
+  systématique sur `api.php` sous Ingress** (`code: NO_WRITE`, alors que
+  `/data` était pourtant accessible en écriture). Voir
+  `rootfs-build/patch-data-dir-env.sh`.
 
 ## Mises à jour
 

@@ -26,6 +26,15 @@ LABEL \
     org.opencontainers.image.source="https://github.com/MrTh0m/Brightspace_agenda" \
     org.opencontainers.image.licenses="MIT"
 
+# BSA_DATA_DIR : lu par api.php/setup.php (patch-data-dir-env.sh) pour que
+# DATA_DIR pointe directement sur /data, le volume persistant du Supervisor,
+# sans passer par un lien symbolique depuis /var/www/html. Voir le
+# commentaire de patch-data-dir-env.sh pour le detail (confinement AppArmor
+# des addons, qui bloque la traversee d'un lien symbolique entre la couche
+# d'image du conteneur et un volume monte separement, meme avec des
+# permissions Unix par ailleurs correctes de bout en bout).
+ENV BSA_DATA_DIR=/data
+
 # ── Extensions PHP requises par api.php/proxy.php (curlFetch) + curl CLI ───
 # docker-php-ext-install compile l'extension depuis les sources : il faut les
 # en-têtes de dev de libcurl (absentes de l'image de base), pas seulement la
@@ -46,7 +55,8 @@ RUN apt-get update \
 # synchronisation en plus des 3 déjà existants (web, APK www/, APK assets/public/).
 COPY rootfs-build/patch-ingress-cookie.sh /usr/local/bin/patch-ingress-cookie.sh
 COPY rootfs-build/patch-ingress-baseurl.sh /usr/local/bin/patch-ingress-baseurl.sh
-RUN chmod a+x /usr/local/bin/patch-ingress-cookie.sh /usr/local/bin/patch-ingress-baseurl.sh \
+COPY rootfs-build/patch-data-dir-env.sh /usr/local/bin/patch-data-dir-env.sh
+RUN chmod a+x /usr/local/bin/patch-ingress-cookie.sh /usr/local/bin/patch-ingress-baseurl.sh /usr/local/bin/patch-data-dir-env.sh \
     && apt-get update \
     && apt-get install -y --no-install-recommends git ca-certificates \
     && rm -rf /var/www/html/* \
@@ -56,7 +66,8 @@ RUN chmod a+x /usr/local/bin/patch-ingress-cookie.sh /usr/local/bin/patch-ingres
     && (cp /tmp/bsa/icon-192.png /tmp/bsa/icon-512.png /tmp/bsa/apple-touch-icon.png /var/www/html/ 2>/dev/null || true) \
     && /usr/local/bin/patch-ingress-cookie.sh \
     && /usr/local/bin/patch-ingress-baseurl.sh \
-    && rm -rf /tmp/bsa /usr/local/bin/patch-ingress-cookie.sh /usr/local/bin/patch-ingress-baseurl.sh \
+    && /usr/local/bin/patch-data-dir-env.sh \
+    && rm -rf /tmp/bsa /usr/local/bin/patch-ingress-cookie.sh /usr/local/bin/patch-ingress-baseurl.sh /usr/local/bin/patch-data-dir-env.sh \
     && apt-get purge -y --auto-remove git \
     && rm -rf /var/lib/apt/lists/*
 
@@ -65,12 +76,6 @@ RUN grep -q "^Listen 80$" /etc/apache2/ports.conf \
     && sed -i 's/^Listen 80$/Listen 8099/' /etc/apache2/ports.conf \
     && grep -q "<VirtualHost \*:80>" /etc/apache2/sites-available/000-default.conf \
     && sed -i 's/<VirtualHost \*:80>/<VirtualHost *:8099>/' /etc/apache2/sites-available/000-default.conf
-
-# ── Apache : .htaccess de l'app (protection data/) ──────────────────────────
-# Fichier de conf dédié plutôt qu'un sed sur apache2.conf : voir le
-# commentaire dans bsa-allowoverride.conf pour le détail du risque évité.
-COPY rootfs-build/bsa-allowoverride.conf /etc/apache2/conf-available/bsa-allowoverride.conf
-RUN a2enconf bsa-allowoverride
 
 # ── Bootstrap runtime (fuseau horaire + provisionnement du mot de passe) ───
 COPY rootfs-run/bsa-bootstrap.php /usr/local/bin/bsa-bootstrap.php

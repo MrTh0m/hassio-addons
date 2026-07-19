@@ -1,119 +1,90 @@
 # Changelog - addon Brightspace Agenda
 
-## 1.0.0 - 2026-07-18 (mise à jour 4)
+## 1.0.1 - 2026-07-19
 
-### Diagnostic 503 v3
-- v2 a confirmé une divergence nette : root voit `/var/www/html/data` comme
-  un dossier normal (`stat -L`, `0755 www-data:www-data`), mais `www-data`
-  échoue sur `is_dir()`/`is_writable()` du même chemin (shell **et** PHP,
-  de façon identique). Le confinement AppArmor `docker-default` est actif,
-  mais s'il bloquait ce chemin, root devrait l'être aussi (AppArmor filtre
-  par processus confiné, pas par UID), ce qui n'est pas le cas observé.
-- v3 dans `run.sh` isole la cause : compare `/data` direct vs
-  `/var/www/html/data` (lien) pour `www-data` via PHP, vérifie l'UID
-  effectif réel sous `su`, liste les permissions de traversée à chaque
-  niveau du chemin, et ajoute `namei -mo` si disponible pour une vue
-  complète en une seule commande.
+### Cause racine du 503 systématique sur `api.php` sous Ingress
+`api.php` renvoyait 503 (`code: NO_WRITE`) sur tout appel. `DATA_DIR` pointait
+sur `/var/www/html/data`, un lien symbolique vers `/data` créé par `run.sh`.
+Diagnostic : `/data` directement est accessible en écriture pour `www-data`
+(confirmé), mais le même test via le lien symbolique échoue systématiquement,
+alors que les permissions Unix sont correctes à chaque niveau du chemin.
+Signature typique du confinement AppArmor des addons, qui bloque la
+traversée d'un lien symbolique entre la couche d'image du conteneur et un
+volume monté séparément, indépendamment des permissions Unix classiques.
 
-## 1.0.0 - 2026-07-18 (mise à jour 3)
-
-### Diagnostic 503 corrigé (v1 testait le mauvais chemin)
-- Le premier diagnostic testait `/data` (la cible réelle du lien symbolique)
-  et concluait à tort que www-data pouvait écrire. Le log confirme pourtant
-  que le 503 persiste (`code: NO_WRITE`) sur `api.php?action=ping`, seul
-  point de sortie 503 possible pour cette action (l'autre, `NOT_CONFIGURED`,
-  exclut explicitement `ping`).
-- En cause : le code PHP teste `DATA_DIR = __DIR__.'/data'`, donc
-  `/var/www/html/data` (le **lien symbolique lui-même**), pas `/data`
-  directement. Un chemin accédé via un lien symbolique peut être médiatisé
-  différemment par un profil de confinement même quand les permissions
-  Unix classiques sont correctes de bout en bout.
-- Diagnostic v2 dans `run.sh` : teste le bon chemin (`/var/www/html/data`)
-  avec `is_dir()`/`is_writable()` de PHP directement (mêmes fonctions
-  qu'`api.php`, exécutées en `www-data`), ajoute `stat -L` sur le chemin
-  résolu et un contrôle AppArmor (`/proc/self/attr/current`, `dmesg`).
-
-## 1.0.0 - 2026-07-18 (mise à jour 2)
-
-### En cours d'investigation : 503 systématique sur api.php sous Ingress
-- Confirmé par les logs Apache : `api.php` renvoie 503 (`code: NO_WRITE`) sur
-  tout appel, `is_writable(DATA_DIR)` échouant côté processus Apache/www-data
-  alors que `bsa-bootstrap.php` (exécuté en root au démarrage) écrit sans
-  problème dans le même dossier. `proxy.php` et les fichiers statiques ne
-  sont pas concernés (aucune dépendance à `DATA_DIR`).
-- Diagnostic temporaire ajouté dans `run.sh` (bloc marqué `DIAGNOSTIC
-  TEMPORAIRE`, à retirer une fois la cause confirmée) : compare les
-  permissions réelles de `/data`, simule un test d'écriture en `www-data`,
-  et recherche une éventuelle directive `open_basedir` côté SAPI Apache
-  (qui n'affecterait pas le CLI utilisé par le bootstrap).
-
-## 1.0.0 - 2026-07-18 (mise à jour)
+**Correctif** : le lien symbolique est entièrement retiré. `api.php` et
+`setup.php` lisent désormais `DATA_DIR` depuis la variable d'environnement
+`BSA_DATA_DIR` (définie sur `/data` via `ENV` dans le `Dockerfile`),
+troisième correctif appliqué au build (`rootfs-build/patch-data-dir-env.sh`).
+Comportement inchangé pour tout hébergement hors addon (fallback sur
+`__DIR__.'/data'` si la variable est absente). Bénéfice supplémentaire :
+`/data` n'est plus jamais exposé sous le docroot web, donc
+`bsa-allowoverride.conf` (protection par `.htaccess`) n'a plus lieu d'être
+et a été retiré du `Dockerfile` (fichier à supprimer du dépôt). `run.sh`
+simplifié en conséquence : ne garde que le `chown -R www-data:www-data /data`.
 
 ### Corrections sur la publication Discovery
-- **`curl` (binaire CLI) installé**, absent de l'image jusqu'ici : seuls `libcurl4-openssl-dev` (en-têtes de dev) et l'extension PHP curl étaient installés, aucun des deux ne fournit `/usr/bin/curl`. `bsa-publish-discovery.sh` échouait donc silencieusement à chaque démarrage (erreur "command not found" avalue par son propre `|| echo "{}"`).
-- **`hassio_role` remonté à `manager`** (était `default`) : role requis par l'API Supervisor pour publier un service Discovery (`POST /discovery`), sous peine de 403.
-- **Interpolation JSON→PHP fragile corrigée** dans `bsa-publish-discovery.sh` : les réponses de l'API Supervisor étaient collées directement dans une chaîne PHP via le shell (escaping incomplet, incohérent entre les deux usages). Remplacé par des fichiers temporaires lus via `file_get_contents()`, qui élimine le problème par construction plutôt que de rafistiner l'escaping.
+- **`curl` (binaire CLI) installé**, absent de l'image jusqu'ici : seuls
+  `libcurl4-openssl-dev` (en-têtes de dev) et l'extension PHP curl étaient
+  installés, aucun des deux ne fournit `/usr/bin/curl`.
+  `bsa-publish-discovery.sh` échouait donc silencieusement à chaque
+  démarrage (erreur "command not found" avalée par son propre
+  `|| echo "{}"`).
+- **`hassio_role` remonté à `manager`** (était `default`) : role requis par
+  l'API Supervisor pour publier un service Discovery (`POST /discovery`),
+  sous peine de 403.
+- **Interpolation JSON→PHP fragile corrigée** dans
+  `bsa-publish-discovery.sh` : les réponses de l'API Supervisor étaient
+  collées directement dans une chaîne PHP via le shell (escaping incomplet,
+  incohérent entre les deux usages). Remplacé par des fichiers temporaires
+  lus via `file_get_contents()`.
 
-### Correctifs (suite au retour de test après installation)
-- **Bug Ingress critique corrigé : import ICS et appels API cassés sous le
-  panneau latéral.** `index.html` calcule `API_ORIGIN` comme une chaîne
-  vide, ce qui produit des chemins absolus (`/api.php`, `/proxy.php`) au
-  lieu de chemins relatifs à la page. Fonctionnait en accès direct, cassait
-  tout appel réseau sous Ingress (préfixe de session ignoré). Corrigé au
-  build via `rootfs-build/patch-ingress-baseurl.sh` : la base est calculée
+### À faire avant de considérer cette version stable
+- Retirer le bloc `DIAGNOSTIC TEMPORAIRE` de `run.sh` une fois `api.php?action=ping`
+  confirmé en 200 dans les logs.
+- Épingler `BSA_REF` sur un tag/commit précis plutôt que `main`.
+- Supprimer `rootfs-build/bsa-allowoverride.conf` du dépôt (plus référencé).
+
+## 1.0.0 - 2026-07-18
+
+Première version de l'addon, avec correctifs suite au premier essai
+d'installation.
+
+### Corrections
+- **Bug Ingress critique : import ICS et appels API cassés sous le panneau
+  latéral.** `index.html` calcule `API_ORIGIN` comme une chaîne vide, ce qui
+  produit des chemins absolus (`/api.php`, `/proxy.php`) au lieu de chemins
+  relatifs à la page. Fonctionnait en accès direct, cassait tout appel
+  réseau sous Ingress (préfixe de session ignoré). Corrigé au build via
+  `rootfs-build/patch-ingress-baseurl.sh` : la base est calculée
   dynamiquement depuis `location.pathname`.
-- **Mot de passe rendu obligatoire.** L'app fonctionne toujours en mode
-  connecté : `dashboard_password` n'a plus de valeur par défaut dans
-  `config.yaml`, le Supervisor bloque désormais le démarrage tant qu'il
-  n'est pas renseigné.
-- **Icône et logo remplacés** par des dérivés de la vraie icône de l'app
-  (`icon-192.png`/`icon-512.png`), au lieu d'un glyphe générique généré.
-- **Badges d'architecture ajoutés** dans `README.md` (style shields.io).
-- **Branche source corrigée : `main` au lieu de `dev`**. `dev` est la branche
-  de travail active (potentiellement instable à tout moment) : un
-  addon public ne doit jamais builder dessus. Vérifié via `origin/HEAD` du
-  dépôt local (`E:\GIT\Brightspace_agenda`) que `main` est bien la branche
-  par défaut/stable sur GitHub. `ARG BSA_REF` passe de `dev` à `main`.
+- **Cookie de session Ingress-aware** : le flag `Secure` suit désormais
+  l'en-tête `X-Forwarded-Proto` au lieu d'être toujours `true`
+  (`rootfs-build/patch-ingress-cookie.sh`).
+- **Mot de passe rendu obligatoire** : `dashboard_password` n'a plus de
+  valeur par défaut dans `config.yaml`, le Supervisor bloque le démarrage
+  tant qu'il n'est pas renseigné.
+- **Icône et logo** remplacés par des dérivés de la vraie icône de l'app.
+- **Badges d'architecture** ajoutés dans `README.md` (style shields.io).
+- **Branche source corrigée : `main` au lieu de `dev`** (branche de travail
+  active, potentiellement instable). Vérifié via `origin/HEAD` du dépôt app.
 - **Build Docker corrigé** : `docker-php-ext-install curl` échouait
-  (`Package 'libcurl', required by 'virtual:world', not found`) car il
-  manquait les en-têtes de dev de libcurl (`libcurl4-openssl-dev`), non
-  fournies par l'image de base `php:8.2-apache`. Ajoutées avant la
-  compilation de l'extension.
-- **`arch: armv7` retiré** de `config.yaml` : valeur signalée comme
-  deprecated par le Supervisor (`App config 'arch' uses deprecated values
-  ['armv7']`). L'hôte observé dans le log est en `aarch64`, déjà couvert.
-- **Accents français corrigés** dans `config.yaml`, `DOCS.md`, `README.md`,
-  et les commentaires du `Dockerfile`/scripts (ASCII sans accents à
-  l'origine, non voulu).
+  (en-têtes de dev `libcurl4-openssl-dev` manquantes dans l'image de base).
+- **`arch: armv7` retiré** de `config.yaml` (deprecated côté Supervisor).
+- **Accents français corrigés** dans tous les fichiers du dépôt.
 
 ### Ajouts
 - Conteneur Docker `php:8.2-apache` construit directement depuis le dépôt
-  public [MrTh0m/Brightspace_agenda](https://github.com/MrTh0m/Brightspace_agenda)
-  (branche `main`, via `ARG BSA_REF`), sans copie locale à synchroniser dans
-  ce dépôt d'addon.
-- Panneau latéral Home Assistant via Ingress (port interne 8099).
-- Accès direct conservé sur le même port 8099 pour l'installation PWA, les
-  liens de partage, l'export ICS abonnable et le polling de l'intégration
-  HACS `Brightspace_agenda_HACS`.
-- Persistance de `data/config.json` et `data/state.json` sur le volume
-  `/data` fourni par le Supervisor (survit aux mises à jour/redémarrages).
-- Option `dashboard_password` (obligatoire) : provisionnement automatique du
-  compte "mode connecté" au premier démarrage, sans passer par `/setup.php`.
-- Option `timezone` (défaut `Europe/Paris`) appliquée au PHP du conteneur.
+  public [MrTh0m/Brightspace_agenda](https://github.com/MrTh0m/Brightspace_agenda),
+  sans copie locale à synchroniser dans ce dépôt d'addon.
+- Panneau latéral Home Assistant via Ingress (port interne 8099) + accès
+  direct conservé sur le même port pour PWA, liens de partage, export ICS
+  et polling HACS.
+- Persistance de `data/config.json` et `data/state.json` sur `/data`.
+- Option `dashboard_password` (obligatoire) : provisionnement automatique
+  du compte "mode connecté" au premier démarrage.
+- Option `timezone` (défaut `Europe/Paris`).
 
 ### Notes techniques
 - `config.yaml` suit la convention 2026 post-migration BuildKit (pas de
   `build.yaml`, base image et labels directement dans le `Dockerfile`).
-- Deux correctifs appliqués au code source au moment du build, jamais dans
-  le dépôt de l'app lui-même : le cookie de session Ingress-aware
-  (`rootfs-build/patch-ingress-cookie.sh`) et la base des appels API
-  Ingress-aware (`rootfs-build/patch-ingress-baseurl.sh`).
-
-### À faire avant une utilisation en production
-- Épingler `BSA_REF` sur un tag/commit précis plutôt que `main` pour un
-  build reproductible.
-- Tester le build réel (`docker build .` ou installation directe dans le
-  Supervisor) : le Dockerfile et les scripts n'ont pas pu être exécutés dans
-  cet environnement de travail (pas d'accès réseau/Docker ici), seule la
-  logique des scripts de patch a été testée en isolation contre des copies
-  fidèles des fichiers réels.
