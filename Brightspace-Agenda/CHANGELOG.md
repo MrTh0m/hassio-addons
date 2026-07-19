@@ -1,5 +1,30 @@
 # Changelog - addon Brightspace Agenda
 
+## 1.0.0 - 2026-07-18 (mise à jour 5)
+
+### Cause racine du 503 trouvée et corrigée
+- Le diagnostic v3 a isolé la cause exacte : `/data` directement fonctionne
+  parfaitement pour `www-data` (`is_dir`/`is_writable` = true), mais le même
+  test via `/var/www/html/data` (le lien symbolique créé par `run.sh`)
+  échouait systématiquement, alors que `namei -mo` confirme des permissions
+  Unix correctes à chaque niveau du chemin, lien compris. Signature typique
+  du confinement AppArmor des addons Home Assistant, qui bloque la
+  traversée d'un lien symbolique entre la couche d'image du conteneur et un
+  volume monté séparément, indépendamment des permissions Unix classiques.
+- **Le lien symbolique est entièrement retiré.** `api.php` et `setup.php`
+  lisent désormais `DATA_DIR` depuis la variable d'environnement
+  `BSA_DATA_DIR` (définie sur `/data` via `ENV` dans le `Dockerfile`),
+  troisième correctif appliqué au build
+  (`rootfs-build/patch-data-dir-env.sh`). Comportement inchangé pour tout
+  hébergement hors addon (fallback sur `__DIR__.'/data'` si la variable est
+  absente).
+- Bénéfice supplémentaire : `/data` n'est plus jamais exposé sous le
+  docroot web (aucune URL n'y correspond), donc `rootfs-build/bsa-allowoverride.conf`
+  (protection par `.htaccess`) n'a plus lieu d'être et a été retiré du
+  `Dockerfile`. Le fichier lui-même reste à supprimer du dépôt.
+- `run.sh` simplifié : suppression de toute la logique de création/gestion
+  du lien symbolique, ne garde que le `chown -R www-data:www-data /data`.
+
 ## 1.0.0 - 2026-07-18 (mise à jour 4)
 
 ### Diagnostic 503 v3
