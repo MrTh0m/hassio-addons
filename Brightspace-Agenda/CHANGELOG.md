@@ -1,5 +1,38 @@
 # Changelog - addon Brightspace Agenda
 
+## 1.0.3 - 2026-07-25
+
+### Hypothèse : déconnexions inattendues en mode connecté
+Observé (capture HAR) : `fetch_ics` passe de 404 (connecté, ICS non
+configurée) à 401 (non authentifié) en ~3m30, sans action explicite de
+l'utilisateur. `$sessionLifetime` est à 30 jours dans le code, donc pas une
+expiration naturelle. Hypothèse retenue (non confirmée à 100%, mais
+corrigée indépendamment de sa validité ici) : PHP stocke ses sessions dans
+`/tmp` par défaut, qui fait partie de la couche écriture du conteneur et ne
+survit pas aux redémarrages. Sur un addon, redémarré bien plus souvent
+qu'un service NAS classique (mises à jour, reboot de l'hôte HA), ceci
+déconnecterait silencieusement tout le monde à chaque redémarrage.
+
+**Correctif** : `session.save_path` pointe désormais sur `/data/sessions`
+(le volume persistant), via un fichier ini dédié dans le `Dockerfile`. Le
+dossier est créé/permissionné par `run.sh` au démarrage. Aucune modification
+d'`api.php`/`setup.php` nécessaire, uniquement de la configuration PHP.
+
+## 1.0.2 - 2026-07-25
+
+### Correctif `BSA_DATA_DIR` confirmé fonctionnel
+Log de production : `api.php?action=ping` répond 200 de façon fiable sous
+Ingress, login en mode connecté, `get_config`, `get_state` et `fetch_ics`
+fonctionnent tous. Diagnostic v4 confirmé avant retrait : `getenv('BSA_DATA_DIR')`
+visible côté shell, PHP CLI root et PHP CLI `www-data` (`/data` dans les
+trois cas), `is_dir`/`is_writable` = `true` en `www-data` sur ce chemin.
+Bloc `DIAGNOSTIC TEMPORAIRE` retiré de `run.sh`.
+
+### Connu, pas encore corrigé
+- Publication Discovery toujours en échec (`AVERTISSEMENT : publication
+  Discovery échouée (curl)`) malgré l'ajout du paquet `curl` en 1.0.1 : a
+  investiguer séparément.
+
 ## 1.0.1 - 2026-07-19
 
 ### Cause racine du 503 systématique sur `api.php` sous Ingress
@@ -39,13 +72,7 @@ simplifié en conséquence : ne garde que le `chown -R www-data:www-data /data`.
   incohérent entre les deux usages). Remplacé par des fichiers temporaires
   lus via `file_get_contents()`.
 
-### À faire avant de considérer cette version stable
-- Diagnostic v4 ajouté dans `run.sh` (le correctif `BSA_DATA_DIR` n'a pas
-  résolu le 503 NO_WRITE, confirmé par capture HAR le 19/07) : vérifie si
-  `getenv('BSA_DATA_DIR')` est réellement visible côté shell, PHP CLI, et
-  PHP CLI en `www-data`, avant de conclure sur la cause.
-- Retirer le bloc `DIAGNOSTIC TEMPORAIRE` de `run.sh` une fois `api.php?action=ping`
-  confirmé en 200 dans les logs.
+### Historique de résolution
 - Épingler `BSA_REF` sur un tag/commit précis plutôt que `main`.
 - Supprimer `rootfs-build/bsa-allowoverride.conf` du dépôt (plus référencé).
 
