@@ -64,7 +64,8 @@ RUN apt-get update \
 COPY rootfs-build/patch-ingress-cookie.sh /usr/local/bin/patch-ingress-cookie.sh
 COPY rootfs-build/patch-ingress-baseurl.sh /usr/local/bin/patch-ingress-baseurl.sh
 COPY rootfs-build/patch-data-dir-env.sh /usr/local/bin/patch-data-dir-env.sh
-RUN chmod a+x /usr/local/bin/patch-ingress-cookie.sh /usr/local/bin/patch-ingress-baseurl.sh /usr/local/bin/patch-data-dir-env.sh \
+COPY rootfs-build/patch-ingress-autologin.sh /usr/local/bin/patch-ingress-autologin.sh
+RUN chmod a+x /usr/local/bin/patch-ingress-cookie.sh /usr/local/bin/patch-ingress-baseurl.sh /usr/local/bin/patch-data-dir-env.sh /usr/local/bin/patch-ingress-autologin.sh \
     && apt-get update \
     && apt-get install -y --no-install-recommends git ca-certificates \
     && rm -rf /var/www/html/* \
@@ -75,7 +76,8 @@ RUN chmod a+x /usr/local/bin/patch-ingress-cookie.sh /usr/local/bin/patch-ingres
     && /usr/local/bin/patch-ingress-cookie.sh \
     && /usr/local/bin/patch-ingress-baseurl.sh \
     && /usr/local/bin/patch-data-dir-env.sh \
-    && rm -rf /tmp/bsa /usr/local/bin/patch-ingress-cookie.sh /usr/local/bin/patch-ingress-baseurl.sh /usr/local/bin/patch-data-dir-env.sh \
+    && /usr/local/bin/patch-ingress-autologin.sh \
+    && rm -rf /tmp/bsa /usr/local/bin/patch-ingress-cookie.sh /usr/local/bin/patch-ingress-baseurl.sh /usr/local/bin/patch-data-dir-env.sh /usr/local/bin/patch-ingress-autologin.sh \
     && apt-get purge -y --auto-remove git \
     && rm -rf /var/lib/apt/lists/*
 

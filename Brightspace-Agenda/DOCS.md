@@ -24,8 +24,8 @@ l'installation PWA, les liens de partage et l'intégration HACS.
 
 ## Deux façons d'y accéder
 
-- **Panneau latéral (Ingress)** : accès authentifié via ta session Home
-  Assistant, pratique au quotidien. C'est ce que tu ouvres depuis le menu.
+- **Panneau latéral (Ingress)** : connexion automatique en mode connecté,
+  pas de mot de passe à saisir.
 - **URL directe** `http://<ip-de-ton-serveur-ha>:8099/` : nécessaire pour tout
   ce qui ne passe pas par une session Home Assistant déjà ouverte dans le
   navigateur :
@@ -63,9 +63,9 @@ Pour repartir de zéro (nouveau mot de passe, nouvelle installation) : `/data` e
 1. Cache navigateur (session/cookie encore valide) plutôt que `/data` réellement conservé : teste en navigation privée.
 2. `/data` effectivement pas vidé par le Supervisor pour cet addon : vérifie directement via un addon type **Studio Code Server** ou **Terminal & SSH** si `config.json`/`state.json` existent encore juste après une désinstallation avec suppression des données cochée.
 
-## Particularités techniques : trois correctifs appliqués au build
+## Particularités techniques : quatre correctifs appliqués au build
 
-Le code source récupéré depuis le dépôt public est utilisé tel quel, à trois
+Le code source récupéré depuis le dépôt public est utilisé tel quel, à quatre
 exceptions près, appliquées uniquement au moment du build de l'image Docker
 (jamais dans le dépôt de l'app lui-même) :
 
@@ -93,6 +93,9 @@ exceptions près, appliquées uniquement au moment du build de l'image Docker
   systématique sur `api.php` sous Ingress** (`code: NO_WRITE`, alors que
   `/data` était pourtant accessible en écriture). Voir
   `rootfs-build/patch-data-dir-env.sh`.
+- **Auto-connexion Ingress** : requêtes depuis l'IP fixe du proxy Supervisor
+  (`172.30.32.2`, non falsifiable depuis le port direct) authentifient la
+  session automatiquement. Voir `rootfs-build/patch-ingress-autologin.sh`.
 
 ## Mises à jour
 
