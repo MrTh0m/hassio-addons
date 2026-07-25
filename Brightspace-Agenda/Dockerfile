@@ -35,6 +35,14 @@ LABEL \
 # permissions Unix par ailleurs correctes de bout en bout).
 ENV BSA_DATA_DIR=/data
 
+# Sessions PHP dans /data plutot que /tmp (par defaut) : /tmp fait partie de
+# la couche ecriture du conteneur, effacee a chaque redemarrage/rebuild, ce
+# qui deconnecterait silencieusement tout le monde en mode connecte a chaque
+# mise a jour de l'addon ou reboot de l'hote Home Assistant. Le dossier lui
+# meme est cree au runtime par run.sh (n'existe pas encore au moment du
+# build, /data n'etant monte qu'a l'execution).
+RUN echo "session.save_path = /data/sessions" > /usr/local/etc/php/conf.d/bsa-sessions.ini
+
 # ── Extensions PHP requises par api.php/proxy.php (curlFetch) + curl CLI ───
 # docker-php-ext-install compile l'extension depuis les sources : il faut les
 # en-têtes de dev de libcurl (absentes de l'image de base), pas seulement la
