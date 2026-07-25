@@ -1,5 +1,13 @@
 # Changelog - addon Brightspace Agenda
 
+## 1.1.0 - 2026-07-25
+
+Auto-connexion en mode connecté sous le panneau Ingress : les requêtes
+venant de l'IP fixe du proxy Supervisor (172.30.32.2, non falsifiable
+depuis le port direct) authentifient automatiquement la session, sans
+saisie manuelle du mot de passe. L'accès direct (8099, APK, HACS) continue
+d'exiger le mot de passe normalement. `rootfs-build/patch-ingress-autologin.sh`.
+
 ## 1.0.4 - 2026-07-25
 
 `config.json` cree par le bootstrap (root, chmod 0640) etait illisible par
