@@ -25,5 +25,23 @@ php -f /usr/local/bin/bsa-bootstrap.php
 # si le Supervisor est temporairement indisponible.
 sh /usr/local/bin/bsa-publish-discovery.sh &
 
+# ─────────────────────────────────────────────────────────────────────────
+# DIAGNOSTIC TEMPORAIRE v4 (à retirer une fois le 503 sur api.php explique) :
+# Le passage a BSA_DATA_DIR (variable d'environnement) au lieu du lien
+# symbolique n'a pas resolu le 503 NO_WRITE (confirme par capture HAR :
+# toujours 503, taille de reponse compatible avec le meme message d'erreur
+# qu'avant). On verifie ici si BSA_DATA_DIR est reellement visible cote
+# shell, PHP CLI, et PHP CLI en www-data (la variable ENV du Dockerfile est
+# censee etre heritee par tous les processus du conteneur, y compris les
+# workers Apache, mais on le confirme au lieu de le supposer).
+echo "[Brightspace Agenda][DIAG] BSA_DATA_DIR vu par le shell : ${BSA_DATA_DIR:-(vide/absent)}"
+echo "[Brightspace Agenda][DIAG] BSA_DATA_DIR vu par PHP CLI (root) :"
+php -r 'var_dump(getenv("BSA_DATA_DIR"));'
+echo "[Brightspace Agenda][DIAG] BSA_DATA_DIR vu par PHP CLI en www-data :"
+su -s /bin/sh www-data -c "php -r 'var_dump(getenv(\"BSA_DATA_DIR\"));'"
+echo "[Brightspace Agenda][DIAG] is_dir/is_writable sur le resultat reel de getenv, en www-data :"
+su -s /bin/sh www-data -c "php -r '\$d = getenv(\"BSA_DATA_DIR\") ?: \"/var/www/html/data\"; echo \"chemin teste: \$d\n\"; var_dump(is_dir(\$d)); var_dump(is_writable(\$d));'"
+# ─────────────────────────────────────────────────────────────────────────
+
 echo "[Brightspace Agenda] Démarrage Apache sur le port 8099 (Ingress + accès direct)"
 exec apache2-foreground

@@ -40,6 +40,10 @@ simplifié en conséquence : ne garde que le `chown -R www-data:www-data /data`.
   lus via `file_get_contents()`.
 
 ### À faire avant de considérer cette version stable
+- Diagnostic v4 ajouté dans `run.sh` (le correctif `BSA_DATA_DIR` n'a pas
+  résolu le 503 NO_WRITE, confirmé par capture HAR le 19/07) : vérifie si
+  `getenv('BSA_DATA_DIR')` est réellement visible côté shell, PHP CLI, et
+  PHP CLI en `www-data`, avant de conclure sur la cause.
 - Retirer le bloc `DIAGNOSTIC TEMPORAIRE` de `run.sh` une fois `api.php?action=ping`
   confirmé en 200 dans les logs.
 - Épingler `BSA_REF` sur un tag/commit précis plutôt que `main`.
