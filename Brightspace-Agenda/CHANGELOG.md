@@ -1,5 +1,11 @@
 # Changelog - addon Brightspace Agenda
 
+## 1.0.4 - 2026-07-25
+
+`config.json` cree par le bootstrap (root, chmod 0640) etait illisible par
+`www-data` sur un `/data` vierge, d'ou `configured:false` malgre un compte
+correctement cree. Re-chown apres le bootstrap dans `run.sh`.
+
 ## 1.0.3 - 2026-07-25
 
 ### Hypothèse : déconnexions inattendues en mode connecté

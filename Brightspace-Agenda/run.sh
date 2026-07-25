@@ -19,6 +19,10 @@ chown -R www-data:www-data "$DATA_DIR"
 
 php -f /usr/local/bin/bsa-bootstrap.php
 
+# Re-chown apres le bootstrap : execute en root, il cree config.json en
+# root:root (chmod 0640), illisible par www-data qui fait tourner Apache/PHP.
+chown -R www-data:www-data "$DATA_DIR"
+
 # Publication du service Discovery Supervisor en arrière-plan.
 # Le script attend que config.json soit prêt avant de publier, donc
 # il n'y a pas de race condition avec le bootstrap ci-dessus.
