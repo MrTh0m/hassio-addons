@@ -1,27 +1,23 @@
-# MicroOcpp Simulator (Home Assistant Addon)
+# MicroOcppSimulator_ADDON
 
-Simule une borne de recharge OCPP (client) pour tester l'intégration `ocpp` (lbbrhzn) de Home Assistant sans borne physique. Basé sur [MicroOcppSimulator](https://github.com/matth-x/MicroOcppSimulator).
+Dépôt d'add-on Home Assistant pour [MicroOcppSimulator](https://github.com/matth-x/MicroOcppSimulator), un simulateur de borne de recharge OCPP. Utile pour tester l'intégration `ocpp` (lbbrhzn) sans borne physique.
 
-![Addon Stage][stage-badge]
-![Supports aarch64 Architecture][aarch64-badge]
-![Supports amd64 Architecture][amd64-badge]
-![Supports armhf Architecture][armhf-badge]
-![Supports armv7 Architecture][armv7-badge]
-![Supports i386 Architecture][i386-badge]
+## Installation
 
-## À propos
+1. Dans Home Assistant : **Paramètres > Add-ons > Boutique des add-ons**.
+2. Menu ⋮ (en haut à droite) > **Dépôts**.
+3. Ajouter : `https://github.com/MrTh0m/MicroOcppSimulator_ADDON`
+4. Fermer, puis rafraîchir la page. L'add-on "MicroOcpp Simulator" apparaît dans la liste.
+5. L'installer (la compilation depuis les sources peut prendre plusieurs minutes), puis le démarrer.
+6. Accéder à son interface via le panneau latéral (ingress).
 
-Cet addon compile [MicroOcppSimulator](https://github.com/matth-x/MicroOcppSimulator) depuis ses sources officielles au moment du build (pas d'image pré-construite), donc la première installation peut prendre plusieurs minutes selon le matériel.
+Voir [microocppsimulator/DOCS.md](microocppsimulator/DOCS.md) pour l'utilisation détaillée.
 
-Voir [DOCS.md](DOCS.md) pour l'utilisation détaillée (connexion au serveur OCPP, remarques sur l'ingress, etc.).
+## Contenu
+
+- `microocppsimulator/` : l'add-on lui-même (config.yaml, Dockerfile, run.sh, docs)
+- `repository.yaml` : métadonnées du dépôt d'add-ons
 
 ## Licence
 
-MicroOcppSimulator est distribué sous licence GPL-3.0 (dépendance à la bibliothèque Mongoose). Aucun code n'est vendored dans ce dépôt, les sources sont récupérées depuis le dépôt officiel au moment du build.
-
-[aarch64-badge]: https://img.shields.io/badge/aarch64-yes-green.svg?style=for-the-badge
-[amd64-badge]: https://img.shields.io/badge/amd64-yes-green.svg?style=for-the-badge
-[armhf-badge]: https://img.shields.io/badge/armhf-yes-green.svg?style=for-the-badge
-[armv7-badge]: https://img.shields.io/badge/armv7-yes-green.svg?style=for-the-badge
-[i386-badge]: https://img.shields.io/badge/i386-yes-green.svg?style=for-the-badge
-[stage-badge]: https://img.shields.io/badge/Addon%20stage-experimental%20🧪-yellow.svg?style=for-the-badge
+L'add-on compile [MicroOcppSimulator](https://github.com/matth-x/MicroOcppSimulator) (GPL-3.0) depuis ses sources officielles au moment du build. Aucun code n'est vendored dans ce dépôt.
