@@ -20,14 +20,15 @@ Le nombre de connecteurs (bornes) simulés n'est pas configurable depuis l'inter
 - `MO_NUMCONNECTORS=3` (valeur par défaut de cet add-on) → 2 connecteurs simulés (id 1 et 2)
 - toute autre valeur → 1 seul connecteur simulé (id 1)
 
-Ce n'est pas un compteur libre, une valeur arbitraire cassera la compilation. Pour changer ce choix, modifie la valeur `MO_NUMCONNECTORS` dans `build.json` avant de (re)construire l'add-on.
+Ce n'est pas un compteur libre, une valeur arbitraire cassera la compilation. Pour changer ce choix, modifie la valeur par défaut de l'argument `MO_NUMCONNECTORS` directement dans le `Dockerfile` (`ARG MO_NUMCONNECTORS=3`), puis reconstruis l'add-on. Ce n'est plus réglable via `build.json`, qui n'est plus lu par Home Assistant depuis Supervisor 2026.04.0.
 
 ## Notes techniques sur les correctifs appliqués
 
-Deux problèmes du projet upstream sont corrigés dans le Dockerfile de cet add-on :
+Trois problèmes sont corrigés dans le Dockerfile de cet add-on par rapport au projet upstream :
 
 - **"Unable to fetch connectors"** : le dashboard livré par le projet est pré-compilé avec l'URL d'API figée en dur sur `http://localhost:8000/api`, ce qui casse tout accès via une IP ou un nom d'hôte différent de `localhost` ([issue upstream](https://github.com/matth-x/MicroOcppSimulator/issues/5)). Le dashboard est donc reconstruit au moment du build avec une URL d'API relative.
 - **Téléchargement d'un fichier `.gz` via l'ingress** : le serveur intégré sert par défaut la page pré-compressée en gzip. Ce header ne survit pas correctement au passage par le proxy d'ingress de Home Assistant. La page est donc servie non compressée à la place (l'impact sur la taille est négligeable, ~170 Ko).
+- **Échec de compilation avec les CMake récents** : une dépendance interne (`mbedtls`) déclare un `cmake_minimum_required` trop ancien, rejeté par les versions récentes de CMake. Corrigé via `-DCMAKE_POLICY_VERSION_MINIMUM=3.5`.
 
 ## Licence
 

@@ -1,5 +1,16 @@
-ARG BUILD_FROM=alpine:3.20
-FROM ${BUILD_FROM}
+# Home Assistant a retiré la lecture de build.json depuis Supervisor 2026.04.0.
+# L'image de base se fixe maintenant directement ici (voir la doc "builder migration").
+FROM alpine:3.20
+
+# Arguments fournis automatiquement par le Supervisor (toujours supportés,
+# contrairement à BUILD_FROM qui ne l'est plus).
+ARG BUILD_VERSION
+ARG BUILD_ARCH
+
+LABEL \
+    io.hass.version="${BUILD_VERSION}" \
+    io.hass.type="app" \
+    io.hass.arch="aarch64|amd64|armhf|armv7|i386"
 
 # Git + toolchain C++ pour compiler MicroOcppSimulator, + Node/npm pour reconstruire
 # le dashboard web avec une URL d'API relative (voir plus bas).
@@ -20,6 +31,8 @@ ARG SIMULATOR_REF=main
 # Nombre de connecteurs simulés. Le code source ne gère que deux cas :
 # 3 => 2 connecteurs (id 1 et 2), toute autre valeur => 1 connecteur (id 1).
 # Ce n'est pas un compteur libre, juste un choix binaire.
+# Non réglable via build.json (obsolète) : modifie cette valeur par défaut
+# directement ici si besoin, puis reconstruis l'add-on.
 ARG MO_NUMCONNECTORS=3
 
 # Sources officielles + submodules (dont le dashboard web dans webapp-src)
