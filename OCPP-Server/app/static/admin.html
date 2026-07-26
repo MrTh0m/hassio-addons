@@ -1,0 +1,223 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<title>OCPP Backoffice</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { font-family: system-ui, sans-serif; max-width: 960px; margin: 2rem auto; padding: 0 1rem; }
+  h1 { font-size: 1.4rem; }
+  table { width: 100%; border-collapse: collapse; margin-top: 1rem; }
+  th, td { text-align: left; padding: 0.5rem; border-bottom: 1px solid #8884; }
+  button { cursor: pointer; padding: 0.3rem 0.7rem; }
+  input, select { padding: 0.3rem; }
+  .row { display: flex; gap: 0.5rem; align-items: center; margin: 0.3rem 0; flex-wrap: wrap; }
+  .badge { padding: 0.1rem 0.5rem; border-radius: 1rem; font-size: 0.8rem; }
+  .badge.local { background: #2a72; }
+  .badge.relay { background: #a742; }
+  .badge.on { background: #2a7; color: #fff; }
+  .badge.off { background: #888; color: #fff; }
+  #login-box { max-width: 320px; margin-top: 4rem; }
+  .charger-detail { display: none; padding: 0.8rem; background: #8881; border-radius: 8px; margin: 0.3rem 0 1rem; }
+  .charger-detail.open { display: block; }
+  .error { color: #c33; }
+  a.expand { cursor: pointer; text-decoration: underline; }
+</style>
+</head>
+<body>
+
+<div id="login-box">
+  <h1>OCPP Backoffice</h1>
+  <div class="row"><input id="username" placeholder="Utilisateur" value="admin"></div>
+  <div class="row"><input id="password" type="password" placeholder="Mot de passe"></div>
+  <div class="row"><button onclick="login()">Se connecter</button></div>
+  <div id="login-error" class="error"></div>
+</div>
+
+<div id="app" style="display:none">
+  <div class="row" style="justify-content: space-between">
+    <h1>Bornes</h1>
+    <button onclick="logout()">Déconnexion</button>
+  </div>
+  <table id="chargers-table">
+    <thead>
+      <tr><th>ID</th><th>Vendeur / Modèle</th><th>Version</th><th>Mode</th><th>Statut</th><th>Connectée</th><th></th></tr>
+    </thead>
+    <tbody></tbody>
+  </table>
+</div>
+
+<script>
+let token = localStorage.getItem("ocpp_token") || null;
+
+function authHeaders() {
+  return { "Authorization": "Bearer " + token };
+}
+
+async function login() {
+  const username = document.getElementById("username").value;
+  const password = document.getElementById("password").value;
+  const body = new URLSearchParams({ username, password });
+  const resp = await fetch("/api/auth/login", { method: "POST", body });
+  if (!resp.ok) {
+    document.getElementById("login-error").textContent = "Identifiants invalides";
+    return;
+  }
+  const data = await resp.json();
+  token = data.access_token;
+  localStorage.setItem("ocpp_token", token);
+  showApp();
+}
+
+function logout() {
+  localStorage.removeItem("ocpp_token");
+  token = null;
+  document.getElementById("app").style.display = "none";
+  document.getElementById("login-box").style.display = "block";
+}
+
+function showApp() {
+  document.getElementById("login-box").style.display = "none";
+  document.getElementById("app").style.display = "block";
+  loadChargers();
+}
+
+async function loadChargers() {
+  const resp = await fetch("/api/chargers", { headers: authHeaders() });
+  if (resp.status === 401) { logout(); return; }
+  const chargers = await resp.json();
+  const tbody = document.querySelector("#chargers-table tbody");
+  tbody.innerHTML = "";
+  for (const c of chargers) {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td>${c.id}</td>
+      <td>${c.vendor || "-"} ${c.model || ""}</td>
+      <td>${c.ocpp_version || "-"}</td>
+      <td><span class="badge ${c.mode}">${c.mode}</span></td>
+      <td>${c.status}</td>
+      <td><span class="badge ${c.connected ? "on" : "off"}">${c.connected ? "oui" : "non"}</span></td>
+      <td><a class="expand" onclick="toggleDetail('${c.id}')">détails</a></td>
+    `;
+    tbody.appendChild(tr);
+    const detailTr = document.createElement("tr");
+    detailTr.innerHTML = `<td colspan="7"><div class="charger-detail" id="detail-${c.id}"></div></td>`;
+    tbody.appendChild(detailTr);
+  }
+}
+
+let openCharger = null;
+
+async function toggleDetail(id) {
+  const el = document.getElementById("detail-" + id);
+  if (openCharger === id) {
+    el.classList.remove("open");
+    openCharger = null;
+    return;
+  }
+  if (openCharger) {
+    const prev = document.getElementById("detail-" + openCharger);
+    if (prev) prev.classList.remove("open");
+  }
+  openCharger = id;
+  el.classList.add("open");
+  el.innerHTML = "chargement...";
+
+  const [chargerResp, sessionsResp, metersResp] = await Promise.all([
+    fetch(`/api/chargers/${id}`, { headers: authHeaders() }),
+    fetch(`/api/chargers/${id}/sessions`, { headers: authHeaders() }),
+    fetch(`/api/chargers/${id}/metervalues?limit=10`, { headers: authHeaders() }),
+  ]);
+  const charger = await chargerResp.json();
+  const sessions = await sessionsResp.json();
+  const meters = await metersResp.json();
+
+  const isLocal = charger.mode === "local";
+
+  let html = `<div class="row">
+    <label>Mode :</label>
+    <select id="mode-${id}" onchange="onModeChange('${id}')">
+      <option value="local" ${isLocal ? "selected" : ""}>local</option>
+      <option value="relay" ${!isLocal ? "selected" : ""}>relais</option>
+    </select>
+    <input id="relayurl-${id}" placeholder="wss://serveur-officiel/..." value="${charger.relay_url || ""}"
+      style="${isLocal ? "display:none" : ""}; min-width:280px">
+    <button onclick="saveMode('${id}')">Enregistrer</button>
+  </div>`;
+
+  if (isLocal) {
+    html += `<div class="row">
+      <input id="idtag-${id}" placeholder="idTag" style="width:100px">
+      <button onclick="startCharge('${id}')">Démarrer (connecteur 1)</button>
+      <input id="txn-${id}" placeholder="ID transaction" style="width:100px">
+      <button onclick="stopCharge('${id}')">Arrêter</button>
+    </div>`;
+  } else {
+    html += `<p><em>Pilotage indisponible : cette borne est en mode relais.</em></p>`;
+  }
+
+  html += `<p><b>Sessions récentes</b></p><table><thead><tr>
+    <th>#</th><th>Connecteur</th><th>Début</th><th>Fin</th><th>Wh</th><th>Statut</th>
+  </tr></thead><tbody>`;
+  for (const s of sessions.slice(0, 10)) {
+    const wh = (s.meter_start != null && s.meter_stop != null) ? (s.meter_stop - s.meter_start) : "-";
+    html += `<tr><td>${s.id}</td><td>${s.connector_id}</td><td>${s.start_time || "-"}</td>
+      <td>${s.stop_time || "-"}</td><td>${wh}</td><td>${s.status}</td></tr>`;
+  }
+  html += `</tbody></table>`;
+
+  html += `<p><b>Dernières valeurs de compteur</b></p><table><thead><tr>
+    <th>Horodatage</th><th>Grandeur</th><th>Valeur</th><th>Unité</th>
+  </tr></thead><tbody>`;
+  for (const m of meters) {
+    html += `<tr><td>${m.timestamp}</td><td>${m.measurand}</td><td>${m.value}</td><td>${m.unit || "-"}</td></tr>`;
+  }
+  html += `</tbody></table>`;
+
+  el.innerHTML = html;
+}
+
+function onModeChange(id) {
+  const mode = document.getElementById("mode-" + id).value;
+  document.getElementById("relayurl-" + id).style.display = mode === "relay" ? "inline-block" : "none";
+}
+
+async function saveMode(id) {
+  const mode = document.getElementById("mode-" + id).value;
+  const relay_url = document.getElementById("relayurl-" + id).value;
+  const body = { mode };
+  if (mode === "relay") body.relay_url = relay_url;
+  const resp = await fetch(`/api/chargers/${id}/mode`, {
+    method: "PUT",
+    headers: { ...authHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (resp.ok) { loadChargers(); } else { alert("Échec de la mise à jour du mode"); }
+}
+
+async function startCharge(id) {
+  const id_tag = document.getElementById("idtag-" + id).value || "WEBADMIN";
+  const resp = await fetch(`/api/chargers/${id}/connectors/1/start`, {
+    method: "POST",
+    headers: { ...authHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({ id_tag }),
+  });
+  const data = await resp.json().catch(() => ({}));
+  alert(resp.ok ? "Démarrage : " + data.status : "Erreur : " + (data.detail || resp.status));
+}
+
+async function stopCharge(id) {
+  const transaction_id = parseInt(document.getElementById("txn-" + id).value, 10);
+  const resp = await fetch(`/api/chargers/${id}/connectors/1/stop`, {
+    method: "POST",
+    headers: { ...authHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({ transaction_id }),
+  });
+  const data = await resp.json().catch(() => ({}));
+  alert(resp.ok ? "Arrêt : " + data.status : "Erreur : " + (data.detail || resp.status));
+}
+
+if (token) { showApp(); }
+</script>
+</body>
+</html>
