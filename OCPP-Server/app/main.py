@@ -1,6 +1,8 @@
 import logging
+import os
 
 from fastapi import FastAPI, WebSocket
+from fastapi.responses import FileResponse, RedirectResponse
 from starlette.websockets import WebSocketDisconnect
 from sqlalchemy.orm import Session
 
@@ -16,6 +18,18 @@ logger = logging.getLogger("ocpp-server")
 
 app = FastAPI(title="OCPP Backoffice Server")
 app.include_router(api_router)
+
+STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
+
+
+@app.get("/")
+def root():
+    return RedirectResponse(url="/admin")
+
+
+@app.get("/admin")
+def admin_page():
+    return FileResponse(os.path.join(STATIC_DIR, "admin.html"))
 
 
 @app.on_event("startup")
