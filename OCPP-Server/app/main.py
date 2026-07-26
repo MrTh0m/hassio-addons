@@ -1,0 +1,78 @@
+import logging
+
+from fastapi import FastAPI, WebSocket
+from starlette.websockets import WebSocketDisconnect
+from sqlalchemy.orm import Session
+
+from .db import init_db, SessionLocal
+from .models import Charger, ChargerMode
+from .api import router as api_router
+from .ws_adapter import StarletteWebSocketAdapter
+from .csms_local import LocalChargePoint, CONNECTED_CHARGERS
+from .relay import run_relay
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("ocpp-server")
+
+app = FastAPI(title="OCPP Backoffice Server")
+app.include_router(api_router)
+
+
+@app.on_event("startup")
+def on_startup():
+    init_db()
+
+
+@app.get("/healthz")
+def healthz():
+    return {"status": "ok"}
+
+
+def _pick_subprotocol(websocket: WebSocket) -> str | None:
+    offered = websocket.headers.get("sec-websocket-protocol", "")
+    offered_list = [p.strip() for p in offered.split(",") if p.strip()]
+    for preferred in ("ocpp1.6", "ocpp2.0.1", "ocpp2.0"):
+        if preferred in offered_list:
+            return preferred
+    return offered_list[0] if offered_list else None
+
+
+@app.websocket("/ocpp/{charge_point_id}")
+async def ocpp_endpoint(websocket: WebSocket, charge_point_id: str):
+    subprotocol = _pick_subprotocol(websocket)
+    await websocket.accept(subprotocol=subprotocol)
+    logger.info("Nouvelle connexion OCPP : %s (sous-protocole %s)", charge_point_id, subprotocol)
+
+    db: Session = SessionLocal()
+    try:
+        charger = db.query(Charger).filter(Charger.id == charge_point_id).first()
+        if not charger:
+            # Découverte automatique : une borne inconnue est enregistrée
+            # en mode local par défaut, modifiable ensuite via l'API.
+            charger = Charger(id=charge_point_id, mode=ChargerMode.local)
+            db.add(charger)
+            db.commit()
+        mode = charger.mode
+        relay_url = charger.relay_url
+    finally:
+        db.close()
+
+    try:
+        if mode == ChargerMode.relay:
+            if not relay_url:
+                logger.error("Borne %s en mode relais sans relay_url configurée", charge_point_id)
+                await websocket.close()
+                return
+            await run_relay(charge_point_id, relay_url, websocket, subprotocol)
+        else:
+            connection = StarletteWebSocketAdapter(websocket)
+            cp = LocalChargePoint(charge_point_id, connection)
+            CONNECTED_CHARGERS[charge_point_id] = cp
+            try:
+                await cp.start()
+            finally:
+                CONNECTED_CHARGERS.pop(charge_point_id, None)
+    except (ConnectionError, WebSocketDisconnect):
+        logger.info("Borne %s déconnectée", charge_point_id)
+    except Exception:
+        logger.exception("Erreur sur la connexion OCPP de %s", charge_point_id)

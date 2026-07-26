@@ -1,0 +1,8 @@
+fastapi
+uvicorn[standard]
+sqlalchemy
+ocpp
+websockets
+pyjwt
+bcrypt
+python-multipart
