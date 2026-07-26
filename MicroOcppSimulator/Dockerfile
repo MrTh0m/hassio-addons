@@ -56,8 +56,12 @@ RUN rm -f public/bundle.html.gz
 RUN sed -i 's/Content-Encoding: gzip\\r\\n//' src/net_mongoose.cpp \
     && sed -i 's/bundle\.html\.gz/bundle.html/' src/net_mongoose.cpp
 
-# Compilation (identique à la procédure officielle du projet)
-RUN cmake -S . -B ./build \
+# --- Fix : compatibilité avec les versions récentes de CMake ---
+# lib/mbedtls (dépendance du simulateur) déclare un cmake_minimum_required trop
+# ancien. Les versions récentes de CMake refusent purement et simplement de
+# configurer un tel projet au lieu d'un simple avertissement. On relève le seuil
+# de compatibilité minimal accepté, comme suggéré par le message d'erreur de CMake.
+RUN cmake -S . -B ./build -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
     && cmake --build ./build -j "$(nproc)" --target mo_simulator \
     && chmod +x ./build/mo_simulator
 
