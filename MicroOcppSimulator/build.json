@@ -5,5 +5,8 @@
     "armhf": "alpine:3.20",
     "armv7": "alpine:3.20",
     "i386": "alpine:3.20"
+  },
+  "args": {
+    "MO_NUMCONNECTORS": "3"
   }
 }

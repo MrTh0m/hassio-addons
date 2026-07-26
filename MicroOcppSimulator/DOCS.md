@@ -1,28 +1,38 @@
 # MicroOcpp Simulator
 
-Cet add-on empaquette [MicroOcppSimulator](https://github.com/matth-x/MicroOcppSimulator), l'outil de test/démo officiel du projet MicroOCPP. Il simule une borne de recharge (côté Charge Point) et se connecte à un serveur OCPP central, comme l'intégration `ocpp` (lbbrhzn) de Home Assistant, sans qu'une borne physique soit nécessaire.
+Cet add-on empaquette [MicroOcppSimulator](https://github.com/matth-x/MicroOcppSimulator), l'outil de test/démo officiel du projet MicroOCPP. Il simule une borne de recharge (côté Charge Point) et se connecte en OCPP 1.6 à n'importe quel serveur central, Home Assistant ou non.
 
 ## Installation
 
-L'add-on est compilé depuis les sources C++ du projet au moment du build (pas d'image pré-construite). Sur du matériel modeste (Raspberry Pi par exemple), la première installation peut prendre plusieurs minutes le temps de la compilation.
+L'add-on est compilé depuis les sources au moment du build (C++ via cmake, plus une reconstruction du dashboard web via npm), pas d'image pré-construite. La première installation peut prendre plusieurs minutes selon le matériel.
 
 ## Utilisation
 
-1. Démarre l'add-on (bouton "Start"), puis ouvre son interface (voir la section ingress ci-dessous pour l'état actuel).
-2. Dans l'interface du simulateur, section "Control Center", renseigne l'URL de ton serveur OCPP Home Assistant (ex. `ws://homeassistant.local:9000/CP_SIM`, adapte selon la configuration de ton intégration `ocpp`) et un identifiant de station.
-3. Valide la connexion. Le simulateur devrait alors apparaître comme un nouvel appareil dans l'intégration OCPP de Home Assistant, avec ses entités (statut, mesures, switches).
+1. Démarre l'add-on, puis ouvre son interface (panneau latéral ou port direct).
+2. Dans la section "OCPP 1.6 Connection", renseigne l'URL de ton serveur OCPP (ex. `ws://homeassistant.local:9000/CP_SIM` pour l'intégration `ocpp` de Home Assistant) et un identifiant de station, puis valide.
+3. Le simulateur devrait apparaître comme un nouvel appareil côté serveur OCPP, avec ses entités (statut, mesures, switches).
 4. Utilise l'interface pour déclencher des sessions de charge simulées, des changements de statut, etc.
 
-## À propos de l'ingress
+## Connecteurs simulés
 
-L'accès via le panneau latéral (ingress) fait transiter les requêtes par un sous-chemin dynamique généré par Home Assistant. Sur cet addon, l'ingress ne fonctionne pas correctement pour l'instant : la page se télécharge sous forme d'un fichier `.gz` au lieu de s'afficher. L'interface de MicroOcppSimulator est servie pré-compressée (bundle `.gz`), et tout laisse penser que le proxy d'ingress ne relaie pas l'en-tête `Accept-Encoding` de la même façon qu'un accès direct, ce qui fait que le navigateur reçoit le fichier compressé brut au lieu d'un contenu décompressé automatiquement.
+Le nombre de connecteurs (bornes) simulés n'est pas configurable depuis l'interface : c'est une constante fixée à la compilation dans le code source du projet (`MO_NUMCONNECTORS`). Le code source ne gère que deux cas précis :
 
-**Solution actuelle** : active le mappage direct du port 8000 dans l'onglet "Réseau" de l'add-on, et accède à l'interface via `http://<ip-de-ton-serveur>:8000/` plutôt que par le panneau latéral.
+- `MO_NUMCONNECTORS=3` (valeur par défaut de cet add-on) → 2 connecteurs simulés (id 1 et 2)
+- toute autre valeur → 1 seul connecteur simulé (id 1)
+
+Ce n'est pas un compteur libre, une valeur arbitraire cassera la compilation. Pour changer ce choix, modifie la valeur `MO_NUMCONNECTORS` dans `build.json` avant de (re)construire l'add-on.
+
+## Notes techniques sur les correctifs appliqués
+
+Deux problèmes du projet upstream sont corrigés dans le Dockerfile de cet add-on :
+
+- **"Unable to fetch connectors"** : le dashboard livré par le projet est pré-compilé avec l'URL d'API figée en dur sur `http://localhost:8000/api`, ce qui casse tout accès via une IP ou un nom d'hôte différent de `localhost` ([issue upstream](https://github.com/matth-x/MicroOcppSimulator/issues/5)). Le dashboard est donc reconstruit au moment du build avec une URL d'API relative.
+- **Téléchargement d'un fichier `.gz` via l'ingress** : le serveur intégré sert par défaut la page pré-compressée en gzip. Ce header ne survit pas correctement au passage par le proxy d'ingress de Home Assistant. La page est donc servie non compressée à la place (l'impact sur la taille est négligeable, ~170 Ko).
 
 ## Licence
 
-Ce projet embarque MicroOcppSimulator, distribué sous licence GPL-3.0 (en raison de sa dépendance à la bibliothèque Mongoose). Le code source complet reste disponible sur le [dépôt officiel](https://github.com/matth-x/MicroOcppSimulator).
+Ce projet embarque MicroOcppSimulator, distribué sous licence GPL-3.0 (dépendance à la bibliothèque Mongoose). Le code source complet reste disponible sur le [dépôt officiel](https://github.com/matth-x/MicroOcppSimulator).
 
 ## Support
 
-Cet add-on n'est pas un projet officiel de Schneider Electric, Home Assistant, ni de l'auteur de MicroOCPP. Pour les problèmes liés au simulateur lui-même, se référer au [dépôt officiel](https://github.com/matth-x/MicroOcppSimulator/issues).
+Cet add-on n'est pas un projet officiel de Schneider Electric, Home Assistant, ni de l'auteur de MicroOCPP. Pour les problèmes liés au simulateur lui-même (hors correctifs ci-dessus), se référer au [dépôt officiel](https://github.com/matth-x/MicroOcppSimulator/issues).
