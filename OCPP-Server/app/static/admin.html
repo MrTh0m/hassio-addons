@@ -37,7 +37,10 @@
 <div id="app" style="display:none">
   <div class="row" style="justify-content: space-between">
     <h1>Bornes</h1>
-    <button onclick="logout()">Déconnexion</button>
+    <div class="row">
+      <button onclick="loadChargers()">Rafraîchir</button>
+      <button onclick="logout()">Déconnexion</button>
+    </div>
   </div>
   <table id="chargers-table">
     <thead>
@@ -80,6 +83,10 @@ function showApp() {
   document.getElementById("login-box").style.display = "none";
   document.getElementById("app").style.display = "block";
   loadChargers();
+  if (!window._pollStarted) {
+    window._pollStarted = true;
+    setInterval(() => { if (!openCharger) loadChargers(); }, 5000);
+  }
 }
 
 async function loadChargers() {
