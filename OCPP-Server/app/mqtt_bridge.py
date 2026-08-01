@@ -131,6 +131,28 @@ async def _handle_command(message: aiomqtt.Message):
         logger.exception("Erreur lors du traitement de la commande MQTT pour %s", charger_id)
 
 
+async def republish_all():
+    """Republie la découverte (et le dernier statut connu) pour toutes les
+    bornes déjà enregistrées en base. Appelé à chaque (re)connexion au
+    broker : la découverte n'est sinon publiée qu'au moment où une borne se
+    connecte au WebSocket, ce qui peut être manqué si le client MQTT n'est
+    pas encore prêt à cet instant précis (cas typique après un redémarrage
+    du conteneur, où la borne se reconnecte souvent plus vite que MQTT)."""
+    from .db import SessionLocal
+    from .models import Charger
+
+    db = SessionLocal()
+    try:
+        chargers = db.query(Charger).all()
+    finally:
+        db.close()
+
+    for charger in chargers:
+        await publish_discovery(charger.id, charger.mode.value)
+        if charger.status:
+            await publish_state(charger.id, status=charger.status)
+
+
 async def run_mqtt_bridge():
     """Boucle de fond : maintient la connexion MQTT et reconnecte
     automatiquement en cas de coupure."""
@@ -146,6 +168,7 @@ async def run_mqtt_bridge():
             ) as client:
                 _client = client
                 logger.info("Connecté au broker MQTT %s:%s", MQTT_HOST, MQTT_PORT)
+                await republish_all()
                 await client.subscribe(f"{BASE_TOPIC}/+/charge_control/set")
                 async for message in client.messages:
                     await _handle_command(message)

@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.7.0
+
+- **Fix : aucune entité n'apparaissait côté Home Assistant malgré une connexion MQTT réussie.** La découverte n'était publiée qu'au moment précis où une borne se connectait au WebSocket. Si le client MQTT n'était pas encore prêt à cet instant (typiquement juste après un redémarrage du conteneur, quand la borne se reconnecte plus vite que MQTT), la publication tombait dans le vide et n'était jamais retentée tant que la borne restait connectée. La découverte (et le dernier statut connu) est maintenant republiée pour toutes les bornes connues à chaque (re)connexion réussie au broker.
+- Testé : une borne déjà en base mais sans connexion WebSocket active reçoit bien sa configuration de découverte dès que le serveur se connecte au broker.
+
+## 0.6.0
+
+- **Fix (auth MQTT) : "Not authorised" à la connexion.** L'add-on utilise maintenant le mécanisme officiel de service Supervisor (`services: ["mqtt:want"]`) pour récupérer automatiquement les identifiants MQTT provisionnés pour les add-ons (l'utilisateur `addons`, avec les bonnes permissions déjà accordées), au lieu de demander de créer un utilisateur Mosquitto à la main. Si `mqtt_username` est laissé vide dans la configuration de l'add-on, la détection est automatique ; le renseigner manuellement reste possible et prioritaire (utile pour un broker externe à Home Assistant, y compris sur une autre instance).
+- Nouveau fichier `resolve_config.py`, appelé au démarrage par `run.sh`, qui centralise la lecture des options et cette auto-détection.
+- Testé : détection automatique (via un faux service Supervisor), configuration manuelle prioritaire, et échappement correct des valeurs contenant guillemets/`$`/espaces.
+
 ## 0.5.0
 
 - Le "base topic" MQTT est maintenant configurable (`mqtt_base_topic`, par défaut `ocppserver`), pour éviter tout conflit si d'autres intégrations (Zigbee2MQTT, etc.) partagent le même broker.
@@ -11,18 +22,17 @@
 - **Pont MQTT vers Home Assistant** (et tout autre système lisant le MQTT Discovery de HA) : chaque borne connectée publie automatiquement, via MQTT :
   - des capteurs : statut, puissance (W), énergie (Wh), durée de la charge en cours (min)
   - un switch "Autoriser la charge" (mode local uniquement), qui déclenche un vrai `RemoteStartTransaction`/`RemoteStopTransaction` sur la borne
-  - Fonctionne aussi bien en mode local qu'en mode relais pour les métriques (le relais capte aussi désormais les `StatusNotification`, pas seulement les valeurs de compteur). En mode relais, pas de switch de pilotage, conformément à la règle déjà en place côté API REST.
+  - Fonctionne aussi bien en mode local qu'en mode relais pour les métriques. En mode relais, pas de switch de pilotage.
   - Reconnexion automatique au broker en cas de coupure.
-  - Configurable via les options de l'add-on : `mqtt_enabled`, `mqtt_host` (par défaut `core-mosquitto`, le nom d'hôte standard de l'add-on Mosquitto officiel), `mqtt_port`, `mqtt_username`, `mqtt_password`.
 - Testé de bout en bout avec un vrai broker Mosquitto : découverte des entités, remontée des états, et commande MQTT déclenchant bien un ordre OCPP réel vers la borne.
 
 ## 0.3.0
 
-- Fix (conformité OCPP) : les timestamps envoyés par le serveur (BootNotification, Heartbeat) n'incluaient pas d'indicateur de fuseau UTC (`Z`), non conforme au type `dateTime` de la norme. Corrigé.
-- Fix (conformité OCPP) : le statut de chaque connecteur écrasait celui des autres connecteurs dans un unique champ. Chaque connecteur a maintenant son propre statut stocké séparément (nouvelle table `connector_statuses`), le champ résumé de la borne ne reflétant que le connecteur 0 (la borne elle-même, au sens de la norme), pas un connecteur physique.
-- Nouvel endpoint `GET /api/chargers/{id}/connectors`, affiché dans la page admin.
+- Fix (conformité OCPP) : timestamps sans indicateur de fuseau UTC (`Z`), non conforme au type `dateTime` de la norme. Corrigé.
+- Fix (conformité OCPP) : le statut de chaque connecteur écrasait celui des autres. Chaque connecteur a maintenant son propre statut stocké séparément.
+- Nouvel endpoint `GET /api/chargers/{id}/connectors`.
 - Fix : `run.sh` utilisait `#!/usr/bin/env bash`, absent de l'image Alpine. Passage à `#!/bin/sh`.
-- La route WebSocket OCPP est bien `/ocpp/{id_borne}` (à rappeler dans la config du charge point : Backend URL = `ws://<ip>:8000/ocpp`, pas `ws://<ip>:8000`).
+- La route WebSocket OCPP est `/ocpp/{id_borne}` (Backend URL = `ws://<ip>:8000/ocpp`, pas `ws://<ip>:8000`).
 
 ## 0.2.0
 

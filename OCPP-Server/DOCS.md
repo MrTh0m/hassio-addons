@@ -24,21 +24,23 @@ Par défaut, une borne nouvellement connectée est en mode `local` : le serveur 
 
 ## Intégration Home Assistant (MQTT)
 
-Le serveur publie automatiquement, pour chaque borne connectée, les entités suivantes via le protocole MQTT Discovery de Home Assistant (aucune configuration à faire côté HA au-delà d'avoir un broker MQTT actif, ex. l'add-on Mosquitto broker) :
+Le serveur publie automatiquement, pour chaque borne connectée, les entités suivantes via le protocole MQTT Discovery de Home Assistant :
 
 - **Capteurs** : statut, puissance (W), énergie (Wh), durée de la charge en cours (min)
 - **Switch "Autoriser la charge"** (borne en mode local uniquement) : bascule ON pour démarrer une charge à distance (connecteur 1), OFF pour l'arrêter
 
 Les entités apparaissent dans HA sous un appareil nommé "Borne \<identifiant\>", regroupées automatiquement.
 
-**Configuration du broker** (onglet "Configuration" de l'add-on) :
+**Identifiants du broker : rien à faire dans le cas courant.** L'add-on déclare officiellement vouloir utiliser le service MQTT de Home Assistant (`services: mqtt:want`), ce qui lui donne accès, au démarrage, aux identifiants auto-provisionnés pour les add-ons (l'utilisateur `addons`, avec les permissions déjà accordées par le Supervisor) — le même mécanisme qu'utilisent Zigbee2MQTT et la plupart des add-ons du même genre. Si un add-on Mosquitto broker officiel est installé, ça fonctionne sans aucune configuration.
+
+**Configuration manuelle** (onglet "Configuration" de l'add-on), seulement si besoin d'un broker externe ou différent :
 
 | Option | Par défaut | Description |
 |---|---|---|
 | `mqtt_enabled` | `true` | Active/désactive le pont MQTT |
-| `mqtt_host` | `core-mosquitto` | Nom d'hôte du broker (le nom standard de l'add-on Mosquitto officiel sur le réseau interne HA) |
-| `mqtt_port` | `1883` | Port du broker |
-| `mqtt_username` / `mqtt_password` | vide | Si le broker exige une authentification |
+| `mqtt_host` | `core-mosquitto` | Utilisé seulement si `mqtt_username` est renseigné (sinon auto-détection) |
+| `mqtt_port` | `1883` | idem |
+| `mqtt_username` / `mqtt_password` | vide | Renseigner l'un ou l'autre désactive l'auto-détection et force ces identifiants |
 | `mqtt_base_topic` | `ocppserver` | Préfixe des topics d'état/commande (pas ceux de discovery, qui restent sous `homeassistant/`). À changer si conflit avec une autre intégration sur le même broker. |
 
 ## Limitations connues de cette version
