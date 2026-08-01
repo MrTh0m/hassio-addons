@@ -14,7 +14,7 @@ MQTT_PASSWORD = os.environ.get("MQTT_PASSWORD") or None
 MQTT_ENABLED = os.environ.get("MQTT_ENABLED", "true").lower() == "true"
 
 DISCOVERY_PREFIX = "homeassistant"
-BASE_TOPIC = "ocppserver"
+BASE_TOPIC = os.environ.get("MQTT_BASE_TOPIC", "ocppserver")
 
 _client: aiomqtt.Client | None = None
 _slug_to_id: dict[str, str] = {}

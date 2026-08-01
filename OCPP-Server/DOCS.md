@@ -1,6 +1,6 @@
 # OCPP Backoffice Server
 
-Serveur OCPP 1.6 (CSMS) auto-hébergé : accueille une ou plusieurs bornes, avec pour chacune un choix entre pilotage local complet ou relais transparent vers le serveur officiel du fabricant. Expose une API REST, une page d'administration basique, et un pont MQTT vers Home Assistant (ou tout autre système compatible MQTT Discovery).
+Serveur OCPP 1.6 (CSMS) auto-hébergé : accueille une ou plusieurs bornes, avec pour chacune un choix entre pilotage local complet ou relais transparent vers le serveur officiel du fabricant. Expose une API REST, une page d'administration, et un pont MQTT vers Home Assistant (ou tout autre système compatible MQTT Discovery).
 
 ## Premier démarrage
 
@@ -39,6 +39,7 @@ Les entités apparaissent dans HA sous un appareil nommé "Borne \<identifiant\>
 | `mqtt_host` | `core-mosquitto` | Nom d'hôte du broker (le nom standard de l'add-on Mosquitto officiel sur le réseau interne HA) |
 | `mqtt_port` | `1883` | Port du broker |
 | `mqtt_username` / `mqtt_password` | vide | Si le broker exige une authentification |
+| `mqtt_base_topic` | `ocppserver` | Préfixe des topics d'état/commande (pas ceux de discovery, qui restent sous `homeassistant/`). À changer si conflit avec une autre intégration sur le même broker. |
 
 ## Limitations connues de cette version
 

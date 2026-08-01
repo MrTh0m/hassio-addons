@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.5.0
+
+- Le "base topic" MQTT est maintenant configurable (`mqtt_base_topic`, par défaut `ocppserver`), pour éviter tout conflit si d'autres intégrations (Zigbee2MQTT, etc.) partagent le même broker.
+- Page `/admin` : ajout d'un bandeau titre avec le numéro de version, d'une bascule thème clair/sombre (mémorisée, respecte la préférence système par défaut), et d'un pied de page (version, lien vers le dépôt, mention de licence).
+- Nouvel endpoint `GET /api/version`.
+
 ## 0.4.0
 
 - **Pont MQTT vers Home Assistant** (et tout autre système lisant le MQTT Discovery de HA) : chaque borne connectée publie automatiquement, via MQTT :
@@ -35,5 +41,5 @@
 - OCPP 2.0.1 non implémenté.
 - Un seul compte administrateur, pas de gestion multi-utilisateurs.
 - Rattachement de transaction incomplet sur StopTransaction en mode relais.
-- La page `/admin` est volontairement minimale (pas de graphes/coûts) : c'est un outil d'administration, pas encore l'app consommateur prévue plus loin dans l'architecture.
-- Le switch de pilotage MQTT n'agit que sur le connecteur 1 (pas de multi-connecteur pilotable individuellement pour l'instant).
+- Le switch de pilotage MQTT n'agit que sur le connecteur 1.
+- La page `/admin` reste un outil d'administration (pas de graphes/coûts), pas l'app "consommateur final" prévue plus loin dans l'architecture.

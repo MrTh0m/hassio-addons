@@ -12,6 +12,7 @@ if [ -f /data/options.json ]; then
     export MQTT_ENABLED=$(python3 -c "import json;print(str(json.load(open('/data/options.json')).get('mqtt_enabled', True)).lower())")
     export MQTT_HOST=$(python3 -c "import json;print(json.load(open('/data/options.json')).get('mqtt_host','core-mosquitto'))")
     export MQTT_PORT=$(python3 -c "import json;print(json.load(open('/data/options.json')).get('mqtt_port',1883))")
+    export MQTT_BASE_TOPIC=$(python3 -c "import json;print(json.load(open('/data/options.json')).get('mqtt_base_topic','ocppserver'))")
     MQTT_USER=$(python3 -c "import json;print(json.load(open('/data/options.json')).get('mqtt_username') or '')")
     MQTT_PASS=$(python3 -c "import json;print(json.load(open('/data/options.json')).get('mqtt_password') or '')")
     [ -n "$MQTT_USER" ] && export MQTT_USERNAME="$MQTT_USER"

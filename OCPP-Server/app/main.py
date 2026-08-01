@@ -40,9 +40,17 @@ async def on_startup():
     asyncio.create_task(mqtt_bridge.run_mqtt_bridge())
 
 
+APP_VERSION = "0.5.0"
+
+
 @app.get("/healthz")
 def healthz():
     return {"status": "ok"}
+
+
+@app.get("/api/version")
+def get_version():
+    return {"version": APP_VERSION}
 
 
 def _pick_subprotocol(websocket: WebSocket) -> str | None:
