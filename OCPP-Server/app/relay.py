@@ -6,12 +6,13 @@ import websockets
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
 from .db import SessionLocal
-from .models import MeterValue, Transaction
+from .models import MeterValue, Transaction, Charger, ConnectorStatus
+from . import mqtt_bridge
 
 logger = logging.getLogger("relay")
 
 
-def _snoop_frame(charger_id: str, raw: str):
+async def _snoop_frame(charger_id: str, raw: str):
     """Analyse au mieux une trame OCPP brute (envoyée par la borne) pour en
     extraire des métriques, sans jamais bloquer ni modifier le relais lui-même.
     Toute erreur de parsing est silencieusement ignorée : le relais doit
@@ -23,8 +24,28 @@ def _snoop_frame(charger_id: str, raw: str):
         action = frame[2]
         payload = frame[3]
         db = SessionLocal()
+        mqtt_updates = {}
         try:
-            if action == "MeterValues":
+            if action == "StatusNotification":
+                connector_id = payload.get("connectorId")
+                status = payload.get("status")
+                entry = db.query(ConnectorStatus).filter(
+                    ConnectorStatus.charger_id == charger_id,
+                    ConnectorStatus.connector_id == connector_id,
+                ).first()
+                if not entry:
+                    entry = ConnectorStatus(charger_id=charger_id, connector_id=connector_id)
+                    db.add(entry)
+                entry.status = status
+                entry.error_code = payload.get("errorCode")
+                entry.updated_at = datetime.utcnow()
+                if connector_id == 0:
+                    charger = db.query(Charger).filter(Charger.id == charger_id).first()
+                    if charger:
+                        charger.status = status
+                    mqtt_updates["status"] = status
+                db.commit()
+            elif action == "MeterValues":
                 connector_id = payload.get("connectorId")
                 transaction_id = payload.get("transactionId")
                 for mv in payload.get("meterValue", []):
@@ -33,14 +54,19 @@ def _snoop_frame(charger_id: str, raw: str):
                             value = float(sv.get("value"))
                         except (TypeError, ValueError):
                             continue
+                        measurand = sv.get("measurand", "Energy.Active.Import.Register")
                         db.add(MeterValue(
                             charger_id=charger_id,
                             transaction_id=transaction_id,
                             connector_id=connector_id,
-                            measurand=sv.get("measurand", "Energy.Active.Import.Register"),
+                            measurand=measurand,
                             value=value,
                             unit=sv.get("unit"),
                         ))
+                        if measurand == "Power.Active.Import":
+                            mqtt_updates["power_w"] = value
+                        elif measurand == "Energy.Active.Import.Register":
+                            mqtt_updates["energy_wh"] = value
                 db.commit()
             elif action == "StartTransaction":
                 db.add(Transaction(
@@ -58,6 +84,9 @@ def _snoop_frame(charger_id: str, raw: str):
                 pass
         finally:
             db.close()
+
+        if mqtt_updates:
+            await mqtt_bridge.publish_state(charger_id, **mqtt_updates)
     except Exception:
         logger.debug("Impossible d'analyser la trame en mode relais", exc_info=True)
 
@@ -74,7 +103,7 @@ async def run_relay(charger_id: str, relay_base_url: str, incoming_ws: WebSocket
             try:
                 while True:
                     raw = await incoming_ws.receive_text()
-                    _snoop_frame(charger_id, raw)
+                    await _snoop_frame(charger_id, raw)
                     await upstream.send(raw)
             except (WebSocketDisconnect, websockets.ConnectionClosed):
                 pass

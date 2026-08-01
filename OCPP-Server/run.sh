@@ -3,12 +3,19 @@ set -e
 
 mkdir -p /data
 
-# Lit le mot de passe admin choisi dans la config de l'add-on (Supervisor
-# écrit les options dans /data/options.json, y compris pour les add-ons
-# locaux qui n'utilisent pas bashio).
+# Lit les options de l'add-on (Supervisor écrit /data/options.json, y compris
+# pour les add-ons locaux qui n'utilisent pas bashio).
 if [ -f /data/options.json ]; then
     ADMIN_PASSWORD=$(python3 -c "import json;print(json.load(open('/data/options.json')).get('admin_password','admin'))")
     export OCPP_ADMIN_PASSWORD="$ADMIN_PASSWORD"
+
+    export MQTT_ENABLED=$(python3 -c "import json;print(str(json.load(open('/data/options.json')).get('mqtt_enabled', True)).lower())")
+    export MQTT_HOST=$(python3 -c "import json;print(json.load(open('/data/options.json')).get('mqtt_host','core-mosquitto'))")
+    export MQTT_PORT=$(python3 -c "import json;print(json.load(open('/data/options.json')).get('mqtt_port',1883))")
+    MQTT_USER=$(python3 -c "import json;print(json.load(open('/data/options.json')).get('mqtt_username') or '')")
+    MQTT_PASS=$(python3 -c "import json;print(json.load(open('/data/options.json')).get('mqtt_password') or '')")
+    [ -n "$MQTT_USER" ] && export MQTT_USERNAME="$MQTT_USER"
+    [ -n "$MQTT_PASS" ] && export MQTT_PASSWORD="$MQTT_PASS"
 fi
 
 # Génère une clé secrète JWT une seule fois et la conserve dans /data

@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.4.0
+
+- **Pont MQTT vers Home Assistant** (et tout autre système lisant le MQTT Discovery de HA) : chaque borne connectée publie automatiquement, via MQTT :
+  - des capteurs : statut, puissance (W), énergie (Wh), durée de la charge en cours (min)
+  - un switch "Autoriser la charge" (mode local uniquement), qui déclenche un vrai `RemoteStartTransaction`/`RemoteStopTransaction` sur la borne
+  - Fonctionne aussi bien en mode local qu'en mode relais pour les métriques (le relais capte aussi désormais les `StatusNotification`, pas seulement les valeurs de compteur). En mode relais, pas de switch de pilotage, conformément à la règle déjà en place côté API REST.
+  - Reconnexion automatique au broker en cas de coupure.
+  - Configurable via les options de l'add-on : `mqtt_enabled`, `mqtt_host` (par défaut `core-mosquitto`, le nom d'hôte standard de l'add-on Mosquitto officiel), `mqtt_port`, `mqtt_username`, `mqtt_password`.
+- Testé de bout en bout avec un vrai broker Mosquitto : découverte des entités, remontée des états, et commande MQTT déclenchant bien un ordre OCPP réel vers la borne.
+
 ## 0.3.0
 
 - Fix (conformité OCPP) : les timestamps envoyés par le serveur (BootNotification, Heartbeat) n'incluaient pas d'indicateur de fuseau UTC (`Z`), non conforme au type `dateTime` de la norme. Corrigé.
@@ -25,5 +35,5 @@
 - OCPP 2.0.1 non implémenté.
 - Un seul compte administrateur, pas de gestion multi-utilisateurs.
 - Rattachement de transaction incomplet sur StopTransaction en mode relais.
-- Pas de pont MQTT/Home Assistant (prévu pour une prochaine version).
 - La page `/admin` est volontairement minimale (pas de graphes/coûts) : c'est un outil d'administration, pas encore l'app consommateur prévue plus loin dans l'architecture.
+- Le switch de pilotage MQTT n'agit que sur le connecteur 1 (pas de multi-connecteur pilotable individuellement pour l'instant).

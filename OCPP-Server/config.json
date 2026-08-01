@@ -1,8 +1,8 @@
 {
   "name": "OCPP Backoffice Server",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "slug": "ocppserver",
-  "description": "Serveur OCPP 1.6 (CSMS) avec API REST et page d'administration basique : plusieurs bornes, mode local ou relais par borne, comptes utilisateurs.",
+  "description": "Serveur OCPP 1.6 (CSMS) avec API REST, page d'administration et pont MQTT vers Home Assistant : plusieurs bornes, mode local ou relais par borne, comptes utilisateurs.",
   "url": "https://github.com/MrTh0m/hassio-addons",
   "arch": ["aarch64", "amd64", "armhf", "armv7", "i386"],
   "init": false,
@@ -19,9 +19,19 @@
     "8000/tcp": "Admin web (/admin), API REST (/api, /docs), WebSocket OCPP (/ocpp/<id_borne>)"
   },
   "options": {
-    "admin_password": "changeme"
+    "admin_password": "changeme",
+    "mqtt_enabled": true,
+    "mqtt_host": "core-mosquitto",
+    "mqtt_port": 1883,
+    "mqtt_username": "",
+    "mqtt_password": ""
   },
   "schema": {
-    "admin_password": "password"
+    "admin_password": "password",
+    "mqtt_enabled": "bool",
+    "mqtt_host": "str",
+    "mqtt_port": "port",
+    "mqtt_username": "str?",
+    "mqtt_password": "password?"
   }
 }

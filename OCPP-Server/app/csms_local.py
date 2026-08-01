@@ -9,6 +9,7 @@ from ocpp.v16.enums import (
 
 from .db import SessionLocal
 from .models import Charger, ChargerMode, Transaction, MeterValue, ConfigurationKey, ConnectorStatus
+from . import mqtt_bridge
 
 # Registre des bornes actuellement connectées en mode local, pour que l'API
 # puisse leur envoyer des commandes (RemoteStart, ChangeConfiguration, ...).
@@ -93,6 +94,12 @@ class LocalChargePoint(ChargePoint16):
             db.commit()
         finally:
             db.close()
+
+        if connector_id == 0:
+            await mqtt_bridge.publish_state(self.id, status=status)
+        if connector_id == 1:
+            await mqtt_bridge.publish_charge_control_state(self.id, status == "Charging")
+
         return call_result.StatusNotification()
 
     @on(Action.start_transaction)
@@ -121,15 +128,23 @@ class LocalChargePoint(ChargePoint16):
     @on(Action.stop_transaction)
     async def on_stop_transaction(self, transaction_id, meter_stop, **kwargs):
         db = self._db()
+        duration_min = None
         try:
             txn = db.query(Transaction).filter(Transaction.id == transaction_id).first()
             if txn:
                 txn.meter_stop = meter_stop
                 txn.stop_time = datetime.utcnow()
                 txn.status = "completed"
+                if txn.start_time:
+                    duration_min = round((txn.stop_time - txn.start_time).total_seconds() / 60, 1)
                 db.commit()
         finally:
             db.close()
+
+        await mqtt_bridge.publish_charge_control_state(self.id, False)
+        if duration_min is not None:
+            await mqtt_bridge.publish_state(self.id, session_duration_min=duration_min)
+
         return call_result.StopTransaction(
             id_tag_info={"status": AuthorizationStatus.accepted}
         )
@@ -137,6 +152,7 @@ class LocalChargePoint(ChargePoint16):
     @on(Action.meter_values)
     async def on_meter_values(self, connector_id, meter_value, transaction_id=None, **kwargs):
         db = self._db()
+        mqtt_updates = {}
         try:
             for mv in meter_value:
                 for sv in mv.get("sampled_value", []):
@@ -144,17 +160,33 @@ class LocalChargePoint(ChargePoint16):
                         value = float(sv.get("value"))
                     except (TypeError, ValueError):
                         continue
+                    measurand = sv.get("measurand", "Energy.Active.Import.Register")
                     db.add(MeterValue(
                         charger_id=self.id,
                         transaction_id=transaction_id,
                         connector_id=connector_id,
-                        measurand=sv.get("measurand", "Energy.Active.Import.Register"),
+                        measurand=measurand,
                         value=value,
                         unit=sv.get("unit"),
                     ))
+                    if measurand == "Power.Active.Import":
+                        mqtt_updates["power_w"] = value
+                    elif measurand == "Energy.Active.Import.Register":
+                        mqtt_updates["energy_wh"] = value
+
+            if transaction_id is not None:
+                txn = db.query(Transaction).filter(Transaction.id == transaction_id).first()
+                if txn and txn.start_time:
+                    elapsed_min = (datetime.utcnow() - txn.start_time).total_seconds() / 60
+                    mqtt_updates["session_duration_min"] = round(elapsed_min, 1)
+
             db.commit()
         finally:
             db.close()
+
+        if mqtt_updates:
+            await mqtt_bridge.publish_state(self.id, **mqtt_updates)
+
         return call_result.MeterValues()
 
     # --- Actions déclenchées depuis l'API (backoffice -> borne) ---

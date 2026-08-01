@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import os
 
@@ -12,6 +13,7 @@ from .api import router as api_router
 from .ws_adapter import StarletteWebSocketAdapter
 from .csms_local import LocalChargePoint, CONNECTED_CHARGERS
 from .relay import run_relay
+from . import mqtt_bridge
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("ocpp-server")
@@ -33,8 +35,9 @@ def admin_page():
 
 
 @app.on_event("startup")
-def on_startup():
+async def on_startup():
     init_db()
+    asyncio.create_task(mqtt_bridge.run_mqtt_bridge())
 
 
 @app.get("/healthz")
@@ -70,6 +73,8 @@ async def ocpp_endpoint(websocket: WebSocket, charge_point_id: str):
         relay_url = charger.relay_url
     finally:
         db.close()
+
+    await mqtt_bridge.publish_discovery(charge_point_id, mode.value)
 
     try:
         if mode == ChargerMode.relay:
