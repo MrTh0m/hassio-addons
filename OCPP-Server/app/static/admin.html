@@ -175,7 +175,7 @@ function toggleTheme() {
   applyTheme(preferred);
 })();
 
-fetch("/api/version").then(r => r.json()).then(d => {
+fetch("api/version").then(r => r.json()).then(d => {
   document.getElementById("header-version").textContent = "v" + d.version;
   document.getElementById("footer-version").textContent = d.version;
 }).catch(() => {});
@@ -197,7 +197,7 @@ async function login() {
   const username = document.getElementById("username").value;
   const password = document.getElementById("password").value;
   const body = new URLSearchParams({ username, password });
-  const resp = await fetch("/api/auth/login", { method: "POST", body });
+  const resp = await fetch("api/auth/login", { method: "POST", body });
   if (!resp.ok) {
     document.getElementById("login-error").textContent = "Identifiants invalides";
     return;
@@ -221,12 +221,14 @@ function showApp() {
   loadChargers();
   if (!window._pollStarted) {
     window._pollStarted = true;
-    setInterval(() => { if (!openCharger) loadChargers(); }, 5000);
+    setInterval(() => {
+      if (openCharger) { renderChargerDetail(openCharger); } else { loadChargers(); }
+    }, 5000);
   }
 }
 
 async function loadChargers() {
-  const resp = await fetch("/api/chargers", { headers: authHeaders() });
+  const resp = await fetch("api/chargers", { headers: authHeaders() });
   if (resp.status === 401) { logout(); return; }
   const chargers = await resp.json();
   const tbody = document.querySelector("#chargers-table tbody");
@@ -251,7 +253,7 @@ async function loadChargers() {
 
 let openCharger = null;
 
-async function toggleDetail(id) {
+function toggleDetail(id) {
   const el = document.getElementById("detail-" + id);
   if (openCharger === id) {
     el.classList.remove("open");
@@ -265,10 +267,16 @@ async function toggleDetail(id) {
   openCharger = id;
   el.classList.add("open");
   el.innerHTML = "chargement...";
+  renderChargerDetail(id);
+}
+
+async function renderChargerDetail(id) {
+  const el = document.getElementById("detail-" + id);
+  if (!el) return;
 
   const [chargerResp, connectorsResp] = await Promise.all([
-    fetch(`/api/chargers/${id}`, { headers: authHeaders() }),
-    fetch(`/api/chargers/${id}/connectors`, { headers: authHeaders() }),
+    fetch(`api/chargers/${id}`, { headers: authHeaders() }),
+    fetch(`api/chargers/${id}/connectors`, { headers: authHeaders() }),
   ]);
   const charger = await chargerResp.json();
   const connectors = (await connectorsResp.json()).filter(c => c.connector_id !== 0);
@@ -312,20 +320,20 @@ async function saveMode(id) {
   const relay_url = document.getElementById("relayurl-" + id).value;
   const body = { mode };
   if (mode === "relay") body.relay_url = relay_url;
-  const resp = await fetch(`/api/chargers/${id}/mode`, {
+  const resp = await fetch(`api/chargers/${id}/mode`, {
     method: "PUT",
     headers: { ...authHeaders(), "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
-  if (resp.ok) { toggleDetail(id); toggleDetail(id); } else { alert("Échec de la mise à jour du mode"); }
+  if (resp.ok) { renderChargerDetail(id); loadChargers(); } else { alert("Échec de la mise à jour du mode"); }
 }
 
 async function openConnectorModal(chargerId, connectorId, isLocal) {
   openModal("chargement...");
 
   const [sessionsResp, metersResp] = await Promise.all([
-    fetch(`/api/chargers/${chargerId}/sessions?connector_id=${connectorId}`, { headers: authHeaders() }),
-    fetch(`/api/chargers/${chargerId}/metervalues?connector_id=${connectorId}&limit=10`, { headers: authHeaders() }),
+    fetch(`api/chargers/${chargerId}/sessions?connector_id=${connectorId}`, { headers: authHeaders() }),
+    fetch(`api/chargers/${chargerId}/metervalues?connector_id=${connectorId}&limit=10`, { headers: authHeaders() }),
   ]);
   const sessions = await sessionsResp.json();
   const meters = await metersResp.json();
@@ -371,7 +379,7 @@ async function openConnectorModal(chargerId, connectorId, isLocal) {
 
 async function startCharge(id, connectorId) {
   const id_tag = document.getElementById("modal-idtag").value || "WEBADMIN";
-  const resp = await fetch(`/api/chargers/${id}/connectors/${connectorId}/start`, {
+  const resp = await fetch(`api/chargers/${id}/connectors/${connectorId}/start`, {
     method: "POST",
     headers: { ...authHeaders(), "Content-Type": "application/json" },
     body: JSON.stringify({ id_tag }),
@@ -382,7 +390,7 @@ async function startCharge(id, connectorId) {
 
 async function stopCharge(id, connectorId) {
   const transaction_id = parseInt(document.getElementById("modal-txn").value, 10);
-  const resp = await fetch(`/api/chargers/${id}/connectors/${connectorId}/stop`, {
+  const resp = await fetch(`api/chargers/${id}/connectors/${connectorId}/stop`, {
     method: "POST",
     headers: { ...authHeaders(), "Content-Type": "application/json" },
     body: JSON.stringify({ transaction_id }),

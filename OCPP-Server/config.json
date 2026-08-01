@@ -1,6 +1,6 @@
 {
   "name": "OCPP Backoffice Server",
-  "version": "0.8.0",
+  "version": "0.9.0",
   "slug": "ocppserver",
   "description": "Serveur OCPP 1.6 auto-hébergé pour piloter une ou plusieurs bornes de recharge. Deux modes au choix, par borne : pilotage local complet (démarrer/arrêter une charge, lire ses métriques, changer sa configuration) ou relais transparent, où la borne reste connectée à son serveur officiel (fabricant) tout en continuant de remonter ses métriques ici. Page d'administration incluse, API REST, et intégration automatique dans Home Assistant via MQTT Discovery (capteurs et interrupteurs par connecteur).",
   "url": "https://github.com/MrTh0m/hassio-addons",

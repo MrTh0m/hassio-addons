@@ -51,6 +51,13 @@ async def publish_discovery(charger_id: str, mode: str):
     }
     await _client.publish(f"{DISCOVERY_PREFIX}/sensor/{slug}_status/config", json.dumps(payload), retain=True)
 
+    # Nettoyage d'une entité obsolète : jusqu'en 0.7.0, le switch de pilotage
+    # était publié au niveau de la borne (ocppserver_{slug}_charge_control).
+    # Depuis 0.8.0 il est publié par connecteur ; l'ancienne entité reste
+    # "fantôme" côté HA tant qu'on ne la retire pas explicitement (le
+    # discovery MQTT est retenu sur le broker). Payload vide = suppression.
+    await _client.publish(f"{DISCOVERY_PREFIX}/switch/{slug}_charge_control/config", "", retain=True)
+
 
 async def publish_connector_discovery(charger_id: str, connector_id: int, mode: str):
     """Publie les entités MQTT Discovery pour UN connecteur physique donné

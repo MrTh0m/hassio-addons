@@ -3,7 +3,7 @@ import logging
 import os
 
 from fastapi import FastAPI, WebSocket
-from fastapi.responses import FileResponse, RedirectResponse
+from fastapi.responses import FileResponse
 from starlette.websockets import WebSocketDisconnect
 from sqlalchemy.orm import Session
 
@@ -24,11 +24,11 @@ app.include_router(api_router)
 STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
 
 
+# Sert la même page directement à la racine ET sur /admin, sans redirection.
+# Une redirection avec un chemin absolu ("/admin") fait sortir le navigateur
+# du sous-chemin dynamique de l'ingress de Home Assistant (il atterrit sur
+# "/admin" du frontend HA lui-même, d'où le "404 Not Found" observé).
 @app.get("/")
-def root():
-    return RedirectResponse(url="/admin")
-
-
 @app.get("/admin")
 def admin_page():
     return FileResponse(os.path.join(STATIC_DIR, "admin.html"))
@@ -40,7 +40,7 @@ async def on_startup():
     asyncio.create_task(mqtt_bridge.run_mqtt_bridge())
 
 
-APP_VERSION = "0.8.0"
+APP_VERSION = "0.9.0"
 
 
 @app.get("/healthz")
