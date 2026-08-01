@@ -91,14 +91,17 @@ class LocalChargePoint(ChargePoint16):
             if connector_id == 0:
                 charger.status = status
 
+            mode_value = charger.mode.value
             db.commit()
         finally:
             db.close()
 
         if connector_id == 0:
             await mqtt_bridge.publish_state(self.id, status=status)
-        if connector_id == 1:
-            await mqtt_bridge.publish_charge_control_state(self.id, status == "Charging")
+        else:
+            await mqtt_bridge.publish_connector_discovery(self.id, connector_id, mode_value)
+            await mqtt_bridge.publish_connector_state(self.id, connector_id, status=status)
+            await mqtt_bridge.publish_charge_control_state(self.id, connector_id, status == "Charging")
 
         return call_result.StatusNotification()
 
@@ -120,6 +123,8 @@ class LocalChargePoint(ChargePoint16):
         finally:
             db.close()
 
+        await mqtt_bridge.publish_charge_control_state(self.id, connector_id, True)
+
         return call_result.StartTransaction(
             transaction_id=txn_id,
             id_tag_info={"status": AuthorizationStatus.accepted},
@@ -129,9 +134,11 @@ class LocalChargePoint(ChargePoint16):
     async def on_stop_transaction(self, transaction_id, meter_stop, **kwargs):
         db = self._db()
         duration_min = None
+        connector_id = None
         try:
             txn = db.query(Transaction).filter(Transaction.id == transaction_id).first()
             if txn:
+                connector_id = txn.connector_id
                 txn.meter_stop = meter_stop
                 txn.stop_time = datetime.utcnow()
                 txn.status = "completed"
@@ -141,9 +148,10 @@ class LocalChargePoint(ChargePoint16):
         finally:
             db.close()
 
-        await mqtt_bridge.publish_charge_control_state(self.id, False)
-        if duration_min is not None:
-            await mqtt_bridge.publish_state(self.id, session_duration_min=duration_min)
+        if connector_id is not None:
+            await mqtt_bridge.publish_charge_control_state(self.id, connector_id, False)
+            if duration_min is not None:
+                await mqtt_bridge.publish_connector_state(self.id, connector_id, session_duration_min=duration_min)
 
         return call_result.StopTransaction(
             id_tag_info={"status": AuthorizationStatus.accepted}
@@ -184,8 +192,8 @@ class LocalChargePoint(ChargePoint16):
         finally:
             db.close()
 
-        if mqtt_updates:
-            await mqtt_bridge.publish_state(self.id, **mqtt_updates)
+        if mqtt_updates and connector_id:
+            await mqtt_bridge.publish_connector_state(self.id, connector_id, **mqtt_updates)
 
         return call_result.MeterValues()
 

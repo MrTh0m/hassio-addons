@@ -171,10 +171,14 @@ def list_connector_statuses(charger_id: str, db: Session = Depends(get_db), user
 # --- Métriques et historique (disponibles quel que soit le mode) ---
 
 @router.get("/chargers/{charger_id}/sessions")
-def list_sessions(charger_id: str, db: Session = Depends(get_db), user=Depends(get_current_user)):
-    sessions = db.query(Transaction).filter(Transaction.charger_id == charger_id).order_by(
-        Transaction.start_time.desc()
-    ).all()
+def list_sessions(
+    charger_id: str, connector_id: Optional[int] = None,
+    db: Session = Depends(get_db), user=Depends(get_current_user),
+):
+    query = db.query(Transaction).filter(Transaction.charger_id == charger_id)
+    if connector_id is not None:
+        query = query.filter(Transaction.connector_id == connector_id)
+    sessions = query.order_by(Transaction.start_time.desc()).all()
     return [
         {
             "id": s.id, "connector_id": s.connector_id, "id_tag": s.id_tag,
@@ -189,12 +193,13 @@ def list_sessions(charger_id: str, db: Session = Depends(get_db), user=Depends(g
 
 @router.get("/chargers/{charger_id}/metervalues")
 def list_meter_values(
-    charger_id: str, limit: int = 500,
+    charger_id: str, limit: int = 500, connector_id: Optional[int] = None,
     db: Session = Depends(get_db), user=Depends(get_current_user),
 ):
-    values = db.query(MeterValue).filter(MeterValue.charger_id == charger_id).order_by(
-        MeterValue.timestamp.desc()
-    ).limit(limit).all()
+    query = db.query(MeterValue).filter(MeterValue.charger_id == charger_id)
+    if connector_id is not None:
+        query = query.filter(MeterValue.connector_id == connector_id)
+    values = query.order_by(MeterValue.timestamp.desc()).limit(limit).all()
     return [
         {
             "timestamp": v.timestamp.isoformat(), "measurand": v.measurand,

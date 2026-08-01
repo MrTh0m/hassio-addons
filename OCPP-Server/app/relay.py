@@ -24,7 +24,9 @@ async def _snoop_frame(charger_id: str, raw: str):
         action = frame[2]
         payload = frame[3]
         db = SessionLocal()
-        mqtt_updates = {}
+        charger_mqtt_updates = {}
+        connector_mqtt_updates: dict[int, dict] = {}
+        connector_id = None
         try:
             if action == "StatusNotification":
                 connector_id = payload.get("connectorId")
@@ -43,7 +45,10 @@ async def _snoop_frame(charger_id: str, raw: str):
                     charger = db.query(Charger).filter(Charger.id == charger_id).first()
                     if charger:
                         charger.status = status
-                    mqtt_updates["status"] = status
+                    charger_mqtt_updates["status"] = status
+                else:
+                    await mqtt_bridge.publish_connector_discovery(charger_id, connector_id, "relay")
+                    connector_mqtt_updates.setdefault(connector_id, {})["status"] = status
                 db.commit()
             elif action == "MeterValues":
                 connector_id = payload.get("connectorId")
@@ -64,9 +69,9 @@ async def _snoop_frame(charger_id: str, raw: str):
                             unit=sv.get("unit"),
                         ))
                         if measurand == "Power.Active.Import":
-                            mqtt_updates["power_w"] = value
+                            connector_mqtt_updates.setdefault(connector_id, {})["power_w"] = value
                         elif measurand == "Energy.Active.Import.Register":
-                            mqtt_updates["energy_wh"] = value
+                            connector_mqtt_updates.setdefault(connector_id, {})["energy_wh"] = value
                 db.commit()
             elif action == "StartTransaction":
                 db.add(Transaction(
@@ -85,8 +90,11 @@ async def _snoop_frame(charger_id: str, raw: str):
         finally:
             db.close()
 
-        if mqtt_updates:
-            await mqtt_bridge.publish_state(charger_id, **mqtt_updates)
+        if charger_mqtt_updates:
+            await mqtt_bridge.publish_state(charger_id, **charger_mqtt_updates)
+        for cid, updates in connector_mqtt_updates.items():
+            if cid and cid != 0:
+                await mqtt_bridge.publish_connector_state(charger_id, cid, **updates)
     except Exception:
         logger.debug("Impossible d'analyser la trame en mode relais", exc_info=True)
 

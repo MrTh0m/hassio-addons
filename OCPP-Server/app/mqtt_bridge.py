@@ -34,40 +34,61 @@ def _device_info(charger_id: str) -> dict:
 
 
 async def publish_discovery(charger_id: str, mode: str):
-    """Publie (ou met à jour) les entités MQTT Discovery pour une borne.
-    Appelé à chaque (re)connexion, pour que HA retrouve toujours l'état
-    à jour, y compris si le mode a changé entre-temps."""
+    """Publie le capteur de statut global de la borne (connecteur 0, la
+    borne elle-même au sens de la norme, pas un connecteur physique)."""
     if _client is None:
         return
     slug = _slug(charger_id)
     _slug_to_id[slug] = charger_id
     device = _device_info(charger_id)
 
+    payload = {
+        "name": "Statut borne",
+        "unique_id": f"ocppserver_{slug}_status",
+        "state_topic": f"{BASE_TOPIC}/{slug}/status",
+        "device": device,
+        "icon": "mdi:ev-station",
+    }
+    await _client.publish(f"{DISCOVERY_PREFIX}/sensor/{slug}_status/config", json.dumps(payload), retain=True)
+
+
+async def publish_connector_discovery(charger_id: str, connector_id: int, mode: str):
+    """Publie les entités MQTT Discovery pour UN connecteur physique donné
+    (statut, puissance, énergie, durée de charge, et le switch de pilotage
+    si la borne est en mode local). Regroupées sous le même appareil que
+    la borne, mais ce sont bien des entités distinctes par connecteur."""
+    if _client is None or connector_id == 0:
+        return
+    slug = _slug(charger_id)
+    _slug_to_id[slug] = charger_id
+    device = _device_info(charger_id)
+    c = f"connector{connector_id}"
+
     sensors = {
-        "status": {"name": "Statut", "icon": "mdi:ev-station"},
-        "power_w": {"name": "Puissance", "unit": "W", "device_class": "power", "state_class": "measurement"},
-        "energy_wh": {"name": "Énergie", "unit": "Wh", "device_class": "energy", "state_class": "total_increasing"},
-        "session_duration_min": {"name": "Durée de charge", "unit": "min", "icon": "mdi:timer-outline"},
+        "status": {"name": f"Connecteur {connector_id} statut", "icon": "mdi:ev-plug-type2"},
+        "power_w": {"name": f"Connecteur {connector_id} puissance", "unit": "W", "device_class": "power", "state_class": "measurement"},
+        "energy_wh": {"name": f"Connecteur {connector_id} énergie", "unit": "Wh", "device_class": "energy", "state_class": "total_increasing"},
+        "session_duration_min": {"name": f"Connecteur {connector_id} durée de charge", "unit": "min", "icon": "mdi:timer-outline"},
     }
     for key, meta in sensors.items():
         payload = {
             "name": meta["name"],
-            "unique_id": f"ocppserver_{slug}_{key}",
-            "state_topic": f"{BASE_TOPIC}/{slug}/{key}",
+            "unique_id": f"ocppserver_{slug}_{c}_{key}",
+            "state_topic": f"{BASE_TOPIC}/{slug}/{c}/{key}",
             "device": device,
         }
         for opt in ("unit", "device_class", "state_class", "icon"):
             if opt in meta:
                 payload["unit_of_measurement" if opt == "unit" else opt] = meta[opt]
-        await _client.publish(f"{DISCOVERY_PREFIX}/sensor/{slug}_{key}/config", json.dumps(payload), retain=True)
+        await _client.publish(f"{DISCOVERY_PREFIX}/sensor/{slug}_{c}_{key}/config", json.dumps(payload), retain=True)
 
-    switch_topic = f"{DISCOVERY_PREFIX}/switch/{slug}_charge_control/config"
+    switch_topic = f"{DISCOVERY_PREFIX}/switch/{slug}_{c}_charge_control/config"
     if mode == "local":
         payload = {
-            "name": "Autoriser la charge",
-            "unique_id": f"ocppserver_{slug}_charge_control",
-            "state_topic": f"{BASE_TOPIC}/{slug}/charge_control/state",
-            "command_topic": f"{BASE_TOPIC}/{slug}/charge_control/set",
+            "name": f"Connecteur {connector_id} autoriser la charge",
+            "unique_id": f"ocppserver_{slug}_{c}_charge_control",
+            "state_topic": f"{BASE_TOPIC}/{slug}/{c}/charge_control/state",
+            "command_topic": f"{BASE_TOPIC}/{slug}/{c}/charge_control/set",
             "payload_on": "ON",
             "payload_off": "OFF",
             "device": device,
@@ -90,17 +111,37 @@ async def publish_state(charger_id: str, **values):
         await _client.publish(f"{BASE_TOPIC}/{slug}/{key}", str(value), retain=True)
 
 
-async def publish_charge_control_state(charger_id: str, is_charging: bool):
-    await publish_state(charger_id, **{"charge_control/state": "ON" if is_charging else "OFF"})
+async def publish_connector_state(charger_id: str, connector_id: int, **values):
+    if connector_id == 0:
+        return
+    prefixed = {f"connector{connector_id}/{k}": v for k, v in values.items()}
+    await publish_state(charger_id, **prefixed)
+
+
+async def publish_charge_control_state(charger_id: str, connector_id: int, is_charging: bool):
+    await publish_connector_state(
+        charger_id, connector_id, **{"charge_control/state": "ON" if is_charging else "OFF"}
+    )
 
 
 async def _handle_command(message: aiomqtt.Message):
     from .csms_local import CONNECTED_CHARGERS
 
     parts = str(message.topic).split("/")
-    if len(parts) != 4 or parts[0] != BASE_TOPIC or parts[2:] != ["charge_control", "set"]:
+    # ocppserver/{slug}/connector{N}/charge_control/set
+    if (
+        len(parts) != 5
+        or parts[0] != BASE_TOPIC
+        or not parts[2].startswith("connector")
+        or parts[3:] != ["charge_control", "set"]
+    ):
         return
     slug = parts[1]
+    try:
+        connector_id = int(parts[2].removeprefix("connector"))
+    except ValueError:
+        return
+
     charger_id = _slug_to_id.get(slug)
     if not charger_id:
         logger.warning("Commande MQTT reçue pour une borne inconnue (%s)", slug)
@@ -113,14 +154,16 @@ async def _handle_command(message: aiomqtt.Message):
     payload = message.payload.decode() if isinstance(message.payload, (bytes, bytearray)) else str(message.payload)
     try:
         if payload == "ON":
-            await cp.trigger_remote_start(1, "MQTT")
+            await cp.trigger_remote_start(connector_id, "MQTT")
         elif payload == "OFF":
             from .db import SessionLocal
             from .models import Transaction
             db = SessionLocal()
             try:
                 txn = db.query(Transaction).filter(
-                    Transaction.charger_id == charger_id, Transaction.status == "active"
+                    Transaction.charger_id == charger_id,
+                    Transaction.connector_id == connector_id,
+                    Transaction.status == "active",
                 ).order_by(Transaction.id.desc()).first()
                 txn_id = txn.id if txn else None
             finally:
@@ -128,22 +171,24 @@ async def _handle_command(message: aiomqtt.Message):
             if txn_id:
                 await cp.trigger_remote_stop(txn_id)
     except Exception:
-        logger.exception("Erreur lors du traitement de la commande MQTT pour %s", charger_id)
+        logger.exception("Erreur lors du traitement de la commande MQTT pour %s (connecteur %s)", charger_id, connector_id)
 
 
 async def republish_all():
-    """Republie la découverte (et le dernier statut connu) pour toutes les
-    bornes déjà enregistrées en base. Appelé à chaque (re)connexion au
-    broker : la découverte n'est sinon publiée qu'au moment où une borne se
-    connecte au WebSocket, ce qui peut être manqué si le client MQTT n'est
-    pas encore prêt à cet instant précis (cas typique après un redémarrage
-    du conteneur, où la borne se reconnecte souvent plus vite que MQTT)."""
+    """Republie la découverte (et le dernier statut connu, par borne ET par
+    connecteur) pour tout ce qui est déjà en base. Appelé à chaque
+    (re)connexion au broker : la découverte n'est sinon publiée qu'au moment
+    où une borne se connecte au WebSocket, ce qui peut être manqué si le
+    client MQTT n'est pas encore prêt à cet instant précis."""
     from .db import SessionLocal
-    from .models import Charger
+    from .models import Charger, ConnectorStatus
 
     db = SessionLocal()
     try:
         chargers = db.query(Charger).all()
+        connectors_by_charger: dict[str, list] = {}
+        for cs in db.query(ConnectorStatus).all():
+            connectors_by_charger.setdefault(cs.charger_id, []).append(cs)
     finally:
         db.close()
 
@@ -151,6 +196,11 @@ async def republish_all():
         await publish_discovery(charger.id, charger.mode.value)
         if charger.status:
             await publish_state(charger.id, status=charger.status)
+        for cs in connectors_by_charger.get(charger.id, []):
+            if cs.connector_id == 0:
+                continue
+            await publish_connector_discovery(charger.id, cs.connector_id, charger.mode.value)
+            await publish_connector_state(charger.id, cs.connector_id, status=cs.status)
 
 
 async def run_mqtt_bridge():
@@ -169,7 +219,7 @@ async def run_mqtt_bridge():
                 _client = client
                 logger.info("Connecté au broker MQTT %s:%s", MQTT_HOST, MQTT_PORT)
                 await republish_all()
-                await client.subscribe(f"{BASE_TOPIC}/+/charge_control/set")
+                await client.subscribe(f"{BASE_TOPIC}/+/+/charge_control/set")
                 async for message in client.messages:
                     await _handle_command(message)
         except Exception:

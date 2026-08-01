@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>OCPP Backoffice</title>
+<title>OCPP Server</title>
 <style>
   :root {
     color-scheme: light dark;
@@ -50,6 +50,7 @@
   }
   main { max-width: 1000px; margin: 0 auto; padding: 1.5rem 1rem 3rem; }
   h1 { font-size: 1.4rem; }
+  h2 { font-size: 1.1rem; margin: 0 0 0.6rem; }
   table { width: 100%; border-collapse: collapse; margin-top: 1rem; }
   th, td { text-align: left; padding: 0.5rem; border-bottom: 1px solid var(--border); }
   button {
@@ -65,8 +66,11 @@
   .badge { padding: 0.1rem 0.5rem; border-radius: 1rem; font-size: 0.8rem; }
   .badge.local { background: #2a72; }
   .badge.relay { background: #a742; }
-  .badge.on { background: #2a7; color: #fff; }
+  .badge.on, .badge.Charging { background: #2a7; color: #fff; }
   .badge.off { background: #888; color: #fff; }
+  .badge.Available { background: #2a7; color: #fff; }
+  .badge.Preparing, .badge.SuspendedEV, .badge.SuspendedEVSE { background: #d97706; color: #fff; }
+  .badge.Faulted { background: #dc2626; color: #fff; }
   #login-box {
     max-width: 340px; margin: 4rem auto; padding: 1.5rem;
     background: var(--card-bg); border: 1px solid var(--border); border-radius: 10px;
@@ -76,8 +80,25 @@
     border: 1px solid var(--border); border-radius: 8px; margin: 0.3rem 0 1rem;
   }
   .charger-detail.open { display: block; }
+  .connector-card {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 0.6rem 0.8rem; border: 1px solid var(--border); border-radius: 8px; margin: 0.4rem 0;
+  }
   .error { color: #e05555; }
-  a.expand { cursor: pointer; color: var(--accent); text-decoration: underline; }
+  a.expand, a.link { cursor: pointer; color: var(--accent); text-decoration: underline; }
+
+  /* Splash-screen / modale */
+  #modal-overlay {
+    display: none; position: fixed; inset: 0; background: #0008;
+    align-items: center; justify-content: center; z-index: 100; padding: 1rem;
+  }
+  #modal-overlay.open { display: flex; }
+  #modal-box {
+    background: var(--card-bg); border: 1px solid var(--border); border-radius: 12px;
+    max-width: 640px; width: 100%; max-height: 85vh; overflow-y: auto; padding: 1.2rem;
+  }
+  #modal-box .row.header { justify-content: space-between; margin-bottom: 0.8rem; }
+
   footer {
     max-width: 1000px; margin: 0 auto; padding: 1.5rem 1rem 2rem;
     color: var(--muted); font-size: 0.8rem; text-align: center;
@@ -89,7 +110,7 @@
 
 <header>
   <div class="brand">
-    <h1>OCPP Backoffice</h1>
+    <h1>OCPP Server</h1>
     <span class="version" id="header-version"></span>
   </div>
   <button class="icon-btn" onclick="toggleTheme()" id="theme-toggle" title="Basculer thème clair/sombre">🌙</button>
@@ -122,6 +143,10 @@
 </div>
 
 </main>
+
+<div id="modal-overlay" onclick="if(event.target===this) closeModal()">
+  <div id="modal-box"></div>
+</div>
 
 <footer>
   OCPP Backoffice Server v<span id="footer-version"></span> ·
@@ -157,6 +182,15 @@ fetch("/api/version").then(r => r.json()).then(d => {
 
 function authHeaders() {
   return { "Authorization": "Bearer " + token };
+}
+
+function openModal(html) {
+  document.getElementById("modal-box").innerHTML = html;
+  document.getElementById("modal-overlay").classList.add("open");
+}
+
+function closeModal() {
+  document.getElementById("modal-overlay").classList.remove("open");
 }
 
 async function login() {
@@ -232,21 +266,16 @@ async function toggleDetail(id) {
   el.classList.add("open");
   el.innerHTML = "chargement...";
 
-  const [chargerResp, connectorsResp, sessionsResp, metersResp] = await Promise.all([
+  const [chargerResp, connectorsResp] = await Promise.all([
     fetch(`/api/chargers/${id}`, { headers: authHeaders() }),
     fetch(`/api/chargers/${id}/connectors`, { headers: authHeaders() }),
-    fetch(`/api/chargers/${id}/sessions`, { headers: authHeaders() }),
-    fetch(`/api/chargers/${id}/metervalues?limit=10`, { headers: authHeaders() }),
   ]);
   const charger = await chargerResp.json();
-  const connectors = await connectorsResp.json();
-  const sessions = await sessionsResp.json();
-  const meters = await metersResp.json();
-
+  const connectors = (await connectorsResp.json()).filter(c => c.connector_id !== 0);
   const isLocal = charger.mode === "local";
 
   let html = `<div class="row">
-    <label>Mode :</label>
+    <label>Mode de la borne :</label>
     <select id="mode-${id}" onchange="onModeChange('${id}')">
       <option value="local" ${isLocal ? "selected" : ""}>local</option>
       <option value="relay" ${!isLocal ? "selected" : ""}>relais</option>
@@ -256,43 +285,19 @@ async function toggleDetail(id) {
     <button onclick="saveMode('${id}')">Enregistrer</button>
   </div>`;
 
-  if (isLocal) {
-    html += `<div class="row">
-      <input id="idtag-${id}" placeholder="idTag" style="width:100px">
-      <button onclick="startCharge('${id}')">Démarrer (connecteur 1)</button>
-      <input id="txn-${id}" placeholder="ID transaction" style="width:100px">
-      <button onclick="stopCharge('${id}')">Arrêter</button>
-    </div>`;
-  } else {
-    html += `<p><em>Pilotage indisponible : cette borne est en mode relais.</em></p>`;
+  html += `<h2 style="margin-top:1rem">Connecteurs</h2>`;
+  if (connectors.length === 0) {
+    html += `<p><em>Aucun connecteur détecté pour l'instant (attends le premier StatusNotification de la borne).</em></p>`;
   }
-
-  html += `<p><b>Statut par connecteur</b></p><table><thead><tr>
-    <th>Connecteur</th><th>Statut</th><th>Code erreur</th><th>Mis à jour</th>
-  </tr></thead><tbody>`;
   for (const c of connectors) {
-    const label = c.connector_id === 0 ? "0 (borne)" : c.connector_id;
-    html += `<tr><td>${label}</td><td>${c.status}</td><td>${c.error_code || "-"}</td><td>${c.updated_at || "-"}</td></tr>`;
+    html += `<div class="connector-card">
+      <div>
+        <b>Connecteur ${c.connector_id}</b>
+        <span class="badge ${c.status}">${c.status}</span>
+      </div>
+      <a class="link" onclick="openConnectorModal('${id}', ${c.connector_id}, ${isLocal})">détails</a>
+    </div>`;
   }
-  html += `</tbody></table>`;
-
-  html += `<p><b>Sessions récentes</b></p><table><thead><tr>
-    <th>#</th><th>Connecteur</th><th>Début</th><th>Fin</th><th>Wh</th><th>Statut</th>
-  </tr></thead><tbody>`;
-  for (const s of sessions.slice(0, 10)) {
-    const wh = (s.meter_start != null && s.meter_stop != null) ? (s.meter_stop - s.meter_start) : "-";
-    html += `<tr><td>${s.id}</td><td>${s.connector_id}</td><td>${s.start_time || "-"}</td>
-      <td>${s.stop_time || "-"}</td><td>${wh}</td><td>${s.status}</td></tr>`;
-  }
-  html += `</tbody></table>`;
-
-  html += `<p><b>Dernières valeurs de compteur</b></p><table><thead><tr>
-    <th>Horodatage</th><th>Grandeur</th><th>Valeur</th><th>Unité</th>
-  </tr></thead><tbody>`;
-  for (const m of meters) {
-    html += `<tr><td>${m.timestamp}</td><td>${m.measurand}</td><td>${m.value}</td><td>${m.unit || "-"}</td></tr>`;
-  }
-  html += `</tbody></table>`;
 
   el.innerHTML = html;
 }
@@ -312,12 +317,61 @@ async function saveMode(id) {
     headers: { ...authHeaders(), "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
-  if (resp.ok) { loadChargers(); } else { alert("Échec de la mise à jour du mode"); }
+  if (resp.ok) { toggleDetail(id); toggleDetail(id); } else { alert("Échec de la mise à jour du mode"); }
 }
 
-async function startCharge(id) {
-  const id_tag = document.getElementById("idtag-" + id).value || "WEBADMIN";
-  const resp = await fetch(`/api/chargers/${id}/connectors/1/start`, {
+async function openConnectorModal(chargerId, connectorId, isLocal) {
+  openModal("chargement...");
+
+  const [sessionsResp, metersResp] = await Promise.all([
+    fetch(`/api/chargers/${chargerId}/sessions?connector_id=${connectorId}`, { headers: authHeaders() }),
+    fetch(`/api/chargers/${chargerId}/metervalues?connector_id=${connectorId}&limit=10`, { headers: authHeaders() }),
+  ]);
+  const sessions = await sessionsResp.json();
+  const meters = await metersResp.json();
+
+  let html = `<div class="row header">
+    <h2>${chargerId} · Connecteur ${connectorId}</h2>
+    <button onclick="closeModal()">✕</button>
+  </div>`;
+
+  if (isLocal) {
+    html += `<div class="row">
+      <input id="modal-idtag" placeholder="idTag" style="width:100px">
+      <button onclick="startCharge('${chargerId}', ${connectorId})">Démarrer</button>
+      <input id="modal-txn" placeholder="ID transaction" style="width:100px">
+      <button onclick="stopCharge('${chargerId}', ${connectorId})">Arrêter</button>
+    </div>`;
+  } else {
+    html += `<p><em>Pilotage indisponible : cette borne est en mode relais.</em></p>`;
+  }
+
+  html += `<p><b>Sessions récentes</b></p><table><thead><tr>
+    <th>#</th><th>Début</th><th>Fin</th><th>Wh</th><th>Statut</th>
+  </tr></thead><tbody>`;
+  for (const s of sessions.slice(0, 10)) {
+    const wh = (s.meter_start != null && s.meter_stop != null) ? (s.meter_stop - s.meter_start) : "-";
+    html += `<tr><td>${s.id}</td><td>${s.start_time || "-"}</td>
+      <td>${s.stop_time || "-"}</td><td>${wh}</td><td>${s.status}</td></tr>`;
+  }
+  if (sessions.length === 0) html += `<tr><td colspan="5"><em>Aucune session</em></td></tr>`;
+  html += `</tbody></table>`;
+
+  html += `<p><b>Dernières valeurs de compteur</b></p><table><thead><tr>
+    <th>Horodatage</th><th>Grandeur</th><th>Valeur</th><th>Unité</th>
+  </tr></thead><tbody>`;
+  for (const m of meters) {
+    html += `<tr><td>${m.timestamp}</td><td>${m.measurand}</td><td>${m.value}</td><td>${m.unit || "-"}</td></tr>`;
+  }
+  if (meters.length === 0) html += `<tr><td colspan="4"><em>Aucune valeur</em></td></tr>`;
+  html += `</tbody></table>`;
+
+  openModal(html);
+}
+
+async function startCharge(id, connectorId) {
+  const id_tag = document.getElementById("modal-idtag").value || "WEBADMIN";
+  const resp = await fetch(`/api/chargers/${id}/connectors/${connectorId}/start`, {
     method: "POST",
     headers: { ...authHeaders(), "Content-Type": "application/json" },
     body: JSON.stringify({ id_tag }),
@@ -326,9 +380,9 @@ async function startCharge(id) {
   alert(resp.ok ? "Démarrage : " + data.status : "Erreur : " + (data.detail || resp.status));
 }
 
-async function stopCharge(id) {
-  const transaction_id = parseInt(document.getElementById("txn-" + id).value, 10);
-  const resp = await fetch(`/api/chargers/${id}/connectors/1/stop`, {
+async function stopCharge(id, connectorId) {
+  const transaction_id = parseInt(document.getElementById("modal-txn").value, 10);
+  const resp = await fetch(`/api/chargers/${id}/connectors/${connectorId}/stop`, {
     method: "POST",
     headers: { ...authHeaders(), "Content-Type": "application/json" },
     body: JSON.stringify({ transaction_id }),

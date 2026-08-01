@@ -18,7 +18,7 @@ from . import mqtt_bridge
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("ocpp-server")
 
-app = FastAPI(title="OCPP Backoffice Server")
+app = FastAPI(title="OCPP Server")
 app.include_router(api_router)
 
 STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
@@ -40,7 +40,7 @@ async def on_startup():
     asyncio.create_task(mqtt_bridge.run_mqtt_bridge())
 
 
-APP_VERSION = "0.7.0"
+APP_VERSION = "0.8.0"
 
 
 @app.get("/healthz")
