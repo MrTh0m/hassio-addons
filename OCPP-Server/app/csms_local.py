@@ -8,7 +8,7 @@ from ocpp.v16.enums import (
 )
 
 from .db import SessionLocal
-from .models import Charger, ChargerMode, Transaction, MeterValue, ConfigurationKey, ConnectorStatus
+from .models import Charger, ChargerMode, Transaction, MeterValue, ConfigurationKey, ConnectorStatus, Vehicle
 from . import mqtt_bridge
 
 # Registre des bornes actuellement connectées en mode local, pour que l'API
@@ -109,10 +109,12 @@ class LocalChargePoint(ChargePoint16):
     async def on_start_transaction(self, connector_id, id_tag, meter_start, **kwargs):
         db = self._db()
         try:
+            vehicle = db.query(Vehicle).filter(Vehicle.id_tag == id_tag).first() if id_tag else None
             txn = Transaction(
                 charger_id=self.id,
                 connector_id=connector_id,
                 id_tag=id_tag,
+                vehicle_id=vehicle.id if vehicle else None,
                 meter_start=meter_start,
                 status="active",
             )

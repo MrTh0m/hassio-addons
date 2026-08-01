@@ -25,6 +25,7 @@ class Charger(Base):
     mode = Column(Enum(ChargerMode), default=ChargerMode.local, nullable=False)
     relay_url = Column(String, nullable=True)  # URL de base du serveur officiel, si mode=relay
     status = Column(String, default="Unknown")  # dernier StatusNotification connu
+    tariff_plan_id = Column(Integer, ForeignKey("tariff_plans.id"), nullable=True)
     last_seen = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
@@ -32,6 +33,7 @@ class Charger(Base):
     meter_values = relationship("MeterValue", back_populates="charger")
     config_keys = relationship("ConfigurationKey", back_populates="charger")
     connector_statuses = relationship("ConnectorStatus", back_populates="charger")
+    tariff_plan = relationship("TariffPlan", back_populates="chargers")
 
 
 class Transaction(Base):
@@ -41,6 +43,7 @@ class Transaction(Base):
     charger_id = Column(String, ForeignKey("chargers.id"), nullable=False)
     connector_id = Column(Integer, nullable=False)
     id_tag = Column(String, nullable=True)
+    vehicle_id = Column(Integer, ForeignKey("vehicles.id"), nullable=True)
     meter_start = Column(Float, nullable=True)
     meter_stop = Column(Float, nullable=True)
     start_time = Column(DateTime, default=datetime.utcnow)
@@ -48,6 +51,7 @@ class Transaction(Base):
     status = Column(String, default="active")  # active | completed
 
     charger = relationship("Charger", back_populates="transactions")
+    vehicle = relationship("Vehicle", back_populates="transactions")
 
 
 class MeterValue(Base):
@@ -91,6 +95,52 @@ class ConnectorStatus(Base):
     updated_at = Column(DateTime, default=datetime.utcnow)
 
     charger = relationship("Charger", back_populates="connector_statuses")
+
+
+class Vehicle(Base):
+    __tablename__ = "vehicles"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    name = Column(String, nullable=False)
+    id_tag = Column(String, nullable=True, unique=True)  # badge associé à ce véhicule
+    battery_capacity_kwh = Column(Float, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    transactions = relationship("Transaction", back_populates="vehicle")
+
+
+class TariffPlan(Base):
+    __tablename__ = "tariff_plans"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    name = Column(String, nullable=False)
+    is_default = Column(Boolean, default=False)
+    fixed_price = Column(Float, nullable=True)  # €/kWh, utilisé si aucune période ne correspond
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    periods = relationship(
+        "TariffPeriod", back_populates="plan",
+        cascade="all, delete-orphan", order_by="TariffPeriod.id",
+    )
+    chargers = relationship("Charger", back_populates="tariff_plan")
+
+
+class TariffPeriod(Base):
+    """Une plage horaire nommée avec son propre prix. Plusieurs périodes
+    peuvent être définies par plan (heures pleines, heures creuses, tarif
+    week-end, etc.) ; en cas de chevauchement, la première période qui
+    correspond (par ordre de création) l'emporte."""
+    __tablename__ = "tariff_periods"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    tariff_plan_id = Column(Integer, ForeignKey("tariff_plans.id"), nullable=False)
+    name = Column(String, nullable=False)
+    price = Column(Float, nullable=False)  # €/kWh
+    days_of_week = Column(String, nullable=False, default="0,1,2,3,4,5,6")  # 0=lundi ... 6=dimanche
+    start_time = Column(String, nullable=False)  # "HH:MM"
+    end_time = Column(String, nullable=False)  # "HH:MM" ; si < start_time, chevauche minuit
+
+    plan = relationship("TariffPlan", back_populates="periods")
 
 
 class UserRole(str, enum.Enum):

@@ -1,6 +1,6 @@
 # OCPP Server (Backoffice)
 
-Serveur OCPP 1.6 (CSMS) auto-hébergé : accueille une ou plusieurs bornes, avec pour chacune un choix entre pilotage local complet ou relais transparent vers le serveur officiel du fabricant. Expose une API REST, une page d'administration, et un pont MQTT vers Home Assistant (ou tout autre système compatible MQTT Discovery), avec des entités séparées par connecteur physique.
+Serveur OCPP 1.6 (CSMS) auto-hébergé : accueille une ou plusieurs bornes, avec pour chacune un choix entre pilotage local complet ou relais transparent vers le serveur officiel du fabricant. API REST, page d'administration à onglets, pont MQTT vers Home Assistant, et suivi des coûts par véhicule et par tarif.
 
 ## Deux modes, par borne
 
@@ -10,7 +10,7 @@ Serveur OCPP 1.6 (CSMS) auto-hébergé : accueille une ou plusieurs bornes, avec
 ## Premier démarrage
 
 1. Démarre l'add-on. Un compte `admin` est créé automatiquement, avec le mot de passe défini dans l'onglet "Configuration" de l'add-on (`admin_password`, à changer avant le premier démarrage si possible).
-2. Ouvre `http://<ip-de-ton-serveur>:8000` (ou via le panneau latéral, ingress) : ça ouvre directement la page d'administration (`/admin`).
+2. Ouvre `http://<ip-de-ton-serveur>:8000` (ou via le panneau latéral, ingress) : ça ouvre directement la page d'administration.
 3. La documentation interactive Swagger reste disponible sur `/docs`.
 
 ## Connecter une borne
@@ -23,13 +23,15 @@ ws://<ip-de-ton-serveur>:8000/ocpp/<identifiant-de-la-borne>
 
 À la première connexion, la borne est enregistrée automatiquement en mode `local`.
 
-## Mode local vs relais, en pratique
+## La page d'administration, par onglet
 
-Par défaut, une borne nouvellement connectée est en mode `local`. Pour basculer en mode relais, depuis la page admin : ouvre les "détails" de la borne, choisis "relais", renseigne l'URL du serveur officiel, "Enregistrer". En mode relais, le pilotage est désactivé (API comme MQTT), seules les métriques et l'historique restent disponibles.
+**Bornes** : liste des bornes, avec pour chacune le réglage du mode (local/relais), le tarif appliqué, et le détail de ses connecteurs. Chaque connecteur a sa propre fenêtre (statut, contrôle démarrer/arrêter en mode local, sessions récentes, dernières valeurs de compteur), puisque plusieurs connecteurs sur une même borne peuvent être dans des états différents.
 
-## Page d'administration
+**Véhicules** : associe un idTag (badge) à un nom de véhicule (et, si tu veux, sa capacité de batterie, informatif). Dès qu'une session démarre avec ce badge, elle est automatiquement rattachée à ce véhicule, aussi bien en mode local qu'en mode relais.
 
-Liste des bornes, avec pour chacune : le réglage du mode (local/relais), et le détail de ses connecteurs. Chaque connecteur a sa propre fiche (fenêtre dédiée) avec son statut, le contrôle démarrer/arrêter (en mode local), ses sessions récentes et ses dernières valeurs de compteur, puisque plusieurs connecteurs sur une même borne peuvent être dans des états différents (l'un en charge, l'autre disponible).
+**Tarifs** : un plan par contexte (ex. "Domicile", "Travail"), avec un prix fixe de secours et autant de plages horaires nommées que nécessaire (heures pleines/creuses classiques, mais aussi n'importe quel autre découpage : creuses l'après-midi, tarif week-end séparé, etc.). Un plan peut être marqué "par défaut" (utilisé pour les bornes sans tarif assigné explicitement). En cas de chevauchement entre deux plages définies sur un même plan, la première de la liste l'emporte. Le coût d'une session est calculé en découpant son énergie par tranche de temps entre relevés successifs et en appliquant le tarif actif à chaque tranche, donc une session qui chevauche plusieurs plages est bien répartie plutôt que facturée à un seul prix.
+
+**Historique** : toutes les sessions, toutes bornes confondues, avec véhicule, kWh, coût et tarif appliqué, filtrable par véhicule.
 
 ## Intégration Home Assistant (MQTT)
 
@@ -56,9 +58,10 @@ Toutes les entités d'une même borne sont regroupées sous un seul appareil "Bo
 
 - **OCPP 1.6 uniquement.** Le 2.0.1 n'est pas encore implémenté.
 - **Un seul compte administrateur.** Pas encore de gestion multi-utilisateurs.
-- **Pas de graphes ni de calcul de coûts.** C'est un outil d'administration/supervision, pas l'app "consommateur final" prévue plus loin dans l'architecture (association véhicules, tarifs électriques, historiques de coûts : à venir).
-- **Icône/logo par défaut.** Pas encore d'identité visuelle personnalisée pour l'add-on (icône Material Design générique en attendant).
+- **Pas encore de graphes.** Les données existent (sessions, kWh, coûts), l'affichage graphique reste à construire.
+- **Icône/logo génériques.** Une icône simple a été fournie séparément (voir le dépôt), rien n'empêche de la remplacer plus tard.
 - **Mode relais, StopTransaction :** l'identifiant de transaction assigné par le serveur officiel n'est pas encore relié à la transaction correspondante en base à la clôture.
+- **Association véhicule rétroactive impossible** : une session démarrée avant la création du véhicule correspondant (ou avec un idTag différent) ne sera pas rattachée après coup automatiquement.
 
 ## Licence
 

@@ -48,7 +48,7 @@
     background: transparent; border: 1px solid #ffffff33; color: inherit;
     border-radius: 6px; padding: 0.3rem 0.6rem; cursor: pointer; font-size: 0.95rem;
   }
-  main { max-width: 1000px; margin: 0 auto; padding: 1.5rem 1rem 3rem; }
+  main { max-width: 1100px; margin: 0 auto; padding: 1.5rem 1rem 3rem; }
   h1 { font-size: 1.4rem; }
   h2 { font-size: 1.1rem; margin: 0 0 0.6rem; }
   table { width: 100%; border-collapse: collapse; margin-top: 1rem; }
@@ -80,12 +80,22 @@
     border: 1px solid var(--border); border-radius: 8px; margin: 0.3rem 0 1rem;
   }
   .charger-detail.open { display: block; }
-  .connector-card {
+  .connector-card, .plan-card {
     display: flex; justify-content: space-between; align-items: center;
     padding: 0.6rem 0.8rem; border: 1px solid var(--border); border-radius: 8px; margin: 0.4rem 0;
   }
+  .plan-card { flex-direction: column; align-items: stretch; }
   .error { color: #e05555; }
   a.expand, a.link { cursor: pointer; color: var(--accent); text-decoration: underline; }
+
+  nav.tabs { display: flex; gap: 0.3rem; margin-bottom: 1rem; border-bottom: 1px solid var(--border); }
+  nav.tabs button {
+    border: none; border-bottom: 2px solid transparent; border-radius: 0;
+    background: transparent; padding: 0.6rem 0.9rem;
+  }
+  nav.tabs button.active { border-bottom-color: var(--accent); font-weight: 600; }
+  .tab-panel { display: none; }
+  .tab-panel.active { display: block; }
 
   /* Splash-screen / modale */
   #modal-overlay {
@@ -100,7 +110,7 @@
   #modal-box .row.header { justify-content: space-between; margin-bottom: 0.8rem; }
 
   footer {
-    max-width: 1000px; margin: 0 auto; padding: 1.5rem 1rem 2rem;
+    max-width: 1100px; margin: 0 auto; padding: 1.5rem 1rem 2rem;
     color: var(--muted); font-size: 0.8rem; text-align: center;
   }
   footer a { color: var(--muted); }
@@ -127,19 +137,78 @@
 </div>
 
 <div id="app" style="display:none">
-  <div class="row" style="justify-content: space-between">
-    <h1>Bornes</h1>
-    <div class="row">
+
+  <nav class="tabs">
+    <button class="tab-btn active" id="tabbtn-chargers" onclick="switchTab('chargers')">Bornes</button>
+    <button class="tab-btn" id="tabbtn-vehicles" onclick="switchTab('vehicles')">Véhicules</button>
+    <button class="tab-btn" id="tabbtn-tariffs" onclick="switchTab('tariffs')">Tarifs</button>
+    <button class="tab-btn" id="tabbtn-history" onclick="switchTab('history')">Historique</button>
+    <div style="flex:1"></div>
+    <button onclick="logout()">Déconnexion</button>
+  </nav>
+
+  <div id="tab-chargers" class="tab-panel active">
+    <div class="row" style="justify-content: space-between">
+      <h1>Bornes</h1>
       <button onclick="loadChargers()">Rafraîchir</button>
-      <button onclick="logout()">Déconnexion</button>
     </div>
+    <table id="chargers-table">
+      <thead>
+        <tr><th>ID</th><th>Vendeur / Modèle</th><th>Version</th><th>Mode</th><th>Statut</th><th>Connectée</th><th></th></tr>
+      </thead>
+      <tbody></tbody>
+    </table>
   </div>
-  <table id="chargers-table">
-    <thead>
-      <tr><th>ID</th><th>Vendeur / Modèle</th><th>Version</th><th>Mode</th><th>Statut</th><th>Connectée</th><th></th></tr>
-    </thead>
-    <tbody></tbody>
-  </table>
+
+  <div id="tab-vehicles" class="tab-panel">
+    <h1>Véhicules</h1>
+    <p style="color:var(--muted); font-size:0.85rem">
+      Associe un idTag (badge) à un véhicule : les sessions démarrées avec ce badge lui seront
+      automatiquement rattachées, pour le suivi des coûts et l'historique.
+    </p>
+    <div class="row">
+      <input id="veh-name" placeholder="Nom (ex. Tesla Model 3)">
+      <input id="veh-idtag" placeholder="idTag associé (optionnel)">
+      <input id="veh-battery" placeholder="Batterie (kWh, optionnel)" type="number" step="0.1" style="width:170px">
+      <button onclick="createVehicle()">Ajouter</button>
+    </div>
+    <table id="vehicles-table">
+      <thead><tr><th>Nom</th><th>idTag</th><th>Batterie</th><th></th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </div>
+
+  <div id="tab-tariffs" class="tab-panel">
+    <h1>Tarifs</h1>
+    <p style="color:var(--muted); font-size:0.85rem">
+      Un plan par contexte tarifaire (ex. "Domicile"), avec un prix fixe de secours et autant de
+      plages horaires nommées que nécessaire (heures pleines/creuses, week-end, etc.). En cas de
+      chevauchement entre plages, la première de la liste l'emporte.
+    </p>
+    <div class="row">
+      <input id="tariff-name" placeholder="Nom du plan (ex. Domicile)">
+      <input id="tariff-fixed" placeholder="Prix fixe €/kWh" type="number" step="0.01" style="width:140px">
+      <label class="row" style="gap:0.3rem"><input type="checkbox" id="tariff-default"> Par défaut</label>
+      <button onclick="createTariff()">Ajouter un plan</button>
+    </div>
+    <div id="tariffs-list"></div>
+  </div>
+
+  <div id="tab-history" class="tab-panel">
+    <h1>Historique des charges</h1>
+    <div class="row">
+      <label>Véhicule :</label>
+      <select id="hist-vehicle-filter" onchange="loadHistory()"><option value="">Tous</option></select>
+      <button onclick="loadHistory()">Rafraîchir</button>
+    </div>
+    <table id="history-table">
+      <thead><tr>
+        <th>Borne</th><th>Connecteur</th><th>Véhicule</th><th>Début</th><th>Fin</th><th>kWh</th><th>Coût</th><th>Tarif</th>
+      </tr></thead>
+      <tbody></tbody>
+    </table>
+  </div>
+
 </div>
 
 </main>
@@ -222,10 +291,29 @@ function showApp() {
   if (!window._pollStarted) {
     window._pollStarted = true;
     setInterval(() => {
-      if (openCharger) { renderChargerDetail(openCharger); } else { loadChargers(); }
+      const active = document.querySelector(".tab-panel.active");
+      if (active && active.id === "tab-chargers") {
+        if (openCharger) { renderChargerDetail(openCharger); } else { loadChargers(); }
+      }
     }, 5000);
   }
 }
+
+// --- Onglets ---
+
+const tabsLoaded = { vehicles: false, tariffs: false, history: false };
+
+function switchTab(name) {
+  document.querySelectorAll(".tab-panel").forEach(el => el.classList.remove("active"));
+  document.querySelectorAll(".tab-btn").forEach(el => el.classList.remove("active"));
+  document.getElementById("tab-" + name).classList.add("active");
+  document.getElementById("tabbtn-" + name).classList.add("active");
+  if (name === "vehicles" && !tabsLoaded.vehicles) { loadVehicles(); tabsLoaded.vehicles = true; }
+  if (name === "tariffs" && !tabsLoaded.tariffs) { loadTariffs(); tabsLoaded.tariffs = true; }
+  if (name === "history" && !tabsLoaded.history) { populateVehicleFilter(); loadHistory(); tabsLoaded.history = true; }
+}
+
+// --- Bornes ---
 
 async function loadChargers() {
   const resp = await fetch("api/chargers", { headers: authHeaders() });
@@ -274,12 +362,14 @@ async function renderChargerDetail(id) {
   const el = document.getElementById("detail-" + id);
   if (!el) return;
 
-  const [chargerResp, connectorsResp] = await Promise.all([
+  const [chargerResp, connectorsResp, tariffsResp] = await Promise.all([
     fetch(`api/chargers/${id}`, { headers: authHeaders() }),
     fetch(`api/chargers/${id}/connectors`, { headers: authHeaders() }),
+    fetch(`api/tariffs`, { headers: authHeaders() }),
   ]);
   const charger = await chargerResp.json();
   const connectors = (await connectorsResp.json()).filter(c => c.connector_id !== 0);
+  const tariffs = await tariffsResp.json();
   const isLocal = charger.mode === "local";
 
   let html = `<div class="row">
@@ -291,6 +381,15 @@ async function renderChargerDetail(id) {
     <input id="relayurl-${id}" placeholder="wss://serveur-officiel/..." value="${charger.relay_url || ""}"
       style="${isLocal ? "display:none" : ""}; min-width:280px">
     <button onclick="saveMode('${id}')">Enregistrer</button>
+  </div>`;
+
+  html += `<div class="row">
+    <label>Tarif appliqué :</label>
+    <select id="tariff-select-${id}">
+      <option value="">(tarif par défaut)</option>
+      ${tariffs.map(t => `<option value="${t.id}" ${charger.tariff_plan_id === t.id ? "selected" : ""}>${t.name}</option>`).join("")}
+    </select>
+    <button onclick="saveTariff('${id}')">Enregistrer</button>
   </div>`;
 
   html += `<h2 style="margin-top:1rem">Connecteurs</h2>`;
@@ -328,6 +427,17 @@ async function saveMode(id) {
   if (resp.ok) { renderChargerDetail(id); loadChargers(); } else { alert("Échec de la mise à jour du mode"); }
 }
 
+async function saveTariff(id) {
+  const val = document.getElementById("tariff-select-" + id).value;
+  const tariff_plan_id = val ? parseInt(val, 10) : null;
+  const resp = await fetch(`api/chargers/${id}/tariff`, {
+    method: "PUT",
+    headers: { ...authHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({ tariff_plan_id }),
+  });
+  if (!resp.ok) alert("Erreur lors de l'enregistrement du tarif");
+}
+
 async function openConnectorModal(chargerId, connectorId, isLocal) {
   openModal("chargement...");
 
@@ -355,14 +465,15 @@ async function openConnectorModal(chargerId, connectorId, isLocal) {
   }
 
   html += `<p><b>Sessions récentes</b></p><table><thead><tr>
-    <th>#</th><th>Début</th><th>Fin</th><th>Wh</th><th>Statut</th>
+    <th>#</th><th>Début</th><th>Fin</th><th>kWh</th><th>Coût</th><th>Statut</th>
   </tr></thead><tbody>`;
   for (const s of sessions.slice(0, 10)) {
-    const wh = (s.meter_start != null && s.meter_stop != null) ? (s.meter_stop - s.meter_start) : "-";
+    const kwh = (s.energy_wh / 1000).toFixed(2);
+    const cost = s.cost != null ? s.cost.toFixed(2) + " €" : "-";
     html += `<tr><td>${s.id}</td><td>${s.start_time || "-"}</td>
-      <td>${s.stop_time || "-"}</td><td>${wh}</td><td>${s.status}</td></tr>`;
+      <td>${s.stop_time || "-"}</td><td>${kwh}</td><td>${cost}</td><td>${s.status}</td></tr>`;
   }
-  if (sessions.length === 0) html += `<tr><td colspan="5"><em>Aucune session</em></td></tr>`;
+  if (sessions.length === 0) html += `<tr><td colspan="6"><em>Aucune session</em></td></tr>`;
   html += `</tbody></table>`;
 
   html += `<p><b>Dernières valeurs de compteur</b></p><table><thead><tr>
@@ -397,6 +508,168 @@ async function stopCharge(id, connectorId) {
   });
   const data = await resp.json().catch(() => ({}));
   alert(resp.ok ? "Arrêt : " + data.status : "Erreur : " + (data.detail || resp.status));
+}
+
+// --- Véhicules ---
+
+async function loadVehicles() {
+  const resp = await fetch("api/vehicles", { headers: authHeaders() });
+  const vehicles = await resp.json();
+  const tbody = document.querySelector("#vehicles-table tbody");
+  tbody.innerHTML = "";
+  for (const v of vehicles) {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `<td>${v.name}</td><td>${v.id_tag || "-"}</td><td>${v.battery_capacity_kwh ?? "-"}</td>
+      <td><a class="link" onclick="deleteVehicle(${v.id})">supprimer</a></td>`;
+    tbody.appendChild(tr);
+  }
+}
+
+async function createVehicle() {
+  const name = document.getElementById("veh-name").value.trim();
+  if (!name) { alert("Nom requis"); return; }
+  const id_tag = document.getElementById("veh-idtag").value.trim() || null;
+  const batteryRaw = document.getElementById("veh-battery").value;
+  const battery_capacity_kwh = batteryRaw ? parseFloat(batteryRaw) : null;
+  const resp = await fetch("api/vehicles", {
+    method: "POST", headers: { ...authHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({ name, id_tag, battery_capacity_kwh }),
+  });
+  if (resp.ok) {
+    document.getElementById("veh-name").value = "";
+    document.getElementById("veh-idtag").value = "";
+    document.getElementById("veh-battery").value = "";
+    loadVehicles();
+  } else {
+    const data = await resp.json().catch(() => ({}));
+    alert("Erreur : " + (data.detail || resp.status));
+  }
+}
+
+async function deleteVehicle(id) {
+  if (!confirm("Supprimer ce véhicule ?")) return;
+  await fetch(`api/vehicles/${id}`, { method: "DELETE", headers: authHeaders() });
+  loadVehicles();
+}
+
+// --- Tarifs ---
+
+function dayLabels(csv) {
+  const names = ["lun", "mar", "mer", "jeu", "ven", "sam", "dim"];
+  return csv.split(",").filter(x => x !== "").map(d => names[parseInt(d, 10)]).join(" ");
+}
+
+async function loadTariffs() {
+  const resp = await fetch("api/tariffs", { headers: authHeaders() });
+  const plans = await resp.json();
+  const container = document.getElementById("tariffs-list");
+  container.innerHTML = "";
+  for (const p of plans) {
+    const div = document.createElement("div");
+    div.className = "plan-card";
+    let html = `<div class="row" style="justify-content:space-between">
+      <div><b>${p.name}</b> ${p.is_default ? '<span class="badge on">défaut</span>' : ""}
+        ${p.fixed_price != null ? `· secours ${p.fixed_price} €/kWh` : ""}</div>
+      <a class="link" onclick="deleteTariff(${p.id})">supprimer le plan</a>
+    </div>`;
+    html += `<table><thead><tr><th>Période</th><th>€/kWh</th><th>Jours</th><th>Début</th><th>Fin</th><th></th></tr></thead><tbody>`;
+    for (const period of p.periods) {
+      html += `<tr><td>${period.name}</td><td>${period.price}</td><td>${dayLabels(period.days_of_week)}</td>
+        <td>${period.start_time}</td><td>${period.end_time}</td>
+        <td><a class="link" onclick="deletePeriod(${p.id}, ${period.id})">x</a></td></tr>`;
+    }
+    if (p.periods.length === 0) html += `<tr><td colspan="6"><em>Aucune plage, seul le prix fixe s'applique</em></td></tr>`;
+    html += `</tbody></table>`;
+    html += `<div class="row">
+      <input id="period-name-${p.id}" placeholder="Nom (ex. Creuses)" style="width:110px">
+      <input id="period-price-${p.id}" placeholder="€/kWh" type="number" step="0.01" style="width:80px">
+      ${[0, 1, 2, 3, 4, 5, 6].map(d => `<label style="font-size:0.8rem"><input type="checkbox" class="period-day-${p.id}" value="${d}" checked> ${dayLabels(String(d))}</label>`).join("")}
+      <input id="period-start-${p.id}" type="time" value="23:00">
+      <input id="period-end-${p.id}" type="time" value="07:00">
+      <button onclick="addPeriod(${p.id})">+ période</button>
+    </div>`;
+    div.innerHTML = html;
+    container.appendChild(div);
+  }
+  if (plans.length === 0) {
+    container.innerHTML = "<p><em>Aucun plan tarifaire pour l'instant.</em></p>";
+  }
+}
+
+async function createTariff() {
+  const name = document.getElementById("tariff-name").value.trim();
+  if (!name) { alert("Nom requis"); return; }
+  const fixedRaw = document.getElementById("tariff-fixed").value;
+  const fixed_price = fixedRaw ? parseFloat(fixedRaw) : null;
+  const is_default = document.getElementById("tariff-default").checked;
+  const resp = await fetch("api/tariffs", {
+    method: "POST", headers: { ...authHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({ name, fixed_price, is_default }),
+  });
+  if (resp.ok) {
+    document.getElementById("tariff-name").value = "";
+    document.getElementById("tariff-fixed").value = "";
+    document.getElementById("tariff-default").checked = false;
+    loadTariffs();
+  } else {
+    alert("Erreur lors de la création du plan");
+  }
+}
+
+async function deleteTariff(id) {
+  if (!confirm("Supprimer ce plan tarifaire ?")) return;
+  await fetch(`api/tariffs/${id}`, { method: "DELETE", headers: authHeaders() });
+  loadTariffs();
+}
+
+async function addPeriod(planId) {
+  const name = document.getElementById(`period-name-${planId}`).value.trim() || "Période";
+  const price = parseFloat(document.getElementById(`period-price-${planId}`).value);
+  const start_time = document.getElementById(`period-start-${planId}`).value;
+  const end_time = document.getElementById(`period-end-${planId}`).value;
+  const days = Array.from(document.querySelectorAll(`.period-day-${planId}:checked`)).map(el => el.value).join(",");
+  if (isNaN(price) || !start_time || !end_time) { alert("Prix, début et fin requis"); return; }
+  const resp = await fetch(`api/tariffs/${planId}/periods`, {
+    method: "POST", headers: { ...authHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({ name, price, days_of_week: days, start_time, end_time }),
+  });
+  if (resp.ok) { loadTariffs(); } else { alert("Erreur lors de l'ajout de la période"); }
+}
+
+async function deletePeriod(planId, periodId) {
+  await fetch(`api/tariffs/${planId}/periods/${periodId}`, { method: "DELETE", headers: authHeaders() });
+  loadTariffs();
+}
+
+// --- Historique ---
+
+async function populateVehicleFilter() {
+  const resp = await fetch("api/vehicles", { headers: authHeaders() });
+  const vehicles = await resp.json();
+  const select = document.getElementById("hist-vehicle-filter");
+  select.innerHTML = '<option value="">Tous</option>' +
+    vehicles.map(v => `<option value="${v.id}">${v.name}</option>`).join("");
+}
+
+async function loadHistory() {
+  const vehicleId = document.getElementById("hist-vehicle-filter").value;
+  let url = "api/history?limit=200";
+  if (vehicleId) url += `&vehicle_id=${vehicleId}`;
+  const resp = await fetch(url, { headers: authHeaders() });
+  const sessions = await resp.json();
+  const tbody = document.querySelector("#history-table tbody");
+  tbody.innerHTML = "";
+  for (const s of sessions) {
+    const tr = document.createElement("tr");
+    const kwh = (s.energy_wh / 1000).toFixed(2);
+    const cost = s.cost != null ? s.cost.toFixed(2) + " €" : "-";
+    tr.innerHTML = `<td>${s.charger_id}</td><td>${s.connector_id}</td><td>${s.vehicle_name || "-"}</td>
+      <td>${s.start_time || "-"}</td><td>${s.stop_time || "-"}</td><td>${kwh}</td><td>${cost}</td><td>${s.tariff_plan_name || "-"}</td>`;
+    tbody.appendChild(tr);
+  }
+  if (sessions.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="8"><em>Aucune session</em></td></tr>';
+  }
 }
 
 if (token) { showApp(); }
