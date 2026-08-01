@@ -8,11 +8,16 @@ from ocpp.v16.enums import (
 )
 
 from .db import SessionLocal
-from .models import Charger, ChargerMode, Transaction, MeterValue, ConfigurationKey
+from .models import Charger, ChargerMode, Transaction, MeterValue, ConfigurationKey, ConnectorStatus
 
 # Registre des bornes actuellement connectées en mode local, pour que l'API
 # puisse leur envoyer des commandes (RemoteStart, ChangeConfiguration, ...).
 CONNECTED_CHARGERS: dict[str, "LocalChargePoint"] = {}
+
+
+def now_iso() -> str:
+    """Horodatage UTC conforme au type dateTime d'OCPP (ISO 8601, suffixe Z)."""
+    return datetime.utcnow().isoformat() + "Z"
 
 
 class LocalChargePoint(ChargePoint16):
@@ -44,14 +49,14 @@ class LocalChargePoint(ChargePoint16):
             db.close()
 
         return call_result.BootNotification(
-            current_time=datetime.utcnow().isoformat(),
+            current_time=now_iso(),
             interval=300,
             status=RegistrationStatus.accepted,
         )
 
     @on(Action.heartbeat)
     async def on_heartbeat(self, **kwargs):
-        return call_result.Heartbeat(current_time=datetime.utcnow().isoformat())
+        return call_result.Heartbeat(current_time=now_iso())
 
     @on(Action.authorize)
     async def on_authorize(self, id_tag, **kwargs):
@@ -66,8 +71,25 @@ class LocalChargePoint(ChargePoint16):
         db = self._db()
         try:
             charger = self._get_or_create_charger(db)
-            charger.status = status
             charger.last_seen = datetime.utcnow()
+
+            entry = db.query(ConnectorStatus).filter(
+                ConnectorStatus.charger_id == self.id,
+                ConnectorStatus.connector_id == connector_id,
+            ).first()
+            if not entry:
+                entry = ConnectorStatus(charger_id=self.id, connector_id=connector_id)
+                db.add(entry)
+            entry.status = status
+            entry.error_code = kwargs.get("error_code")
+            entry.updated_at = datetime.utcnow()
+
+            # connectorId=0 désigne la borne elle-même (pas un connecteur
+            # physique) au sens de la norme : c'est ce statut qui sert de
+            # résumé au niveau de la borne, indépendamment de ses connecteurs.
+            if connector_id == 0:
+                charger.status = status
+
             db.commit()
         finally:
             db.close()

@@ -2,7 +2,7 @@ import enum
 from datetime import datetime
 
 from sqlalchemy import (
-    Column, String, Integer, Float, Boolean, DateTime, ForeignKey, Enum
+    Column, String, Integer, Float, Boolean, DateTime, ForeignKey, Enum, UniqueConstraint
 )
 from sqlalchemy.orm import declarative_base, relationship
 
@@ -31,6 +31,7 @@ class Charger(Base):
     transactions = relationship("Transaction", back_populates="charger")
     meter_values = relationship("MeterValue", back_populates="charger")
     config_keys = relationship("ConfigurationKey", back_populates="charger")
+    connector_statuses = relationship("ConnectorStatus", back_populates="charger")
 
 
 class Transaction(Base):
@@ -74,6 +75,22 @@ class ConfigurationKey(Base):
     readonly = Column(Boolean, default=False)
 
     charger = relationship("Charger", back_populates="config_keys")
+
+
+class ConnectorStatus(Base):
+    __tablename__ = "connector_statuses"
+    __table_args__ = (
+        UniqueConstraint("charger_id", "connector_id", name="uq_charger_connector"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    charger_id = Column(String, ForeignKey("chargers.id"), nullable=False)
+    connector_id = Column(Integer, nullable=False)  # 0 = la borne elle-même
+    status = Column(String, nullable=False)
+    error_code = Column(String, nullable=True)
+    updated_at = Column(DateTime, default=datetime.utcnow)
+
+    charger = relationship("Charger", back_populates="connector_statuses")
 
 
 class UserRole(str, enum.Enum):

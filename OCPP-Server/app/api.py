@@ -6,7 +6,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from .db import get_db
-from .models import Charger, ChargerMode, Transaction, MeterValue, User
+from .models import Charger, ChargerMode, Transaction, MeterValue, User, ConnectorStatus
 from .auth import verify_password, create_access_token, get_current_user, require_admin
 from .csms_local import CONNECTED_CHARGERS
 
@@ -151,6 +151,21 @@ async def set_configuration(
     cp = _require_local_and_connected(charger_id, db)
     status_result = await cp.push_configuration(key, body.value)
     return {"status": status_result}
+
+
+@router.get("/chargers/{charger_id}/connectors")
+def list_connector_statuses(charger_id: str, db: Session = Depends(get_db), user=Depends(get_current_user)):
+    entries = db.query(ConnectorStatus).filter(ConnectorStatus.charger_id == charger_id).order_by(
+        ConnectorStatus.connector_id
+    ).all()
+    return [
+        {
+            "connector_id": e.connector_id, "status": e.status,
+            "error_code": e.error_code,
+            "updated_at": e.updated_at.isoformat() if e.updated_at else None,
+        }
+        for e in entries
+    ]
 
 
 # --- Métriques et historique (disponibles quel que soit le mode) ---

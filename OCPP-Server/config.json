@@ -1,6 +1,6 @@
 {
   "name": "OCPP Backoffice Server",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "slug": "ocppserver",
   "description": "Serveur OCPP 1.6 (CSMS) avec API REST et page d'administration basique : plusieurs bornes, mode local ou relais par borne, comptes utilisateurs.",
   "url": "https://github.com/MrTh0m/hassio-addons",

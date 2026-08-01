@@ -1,9 +1,16 @@
 # Changelog
 
+## 0.3.0
+
+- Fix (conformité OCPP) : les timestamps envoyés par le serveur (BootNotification, Heartbeat) n'incluaient pas d'indicateur de fuseau UTC (`Z`), non conforme au type `dateTime` de la norme. Corrigé.
+- Fix (conformité OCPP) : le statut de chaque connecteur écrasait celui des autres connecteurs dans un unique champ. Chaque connecteur a maintenant son propre statut stocké séparément (nouvelle table `connector_statuses`), le champ résumé de la borne ne reflétant que le connecteur 0 (la borne elle-même, au sens de la norme), pas un connecteur physique.
+- Nouvel endpoint `GET /api/chargers/{id}/connectors`, affiché dans la page admin.
+- Fix : `run.sh` utilisait `#!/usr/bin/env bash`, absent de l'image Alpine. Passage à `#!/bin/sh`.
+- La route WebSocket OCPP est bien `/ocpp/{id_borne}` (à rappeler dans la config du charge point : Backend URL = `ws://<ip>:8000/ocpp`, pas `ws://<ip>:8000`).
+
 ## 0.2.0
 
-- Fix : `run.sh` utilisait `#!/usr/bin/env bash`, mais `bash` n'est pas installé dans l'image Alpine, provoquant l'erreur `env: can't execute 'bash'`. Passage à `#!/bin/sh`, seule syntaxe POSIX utilisée dans le script.
-- Ajout d'une page d'administration basique (`/admin`), servie directement par le serveur (HTML/JS sans build), accessible aussi via l'ingress : connexion, liste des bornes, bascule local/relais, démarrage/arrêt de charge, sessions et dernières valeurs de compteur par borne.
+- Ajout d'une page d'administration basique (`/admin`) : connexion, liste des bornes, bascule local/relais, démarrage/arrêt de charge, sessions et dernières valeurs de compteur par borne.
 - La racine `/` redirige vers `/admin`.
 
 ## 0.1.0

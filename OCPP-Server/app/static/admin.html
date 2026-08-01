@@ -130,12 +130,14 @@ async function toggleDetail(id) {
   el.classList.add("open");
   el.innerHTML = "chargement...";
 
-  const [chargerResp, sessionsResp, metersResp] = await Promise.all([
+  const [chargerResp, connectorsResp, sessionsResp, metersResp] = await Promise.all([
     fetch(`/api/chargers/${id}`, { headers: authHeaders() }),
+    fetch(`/api/chargers/${id}/connectors`, { headers: authHeaders() }),
     fetch(`/api/chargers/${id}/sessions`, { headers: authHeaders() }),
     fetch(`/api/chargers/${id}/metervalues?limit=10`, { headers: authHeaders() }),
   ]);
   const charger = await chargerResp.json();
+  const connectors = await connectorsResp.json();
   const sessions = await sessionsResp.json();
   const meters = await metersResp.json();
 
@@ -162,6 +164,15 @@ async function toggleDetail(id) {
   } else {
     html += `<p><em>Pilotage indisponible : cette borne est en mode relais.</em></p>`;
   }
+
+  html += `<p><b>Statut par connecteur</b></p><table><thead><tr>
+    <th>Connecteur</th><th>Statut</th><th>Code erreur</th><th>Mis à jour</th>
+  </tr></thead><tbody>`;
+  for (const c of connectors) {
+    const label = c.connector_id === 0 ? "0 (borne)" : c.connector_id;
+    html += `<tr><td>${label}</td><td>${c.status}</td><td>${c.error_code || "-"}</td><td>${c.updated_at || "-"}</td></tr>`;
+  }
+  html += `</tbody></table>`;
 
   html += `<p><b>Sessions récentes</b></p><table><thead><tr>
     <th>#</th><th>Connecteur</th><th>Début</th><th>Fin</th><th>Wh</th><th>Statut</th>
