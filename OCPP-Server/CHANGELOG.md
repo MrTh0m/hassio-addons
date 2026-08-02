@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.11.0
+
+- **Fix majeur : bornes et historique disparaissaient (et suppression d'un véhicule/tarif échouait) après la mise à jour 0.10.0.** `Base.metadata.create_all()` de SQLAlchemy ne modifie jamais les tables déjà existantes : les colonnes ajoutées en 0.10.0 (`tariff_plan_id`, `vehicle_id`, ...) n'étaient donc jamais créées sur une base existante, provoquant des erreurs "no such column" sur toute requête touchant ces tables (y compris les suppressions, qui doivent d'abord détacher les références). Une migration légère ajoute maintenant automatiquement les colonnes manquantes au démarrage. Reproduit sur une base à l'ancien schéma et vérifié : les données existantes sont conservées, plus aucune erreur.
+- **Coût figé à la clôture d'une charge.** Le coût n'est plus recalculé à chaque consultation à partir des tarifs actuels : il est calculé une fois à la fin de la charge (montant, kWh, nom de l'abonnement utilisé) et stocké définitivement. Modifier ou supprimer un abonnement/une période plus tard n'affecte donc plus jamais le coût d'une charge déjà terminée.
+- **Abonnements (anciennement "Tarifs")** : refonte de l'onglet.
+  - Renommage "plan" → "abonnement", plus cohérent avec un contrat électrique.
+  - Le prix par défaut apparaît comme une ligne du tableau des périodes ("7j/7, 24h/24"), plus seulement une mention à part.
+  - Modification possible du nom, du prix par défaut et de la puissance souscrite d'un abonnement, et de chaque période (nom, prix, jours, horaires), sans avoir à les supprimer/recréer.
+  - Nouveau bouton "définir comme actif" dédié, distinct de la création (le rôle "actif = utilisé par défaut pour les bornes sans tarif assigné" reste inchangé, juste plus lisible).
+  - Nouveau champ puissance souscrite (kVA), informatif.
+  - Histogramme hebdomadaire (SVG) par abonnement, montrant les plages colorées sur 7 jours.
+- **Véhicules** : modification possible après création (nom, idTag, capacité batterie). Colonne "Batterie (kWh)".
+- **Démarrage d'une charge depuis la page admin** : sélection d'un véhicule (plutôt que de taper un idTag à la main) quand plusieurs véhicules sont enregistrés.
+- Nouveau logo, plus visible que la version précédente (probablement trop petit/transparent).
+
 ## 0.10.0
 
 - **Véhicules** : nouvel onglet, association d'un idTag (badge) à un véhicule. Les sessions démarrées avec ce badge lui sont automatiquement rattachées (mode local et relais), pour le suivi des coûts et l'historique.
@@ -63,6 +78,6 @@
 ### Limitations connues
 - OCPP 2.0.1 non implémenté.
 - Un seul compte administrateur, pas de gestion multi-utilisateurs.
-- Pas encore de graphes (proposition à valider).
+- Pas encore de graphes globaux (histogramme hebdomadaire par abonnement disponible ; consommation/coût dans le temps : à venir).
 - Rattachement de transaction incomplet sur StopTransaction en mode relais.
-- Une session sans véhicule ni tarif assigné à sa borne utilise le tarif marqué "par défaut" s'il existe, sinon aucun coût n'est calculé.
+- Une session sans véhicule ni tarif assigné à sa borne utilise l'abonnement marqué "actif" s'il existe, sinon aucun coût n'est calculé.
