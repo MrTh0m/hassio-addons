@@ -114,6 +114,17 @@
     color: var(--muted); font-size: 0.8rem; text-align: center;
   }
   footer a { color: var(--muted); }
+
+  .charging-anim {
+    display: inline-block; width: 12px; height: 12px; border-radius: 50%;
+    background: #16a34a; margin-right: 0.3rem; vertical-align: middle;
+    animation: chargePulse 1.5s infinite;
+  }
+  @keyframes chargePulse {
+    0% { box-shadow: 0 0 0 0 rgba(22,163,74,0.5); }
+    70% { box-shadow: 0 0 0 9px rgba(22,163,74,0); }
+    100% { box-shadow: 0 0 0 0 rgba(22,163,74,0); }
+  }
 </style>
 </head>
 <body>
@@ -139,7 +150,8 @@
 <div id="app" style="display:none">
 
   <nav class="tabs">
-    <button class="tab-btn active" id="tabbtn-chargers" onclick="switchTab('chargers')">Bornes</button>
+    <button class="tab-btn active" id="tabbtn-home" onclick="switchTab('home')">Accueil</button>
+    <button class="tab-btn" id="tabbtn-chargers" onclick="switchTab('chargers')">Bornes</button>
     <button class="tab-btn" id="tabbtn-vehicles" onclick="switchTab('vehicles')">Véhicules</button>
     <button class="tab-btn" id="tabbtn-tariffs" onclick="switchTab('tariffs')">Tarifs</button>
     <button class="tab-btn" id="tabbtn-history" onclick="switchTab('history')">Historique</button>
@@ -147,7 +159,20 @@
     <button onclick="logout()">Déconnexion</button>
   </nav>
 
-  <div id="tab-chargers" class="tab-panel active">
+  <div id="tab-home" class="tab-panel active">
+    <div class="row" style="justify-content: space-between">
+      <h1>Accueil</h1>
+      <button onclick="loadHome()">Rafraîchir</button>
+    </div>
+    <h2>Charge en cours</h2>
+    <div id="home-current"><em>Chargement...</em></div>
+    <h2 style="margin-top:1.5rem">Bornes disponibles</h2>
+    <div id="home-available"></div>
+    <h2 style="margin-top:1.5rem">Dernière charge</h2>
+    <div id="home-last"></div>
+  </div>
+
+  <div id="tab-chargers" class="tab-panel">
     <div class="row" style="justify-content: space-between">
       <h1>Bornes</h1>
       <button onclick="loadChargers()">Rafraîchir</button>
@@ -206,7 +231,8 @@
     </div>
     <table id="history-table">
       <thead><tr>
-        <th>Borne</th><th>Connecteur</th><th>Véhicule</th><th>Début</th><th>Fin</th><th>kWh</th><th>Coût</th><th>Tarif</th>
+        <th>Borne</th><th>Connecteur</th><th>Véhicule</th><th>Début</th><th>Fin</th><th>Durée</th>
+        <th>kWh</th><th>Coût</th><th>Tarif</th><th>km</th><th>% min</th><th>% max</th><th></th>
       </tr></thead>
       <tbody></tbody>
     </table>
@@ -252,6 +278,15 @@ fetch("api/version").then(r => r.json()).then(d => {
   document.getElementById("footer-version").textContent = d.version;
 }).catch(() => {});
 
+function formatDateTime(iso) {
+  if (!iso) return "-";
+  const hasTz = /Z|[+-]\d{2}:\d{2}$/.test(iso);
+  const d = new Date(hasTz ? iso : iso + "Z");
+  if (isNaN(d.getTime())) return iso;
+  const pad = n => String(n).padStart(2, "0");
+  return `${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${d.getFullYear()} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
 function authHeaders() {
   return { "Authorization": "Bearer " + token };
 }
@@ -261,8 +296,11 @@ function openModal(html) {
   document.getElementById("modal-overlay").classList.add("open");
 }
 
+let openModalConnector = null;
+
 function closeModal() {
   document.getElementById("modal-overlay").classList.remove("open");
+  openModalConnector = null;
 }
 
 async function login() {
@@ -290,13 +328,18 @@ function logout() {
 function showApp() {
   document.getElementById("login-box").style.display = "none";
   document.getElementById("app").style.display = "block";
+  loadHome();
   loadChargers();
   if (!window._pollStarted) {
     window._pollStarted = true;
     setInterval(() => {
       const active = document.querySelector(".tab-panel.active");
+      if (active && active.id === "tab-home") { loadHome(); }
       if (active && active.id === "tab-chargers") {
         if (openCharger) { renderChargerDetail(openCharger); } else { loadChargers(); }
+      }
+      if (openModalConnector && document.getElementById("modal-overlay").classList.contains("open")) {
+        openConnectorModal(openModalConnector.chargerId, openModalConnector.connectorId, openModalConnector.isLocal, true);
       }
     }, 5000);
   }
@@ -311,9 +354,152 @@ function switchTab(name) {
   document.querySelectorAll(".tab-btn").forEach(el => el.classList.remove("active"));
   document.getElementById("tab-" + name).classList.add("active");
   document.getElementById("tabbtn-" + name).classList.add("active");
+  if (name === "home") { loadHome(); }
   if (name === "vehicles" && !tabsLoaded.vehicles) { loadVehicles(); tabsLoaded.vehicles = true; }
   if (name === "tariffs" && !tabsLoaded.tariffs) { loadTariffs(); tabsLoaded.tariffs = true; }
   if (name === "history" && !tabsLoaded.history) { populateVehicleFilter(); loadHistory(); tabsLoaded.history = true; }
+}
+
+// --- Accueil ---
+
+async function loadHome() {
+  const [activeResp, recentResp, chargersResp] = await Promise.all([
+    fetch("api/history?status_filter=active&limit=20", { headers: authHeaders() }),
+    fetch("api/history?limit=10", { headers: authHeaders() }),
+    fetch("api/chargers", { headers: authHeaders() }),
+  ]);
+  const active = await activeResp.json();
+  const recent = await recentResp.json();
+  const chargers = await chargersResp.json();
+  const lastCompleted = recent.find(s => s.status === "completed");
+
+  renderHomeCurrent(active);
+  renderHomeLast(lastCompleted);
+  await renderHomeAvailable(chargers, active);
+}
+
+function formatDuration(minutes) {
+  if (minutes == null) return "-";
+  return `${Math.floor(minutes / 60)}h${String(Math.round(minutes % 60)).padStart(2, "0")}`;
+}
+
+function renderHomeCurrent(active) {
+  const el = document.getElementById("home-current");
+  if (active.length === 0) {
+    el.innerHTML = "<p><em>Aucune charge en cours.</em></p>";
+    return;
+  }
+  let html = "";
+  for (const s of active) {
+    const kwh = (s.energy_wh / 1000).toFixed(2);
+    html += `<div class="connector-card">
+      <div>
+        <span class="charging-anim"></span>
+        <b>${s.charger_id} · Connecteur ${s.connector_id}</b>${s.vehicle_name ? ` · ${s.vehicle_name}` : ""}
+        <div style="font-size:0.85rem;color:var(--muted)">Depuis ${formatDuration(s.duration_min)} · ${kwh} kWh</div>
+      </div>
+      <button onclick="stopChargeFromHome('${s.charger_id}', ${s.connector_id}, ${s.id})">Arrêter</button>
+    </div>`;
+  }
+  el.innerHTML = html;
+}
+
+async function renderHomeAvailable(chargers, active) {
+  const activeKeys = new Set(active.map(s => `${s.charger_id}:${s.connector_id}`));
+  const vehiclesResp = await fetch("api/vehicles", { headers: authHeaders() });
+  const vehicles = (await vehiclesResp.json()).filter(v => v.id_tag);
+
+  const el = document.getElementById("home-available");
+  let html = "";
+  for (const c of chargers) {
+    if (c.mode !== "local") continue;
+    const connResp = await fetch(`api/chargers/${c.id}/connectors`, { headers: authHeaders() });
+    const connectors = (await connResp.json()).filter(x => x.connector_id !== 0);
+    for (const conn of connectors) {
+      if (activeKeys.has(`${c.id}:${conn.connector_id}`)) continue;
+      html += `<div class="connector-card">
+        <div><b>${c.id} · Connecteur ${conn.connector_id}</b> <span class="badge ${conn.status}">${conn.status}</span></div>
+        <div class="row">
+          <select id="home-veh-${c.id}-${conn.connector_id}">
+            <option value="">idTag manuel</option>
+            ${vehicles.map(v => `<option value="${v.id_tag}">${v.name}</option>`).join("")}
+          </select>
+          <button onclick="startChargeFromHome('${c.id}', ${conn.connector_id})">Démarrer</button>
+        </div>
+      </div>`;
+    }
+  }
+  el.innerHTML = html || "<p><em>Aucune borne locale disponible pour l'instant.</em></p>";
+}
+
+async function startChargeFromHome(chargerId, connectorId) {
+  const select = document.getElementById(`home-veh-${chargerId}-${connectorId}`);
+  const id_tag = (select && select.value) || "WEBADMIN";
+  const resp = await fetch(`api/chargers/${chargerId}/connectors/${connectorId}/start`, {
+    method: "POST", headers: { ...authHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({ id_tag }),
+  });
+  const data = await resp.json().catch(() => ({}));
+  if (resp.ok) { loadHome(); } else { alert("Erreur : " + (data.detail || resp.status)); }
+}
+
+async function stopChargeFromHome(chargerId, connectorId, transactionId) {
+  const resp = await fetch(`api/chargers/${chargerId}/connectors/${connectorId}/stop`, {
+    method: "POST", headers: { ...authHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({ transaction_id: transactionId }),
+  });
+  const data = await resp.json().catch(() => ({}));
+  if (resp.ok) { loadHome(); } else { alert("Erreur : " + (data.detail || resp.status)); }
+}
+
+function renderHomeLast(s) {
+  const el = document.getElementById("home-last");
+  if (!s) {
+    el.innerHTML = "<p><em>Aucune charge terminée pour l'instant.</em></p>";
+    return;
+  }
+  const kwh = (s.energy_wh / 1000).toFixed(2);
+  const cost = s.cost != null ? s.cost.toFixed(2) + " €" : "-";
+  el.innerHTML = `<div class="plan-card">
+    <div>
+      <b>${s.charger_id} · Connecteur ${s.connector_id}</b>${s.vehicle_name ? ` · ${s.vehicle_name}` : ""}
+      <div style="font-size:0.85rem;color:var(--muted)">
+        ${formatDateTime(s.start_time)} → ${formatDateTime(s.stop_time)} · ${formatDuration(s.duration_min)} · ${kwh} kWh · ${cost}
+      </div>
+    </div>
+    <div class="row" style="margin-top:0.5rem">
+      <label>Véhicule :</label>
+      <select id="home-last-vehicle"><option value="">(aucun)</option></select>
+      <label>km :</label><input id="home-last-km" type="number" value="${s.odometer_km ?? ""}" style="width:80px">
+      <label>% min :</label><input id="home-last-pmin" type="number" min="0" max="100" value="${s.battery_percent_start ?? ""}" style="width:60px">
+      <label>% max :</label><input id="home-last-pmax" type="number" min="0" max="100" value="${s.battery_percent_end ?? 100}" style="width:60px">
+      <button onclick="saveHomeLast(${s.id})">Enregistrer</button>
+    </div>
+  </div>`;
+  fetch("api/vehicles", { headers: authHeaders() }).then(r => r.json()).then(vehicles => {
+    const sel = document.getElementById("home-last-vehicle");
+    if (!sel) return;
+    sel.innerHTML = '<option value="">(aucun)</option>' +
+      vehicles.map(v => `<option value="${v.id}" ${s.vehicle_id === v.id ? "selected" : ""}>${v.name}</option>`).join("");
+  });
+}
+
+async function saveHomeLast(id) {
+  const vehicleRaw = document.getElementById("home-last-vehicle").value;
+  const vehicle_id = vehicleRaw ? parseInt(vehicleRaw, 10) : null;
+  const kmRaw = document.getElementById("home-last-km").value;
+  const pminRaw = document.getElementById("home-last-pmin").value;
+  const pmaxRaw = document.getElementById("home-last-pmax").value;
+  const resp = await fetch(`api/sessions/${id}`, {
+    method: "PUT", headers: { ...authHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({
+      vehicle_id,
+      odometer_km: kmRaw !== "" ? parseFloat(kmRaw) : null,
+      battery_percent_start: pminRaw !== "" ? parseFloat(pminRaw) : null,
+      battery_percent_end: pmaxRaw !== "" ? parseFloat(pmaxRaw) : null,
+    }),
+  });
+  if (resp.ok) { loadHome(); } else { alert("Erreur lors de l'enregistrement"); }
 }
 
 // --- Bornes ---
@@ -441,8 +627,9 @@ async function saveTariff(id) {
   if (!resp.ok) alert("Erreur lors de l'enregistrement du tarif");
 }
 
-async function openConnectorModal(chargerId, connectorId, isLocal) {
-  openModal("chargement...");
+async function openConnectorModal(chargerId, connectorId, isLocal, silent) {
+  openModalConnector = { chargerId, connectorId, isLocal };
+  if (!silent) openModal("chargement...");
 
   const [sessionsResp, metersResp, vehiclesResp] = await Promise.all([
     fetch(`api/chargers/${chargerId}/sessions?connector_id=${connectorId}`, { headers: authHeaders() }),
@@ -479,8 +666,8 @@ async function openConnectorModal(chargerId, connectorId, isLocal) {
   for (const s of sessions.slice(0, 10)) {
     const kwh = (s.energy_wh / 1000).toFixed(2);
     const cost = s.cost != null ? s.cost.toFixed(2) + " €" : "-";
-    html += `<tr><td>${s.id}</td><td>${s.start_time || "-"}</td>
-      <td>${s.stop_time || "-"}</td><td>${kwh}</td><td>${cost}</td><td>${s.status}</td></tr>`;
+    html += `<tr><td>${s.id}</td><td>${formatDateTime(s.start_time)}</td>
+      <td>${formatDateTime(s.stop_time)}</td><td>${kwh}</td><td>${cost}</td><td>${s.status}</td></tr>`;
   }
   if (sessions.length === 0) html += `<tr><td colspan="6"><em>Aucune session</em></td></tr>`;
   html += `</tbody></table>`;
@@ -489,7 +676,7 @@ async function openConnectorModal(chargerId, connectorId, isLocal) {
     <th>Horodatage</th><th>Grandeur</th><th>Valeur</th><th>Unité</th>
   </tr></thead><tbody>`;
   for (const m of meters) {
-    html += `<tr><td>${m.timestamp}</td><td>${m.measurand}</td><td>${m.value}</td><td>${m.unit || "-"}</td></tr>`;
+    html += `<tr><td>${formatDateTime(m.timestamp)}</td><td>${m.measurand}</td><td>${m.value}</td><td>${m.unit || "-"}</td></tr>`;
   }
   if (meters.length === 0) html += `<tr><td colspan="4"><em>Aucune valeur</em></td></tr>`;
   html += `</tbody></table>`;
@@ -834,12 +1021,16 @@ async function deletePeriod(planId, periodId) {
 
 // --- Historique ---
 
+let cachedHistoryVehicles = [];
+let cachedHistory = [];
+let editingHistoryId = null;
+
 async function populateVehicleFilter() {
   const resp = await fetch("api/vehicles", { headers: authHeaders() });
-  const vehicles = await resp.json();
+  cachedHistoryVehicles = await resp.json();
   const select = document.getElementById("hist-vehicle-filter");
   select.innerHTML = '<option value="">Tous</option>' +
-    vehicles.map(v => `<option value="${v.id}">${v.name}</option>`).join("");
+    cachedHistoryVehicles.map(v => `<option value="${v.id}">${v.name}</option>`).join("");
 }
 
 async function loadHistory() {
@@ -847,19 +1038,74 @@ async function loadHistory() {
   let url = "api/history?limit=200";
   if (vehicleId) url += `&vehicle_id=${vehicleId}`;
   const resp = await fetch(url, { headers: authHeaders() });
-  const sessions = await resp.json();
+  cachedHistory = await resp.json();
+  renderHistory();
+}
+
+function renderHistory() {
   const tbody = document.querySelector("#history-table tbody");
   tbody.innerHTML = "";
-  for (const s of sessions) {
+  for (const s of cachedHistory) {
     const tr = document.createElement("tr");
     const kwh = (s.energy_wh / 1000).toFixed(2);
     const cost = s.cost != null ? s.cost.toFixed(2) + " €" : "-";
-    tr.innerHTML = `<td>${s.charger_id}</td><td>${s.connector_id}</td><td>${s.vehicle_name || "-"}</td>
-      <td>${s.start_time || "-"}</td><td>${s.stop_time || "-"}</td><td>${kwh}</td><td>${cost}</td><td>${s.tariff_plan_name || "-"}</td>`;
+    const duration = s.duration_min != null ? `${Math.floor(s.duration_min / 60)}h${String(Math.round(s.duration_min % 60)).padStart(2, "0")}` : "-";
+
+    if (editingHistoryId === s.id) {
+      tr.innerHTML = `
+        <td>${s.charger_id}</td><td>${s.connector_id}</td>
+        <td>
+          <select id="hist-edit-vehicle-${s.id}">
+            <option value="">(aucun)</option>
+            ${cachedHistoryVehicles.map(v => `<option value="${v.id}" ${s.vehicle_id === v.id ? "selected" : ""}>${v.name}</option>`).join("")}
+          </select>
+        </td>
+        <td>${formatDateTime(s.start_time)}</td><td>${formatDateTime(s.stop_time)}</td><td>${duration}</td>
+        <td>${kwh}</td><td>${cost}</td><td>${s.tariff_plan_name || "-"}</td>
+        <td><input id="hist-edit-km-${s.id}" type="number" step="1" value="${s.odometer_km ?? ""}" style="width:70px"></td>
+        <td><input id="hist-edit-pmin-${s.id}" type="number" step="1" min="0" max="100" value="${s.battery_percent_start ?? ""}" style="width:55px"></td>
+        <td><input id="hist-edit-pmax-${s.id}" type="number" step="1" min="0" max="100" value="${s.battery_percent_end ?? 100}" style="width:55px"></td>
+        <td>
+          <a class="link" onclick="saveHistoryEdit(${s.id})">enregistrer</a>
+          <a class="link" onclick="editingHistoryId=null; renderHistory();">annuler</a>
+        </td>`;
+    } else {
+      tr.innerHTML = `
+        <td>${s.charger_id}</td><td>${s.connector_id}</td><td>${s.vehicle_name || "-"}</td>
+        <td>${formatDateTime(s.start_time)}</td><td>${formatDateTime(s.stop_time)}</td><td>${duration}</td>
+        <td>${kwh}</td><td>${cost}</td><td>${s.tariff_plan_name || "-"}</td>
+        <td>${s.odometer_km ?? "-"}</td>
+        <td>${s.battery_percent_start ?? "-"}</td>
+        <td>${s.battery_percent_end ?? "-"}</td>
+        <td><a class="link" onclick="editingHistoryId=${s.id}; renderHistory();">modifier</a></td>`;
+    }
     tbody.appendChild(tr);
   }
-  if (sessions.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="8"><em>Aucune session</em></td></tr>';
+  if (cachedHistory.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="13"><em>Aucune session</em></td></tr>';
+  }
+}
+
+async function saveHistoryEdit(id) {
+  const vehicleRaw = document.getElementById(`hist-edit-vehicle-${id}`).value;
+  const vehicle_id = vehicleRaw ? parseInt(vehicleRaw, 10) : null;
+  const kmRaw = document.getElementById(`hist-edit-km-${id}`).value;
+  const odometer_km = kmRaw !== "" ? parseFloat(kmRaw) : null;
+  const pminRaw = document.getElementById(`hist-edit-pmin-${id}`).value;
+  const battery_percent_start = pminRaw !== "" ? parseFloat(pminRaw) : null;
+  const pmaxRaw = document.getElementById(`hist-edit-pmax-${id}`).value;
+  const battery_percent_end = pmaxRaw !== "" ? parseFloat(pmaxRaw) : null;
+
+  const resp = await fetch(`api/sessions/${id}`, {
+    method: "PUT", headers: { ...authHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({ vehicle_id, odometer_km, battery_percent_start, battery_percent_end }),
+  });
+  if (resp.ok) {
+    editingHistoryId = null;
+    loadHistory();
+  } else {
+    const data = await resp.json().catch(() => ({}));
+    alert("Erreur : " + (data.detail || resp.status));
   }
 }
 

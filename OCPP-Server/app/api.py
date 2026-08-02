@@ -1,4 +1,5 @@
 from typing import Optional
+from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm
@@ -195,16 +196,56 @@ def _serialize_session(s: Transaction, db: Session) -> dict:
         tariff_plan_name = plan.name if plan else None
 
     vehicle = db.query(Vehicle).filter(Vehicle.id == s.vehicle_id).first() if s.vehicle_id else None
+
+    duration_min = None
+    if s.start_time:
+        end = s.stop_time or datetime.utcnow()
+        duration_min = round((end - s.start_time).total_seconds() / 60, 1)
+
     return {
         "id": s.id, "charger_id": s.charger_id, "connector_id": s.connector_id, "id_tag": s.id_tag,
         "vehicle_id": s.vehicle_id, "vehicle_name": vehicle.name if vehicle else None,
         "meter_start": s.meter_start, "meter_stop": s.meter_stop,
         "start_time": s.start_time.isoformat() if s.start_time else None,
         "stop_time": s.stop_time.isoformat() if s.stop_time else None,
-        "status": s.status,
+        "status": s.status, "duration_min": duration_min,
         "energy_wh": energy_wh, "cost": cost,
         "tariff_plan_name": tariff_plan_name,
+        "odometer_km": s.odometer_km,
+        "battery_percent_start": s.battery_percent_start,
+        "battery_percent_end": s.battery_percent_end,
     }
+
+
+class SessionUpdate(BaseModel):
+    vehicle_id: Optional[int] = None
+    odometer_km: Optional[float] = None
+    battery_percent_start: Optional[float] = None
+    battery_percent_end: Optional[float] = None
+
+
+@router.put("/sessions/{session_id}")
+def update_session(
+    session_id: int, body: SessionUpdate,
+    db: Session = Depends(get_db), user=Depends(get_current_user),
+):
+    """Permet de compléter ou corriger une session a posteriori : associer un
+    véhicule (même après coup, si le badge n'a pas été présenté ou pour une
+    charge démarrée depuis Home Assistant), et renseigner kilométrage /
+    niveaux de batterie, qu'aucun capteur ne fournit."""
+    s = db.query(Transaction).filter(Transaction.id == session_id).first()
+    if not s:
+        raise HTTPException(status_code=404, detail="Session inconnue")
+    if body.vehicle_id is not None:
+        vehicle = db.query(Vehicle).filter(Vehicle.id == body.vehicle_id).first()
+        if not vehicle:
+            raise HTTPException(status_code=404, detail="Véhicule inconnu")
+        s.vehicle_id = body.vehicle_id
+    s.odometer_km = body.odometer_km
+    s.battery_percent_start = body.battery_percent_start
+    s.battery_percent_end = body.battery_percent_end
+    db.commit()
+    return {"status": "ok"}
 
 
 @router.get("/chargers/{charger_id}/sessions")
@@ -221,7 +262,8 @@ def list_sessions(
 
 @router.get("/history")
 def list_history(
-    vehicle_id: Optional[int] = None, charger_id: Optional[str] = None, limit: int = 200,
+    vehicle_id: Optional[int] = None, charger_id: Optional[str] = None,
+    status_filter: Optional[str] = None, limit: int = 200,
     db: Session = Depends(get_db), user=Depends(get_current_user),
 ):
     query = db.query(Transaction)
@@ -229,6 +271,8 @@ def list_history(
         query = query.filter(Transaction.vehicle_id == vehicle_id)
     if charger_id is not None:
         query = query.filter(Transaction.charger_id == charger_id)
+    if status_filter is not None:
+        query = query.filter(Transaction.status == status_filter)
     sessions = query.order_by(Transaction.start_time.desc()).limit(limit).all()
     return [_serialize_session(s, db) for s in sessions]
 

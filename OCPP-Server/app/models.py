@@ -57,6 +57,11 @@ class Transaction(Base):
     energy_wh = Column(Float, nullable=True)
     tariff_plan_name = Column(String, nullable=True)
 
+    # Renseignés manuellement par l'utilisateur (aucun capteur ne les fournit)
+    odometer_km = Column(Float, nullable=True)
+    battery_percent_start = Column(Float, nullable=True)
+    battery_percent_end = Column(Float, nullable=True)
+
     charger = relationship("Charger", back_populates="transactions")
     vehicle = relationship("Vehicle", back_populates="transactions")
 

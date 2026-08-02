@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.12.0
+
+- **Nouvel onglet Accueil**, placé en premier : vue synthétique avec la ou les charges en cours (avec animation), les bornes disponibles avec démarrage rapide (sélection d'un véhicule ou idTag manuel), et la dernière charge terminée avec ses champs éditables directement sur place. Les graphiques (nombre de charges / km / coût par période, par véhicule) ne sont volontairement pas encore inclus, ce sera un prochain chantier.
+- **Historique enrichi** : nouvelles colonnes Durée (calculée), km (kilométrage renseignable), % min et % max (niveaux de batterie renseignables, "% max" pré-rempli à 100 par défaut dans le formulaire). Toutes ces colonnes, ainsi que le véhicule associé, sont modifiables directement dans le tableau, y compris a posteriori.
+- **Réattribution rétroactive d'un véhicule à une charge** : nouvel endpoint `PUT /api/sessions/{id}`, utilisable même longtemps après la fin de la charge (utile si le badge n'a pas été présenté, ou pour une charge démarrée depuis Home Assistant).
+- **Dates reformatées** en `JJ/MM/AAAA HH:MM` partout dans la page admin (au lieu du format ISO brut).
+- **Fix : la fenêtre modale d'un connecteur ne se rafraîchissait jamais automatiquement** une fois ouverte (contrairement au reste de la page). Corrigé par sécurité, en plus de l'investigation sur un signalement de statut "Charging" figé (pipeline de statut vérifié sain de bout en bout de notre côté : le souci vient soit de MicroOcppSimulator qui n'envoie pas toujours un nouveau `StatusNotification`, soit de cette fenêtre modale restée ouverte).
+
 ## 0.11.0
 
 - **Fix majeur : bornes et historique disparaissaient (et suppression d'un véhicule/tarif échouait) après la mise à jour 0.10.0.** `Base.metadata.create_all()` de SQLAlchemy ne modifie jamais les tables déjà existantes : les colonnes ajoutées en 0.10.0 (`tariff_plan_id`, `vehicle_id`, ...) n'étaient donc jamais créées sur une base existante, provoquant des erreurs "no such column" sur toute requête touchant ces tables (y compris les suppressions, qui doivent d'abord détacher les références). Une migration légère ajoute maintenant automatiquement les colonnes manquantes au démarrage. Reproduit sur une base à l'ancien schéma et vérifié : les données existantes sont conservées, plus aucune erreur.
@@ -8,7 +16,7 @@
   - Renommage "plan" → "abonnement", plus cohérent avec un contrat électrique.
   - Le prix par défaut apparaît comme une ligne du tableau des périodes ("7j/7, 24h/24"), plus seulement une mention à part.
   - Modification possible du nom, du prix par défaut et de la puissance souscrite d'un abonnement, et de chaque période (nom, prix, jours, horaires), sans avoir à les supprimer/recréer.
-  - Nouveau bouton "définir comme actif" dédié, distinct de la création (le rôle "actif = utilisé par défaut pour les bornes sans tarif assigné" reste inchangé, juste plus lisible).
+  - Nouveau bouton "définir comme actif" dédié, distinct de la création.
   - Nouveau champ puissance souscrite (kVA), informatif.
   - Histogramme hebdomadaire (SVG) par abonnement, montrant les plages colorées sur 7 jours.
 - **Véhicules** : modification possible après création (nom, idTag, capacité batterie). Colonne "Batterie (kWh)".
@@ -18,17 +26,17 @@
 ## 0.10.0
 
 - **Véhicules** : nouvel onglet, association d'un idTag (badge) à un véhicule. Les sessions démarrées avec ce badge lui sont automatiquement rattachées (mode local et relais), pour le suivi des coûts et l'historique.
-- **Tarifs** : nouvel onglet, plans tarifaires avec prix fixe de secours et plages horaires nommées (heures pleines/creuses, week-end, ou tout autre découpage). Assignables par borne. Le coût d'une session est calculé en découpant son énergie par tranche de temps entre relevés successifs et en appliquant le tarif actif à chaque tranche (gère correctement une session qui chevauche plusieurs plages).
+- **Tarifs** : nouvel onglet, plans tarifaires avec prix fixe de secours et plages horaires nommées (heures pleines/creuses, week-end, ou tout autre découpage). Assignables par borne. Le coût d'une session est calculé en découpant son énergie par tranche de temps entre relevés successifs et en appliquant le tarif actif à chaque tranche.
 - **Historique** : nouvel onglet listant toutes les sessions, tous chargeurs confondus, avec véhicule, coût et tarif appliqué, filtrable par véhicule.
-- Nouveau module `pricing.py` (calcul de coût), testé isolément (session chevauchant creuses/pleines correctement répartie) avant intégration.
+- Nouveau module `pricing.py` (calcul de coût).
 - Nouveaux endpoints : `GET/POST/PUT/DELETE /api/vehicles`, `GET/POST/PUT/DELETE /api/tariffs`, `POST/DELETE /api/tariffs/{id}/periods/...`, `PUT /api/chargers/{id}/tariff`, `GET /api/history`.
 - Page admin réorganisée en onglets (Bornes, Véhicules, Tarifs, Historique).
 
 ## 0.9.0
 
-- **Fix : l'ingress affichait "404: Not Found".** La racine `/` faisait une redirection HTTP vers le chemin absolu `/admin`, ce qui fait sortir le navigateur du sous-chemin dynamique de l'ingress de Home Assistant. La page est maintenant servie directement (sans redirection) à la fois sur `/` et `/admin`.
-- **Fix : tous les appels de l'API depuis la page admin utilisaient des chemins absolus (`/api/...`)**, qui échouent aussi sous ingress pour la même raison. Passés en chemins relatifs (`api/...`).
-- **Fix : entité fantôme "Autoriser la charge" au niveau de la borne**, résidu d'avant 0.8.0, supprimée automatiquement à la prochaine (re)connexion.
+- **Fix : l'ingress affichait "404: Not Found".** La racine `/` faisait une redirection HTTP vers le chemin absolu `/admin`. Servie directement maintenant, sans redirection.
+- **Fix : tous les appels de l'API depuis la page admin utilisaient des chemins absolus (`/api/...`)**. Passés en chemins relatifs (`api/...`).
+- **Fix : entité fantôme "Autoriser la charge" au niveau de la borne**, supprimée automatiquement à la prochaine (re)connexion.
 - **Fix : le panneau d'un connecteur ouvert dans la page admin ne se rafraîchissait pas automatiquement.**
 
 ## 0.8.0
@@ -78,6 +86,6 @@
 ### Limitations connues
 - OCPP 2.0.1 non implémenté.
 - Un seul compte administrateur, pas de gestion multi-utilisateurs.
-- Pas encore de graphes globaux (histogramme hebdomadaire par abonnement disponible ; consommation/coût dans le temps : à venir).
+- Pas encore de graphes (nombre de charges / km / coût par période et par véhicule).
 - Rattachement de transaction incomplet sur StopTransaction en mode relais.
 - Une session sans véhicule ni tarif assigné à sa borne utilise l'abonnement marqué "actif" s'il existe, sinon aucun coût n'est calculé.
