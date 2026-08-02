@@ -7,6 +7,7 @@ from starlette.websockets import WebSocket, WebSocketDisconnect
 
 from .db import SessionLocal
 from .models import MeterValue, Transaction, Charger, ConnectorStatus, Vehicle
+from .pricing import freeze_transaction_cost
 from . import mqtt_bridge
 
 logger = logging.getLogger("relay")
@@ -49,6 +50,19 @@ async def _snoop_frame(charger_id: str, raw: str):
                 else:
                     await mqtt_bridge.publish_connector_discovery(charger_id, connector_id, "relay")
                     connector_mqtt_updates.setdefault(connector_id, {})["status"] = status
+                    if status == "Available":
+                        stale = db.query(Transaction).filter(
+                            Transaction.charger_id == charger_id,
+                            Transaction.connector_id == connector_id,
+                            Transaction.status == "active",
+                        ).first()
+                        if stale:
+                            stale.stop_time = datetime.utcnow()
+                            if stale.meter_stop is None:
+                                stale.meter_stop = stale.meter_start
+                            stale.status = "completed"
+                            db.flush()
+                            freeze_transaction_cost(db, stale)
                 db.commit()
             elif action == "MeterValues":
                 connector_id = payload.get("connectorId")

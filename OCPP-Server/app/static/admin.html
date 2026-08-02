@@ -287,6 +287,11 @@ function formatDateTime(iso) {
   return `${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${d.getFullYear()} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
+function isFocusWithin(elId) {
+  const el = document.getElementById(elId);
+  return !!(el && document.activeElement && el.contains(document.activeElement) && document.activeElement !== el);
+}
+
 function authHeaders() {
   return { "Authorization": "Bearer " + token };
 }
@@ -336,10 +341,16 @@ function showApp() {
       const active = document.querySelector(".tab-panel.active");
       if (active && active.id === "tab-home") { loadHome(); }
       if (active && active.id === "tab-chargers") {
-        if (openCharger) { renderChargerDetail(openCharger); } else { loadChargers(); }
+        if (openCharger) {
+          if (!isFocusWithin("detail-" + openCharger)) { renderChargerDetail(openCharger); }
+        } else {
+          loadChargers();
+        }
       }
       if (openModalConnector && document.getElementById("modal-overlay").classList.contains("open")) {
-        openConnectorModal(openModalConnector.chargerId, openModalConnector.connectorId, openModalConnector.isLocal, true);
+        if (!isFocusWithin("modal-box")) {
+          openConnectorModal(openModalConnector.chargerId, openModalConnector.connectorId, openModalConnector.isLocal, true);
+        }
       }
     }, 5000);
   }
@@ -373,9 +384,9 @@ async function loadHome() {
   const chargers = await chargersResp.json();
   const lastCompleted = recent.find(s => s.status === "completed");
 
-  renderHomeCurrent(active);
-  renderHomeLast(lastCompleted);
-  await renderHomeAvailable(chargers, active);
+  if (!isFocusWithin("home-current")) { await renderHomeCurrent(active); }
+  if (!isFocusWithin("home-last")) { renderHomeLast(lastCompleted); }
+  if (!isFocusWithin("home-available")) { await renderHomeAvailable(chargers, active); }
 }
 
 function formatDuration(minutes) {
@@ -383,22 +394,36 @@ function formatDuration(minutes) {
   return `${Math.floor(minutes / 60)}h${String(Math.round(minutes % 60)).padStart(2, "0")}`;
 }
 
-function renderHomeCurrent(active) {
+async function renderHomeCurrent(active) {
   const el = document.getElementById("home-current");
   if (active.length === 0) {
     el.innerHTML = "<p><em>Aucune charge en cours.</em></p>";
     return;
   }
+  const vehiclesResp = await fetch("api/vehicles", { headers: authHeaders() });
+  const vehicles = await vehiclesResp.json();
+
   let html = "";
   for (const s of active) {
     const kwh = (s.energy_wh / 1000).toFixed(2);
-    html += `<div class="connector-card">
-      <div>
-        <span class="charging-anim"></span>
-        <b>${s.charger_id} · Connecteur ${s.connector_id}</b>${s.vehicle_name ? ` · ${s.vehicle_name}` : ""}
-        <div style="font-size:0.85rem;color:var(--muted)">Depuis ${formatDuration(s.duration_min)} · ${kwh} kWh</div>
+    const cost = s.cost != null ? s.cost.toFixed(2) + " €" : "-";
+    html += `<div class="plan-card">
+      <div class="row" style="justify-content:space-between">
+        <div>
+          <span class="charging-anim"></span>
+          <b>${s.charger_id} · Connecteur ${s.connector_id}</b>${s.vehicle_name ? ` · ${s.vehicle_name}` : ""}
+          <div style="font-size:0.85rem;color:var(--muted)">Depuis ${formatDuration(s.duration_min)} · ${kwh} kWh · ${cost}</div>
+        </div>
+        <button onclick="stopChargeFromHome('${s.charger_id}', ${s.connector_id}, ${s.id})">Arrêter</button>
       </div>
-      <button onclick="stopChargeFromHome('${s.charger_id}', ${s.connector_id}, ${s.id})">Arrêter</button>
+      <div class="row" style="margin-top:0.4rem">
+        <label>Véhicule :</label>
+        <select id="home-current-vehicle-${s.id}">
+          <option value="">(aucun)</option>
+          ${vehicles.map(v => `<option value="${v.id}" ${s.vehicle_id === v.id ? "selected" : ""}>${v.name}</option>`).join("")}
+        </select>
+        <button onclick="saveCurrentVehicle(${s.id})">Assigner</button>
+      </div>
     </div>`;
   }
   el.innerHTML = html;
@@ -450,6 +475,16 @@ async function stopChargeFromHome(chargerId, connectorId, transactionId) {
   });
   const data = await resp.json().catch(() => ({}));
   if (resp.ok) { loadHome(); } else { alert("Erreur : " + (data.detail || resp.status)); }
+}
+
+async function saveCurrentVehicle(sessionId) {
+  const sel = document.getElementById(`home-current-vehicle-${sessionId}`);
+  const vehicle_id = sel.value ? parseInt(sel.value, 10) : null;
+  const resp = await fetch(`api/sessions/${sessionId}`, {
+    method: "PUT", headers: { ...authHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({ vehicle_id }),
+  });
+  if (resp.ok) { loadHome(); } else { alert("Erreur lors de l'assignation du véhicule"); }
 }
 
 function renderHomeLast(s) {
@@ -646,6 +681,7 @@ async function openConnectorModal(chargerId, connectorId, isLocal, silent) {
   </div>`;
 
   if (isLocal) {
+    const activeSessions = sessions.filter(s => s.status === "active");
     html += `<div class="row">
       <select id="modal-vehicle" onchange="onModalVehicleChange()">
         <option value="">idTag manuel</option>
@@ -653,8 +689,12 @@ async function openConnectorModal(chargerId, connectorId, isLocal, silent) {
       </select>
       <input id="modal-idtag" placeholder="idTag" style="width:100px">
       <button onclick="startCharge('${chargerId}', ${connectorId})">Démarrer</button>
-      <input id="modal-txn" placeholder="ID transaction" style="width:100px">
-      <button onclick="stopCharge('${chargerId}', ${connectorId})">Arrêter</button>
+      <select id="modal-txn">
+        ${activeSessions.length === 0
+          ? '<option value="">(aucune session active)</option>'
+          : activeSessions.map(s => `<option value="${s.id}">#${s.id} · depuis ${formatDateTime(s.start_time)}</option>`).join("")}
+      </select>
+      <button onclick="stopCharge('${chargerId}', ${connectorId})" ${activeSessions.length === 0 ? "disabled" : ""}>Arrêter</button>
     </div>`;
   } else {
     html += `<p><em>Pilotage indisponible : cette borne est en mode relais.</em></p>`;

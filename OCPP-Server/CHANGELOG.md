@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.13.0
+
+- **Fix majeur : une session pouvait rester "active" indéfiniment** si la borne redevenait "Available" sans jamais envoyer de `StopTransaction` (coupure réseau, redémarrage du simulateur, etc.). Désormais, quand une borne annonce elle-même qu'un connecteur est "Available" alors qu'une transaction y était encore active, le serveur la clôture lui-même (avec calcul de coût) plutôt que de la laisser trainer pour toujours dans "Charge en cours". Reproduit et vérifié (mode local et relais).
+- **Fix majeur : le rafraîchissement automatique effaçait les saisies en cours** (le champ "Mode de la borne" ou le formulaire de la dernière charge disparaissaient avant d'avoir pu être validés). Le rafraîchissement périodique (Accueil, détail d'une borne, fenêtre d'un connecteur) ignore maintenant les zones où le focus est actuellement dans un champ.
+- **Fix : assigner un véhicule pendant une charge en cours pouvait silencieusement effacer un km/% déjà renseigné** sur cette même session par ailleurs. `PUT /api/sessions/{id}` ne modifie plus que les champs effectivement envoyés.
+- **Accueil** : "Charge en cours" affiche maintenant le coût en direct et permet d'assigner un véhicule sans attendre la fin de la charge.
+- **Bornes** : dans la fenêtre d'un connecteur, le champ "ID transaction" est devenu une liste déroulante des sessions réellement actives sur ce connecteur, plutôt qu'une saisie libre.
+
 ## 0.12.0
 
 - **Nouvel onglet Accueil**, placé en premier : vue synthétique avec la ou les charges en cours (avec animation), les bornes disponibles avec démarrage rapide (sélection d'un véhicule ou idTag manuel), et la dernière charge terminée avec ses champs éditables directement sur place. Les graphiques (nombre de charges / km / coût par période, par véhicule) ne sont volontairement pas encore inclus, ce sera un prochain chantier.

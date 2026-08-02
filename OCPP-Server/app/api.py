@@ -232,18 +232,26 @@ def update_session(
     """Permet de compléter ou corriger une session a posteriori : associer un
     véhicule (même après coup, si le badge n'a pas été présenté ou pour une
     charge démarrée depuis Home Assistant), et renseigner kilométrage /
-    niveaux de batterie, qu'aucun capteur ne fournit."""
+    niveaux de batterie, qu'aucun capteur ne fournit. Seuls les champs
+    effectivement envoyés sont modifiés (ex. assigner un véhicule pendant une
+    charge en cours n'efface pas un km déjà renseigné par ailleurs)."""
     s = db.query(Transaction).filter(Transaction.id == session_id).first()
     if not s:
         raise HTTPException(status_code=404, detail="Session inconnue")
-    if body.vehicle_id is not None:
-        vehicle = db.query(Vehicle).filter(Vehicle.id == body.vehicle_id).first()
-        if not vehicle:
-            raise HTTPException(status_code=404, detail="Véhicule inconnu")
-        s.vehicle_id = body.vehicle_id
-    s.odometer_km = body.odometer_km
-    s.battery_percent_start = body.battery_percent_start
-    s.battery_percent_end = body.battery_percent_end
+    data = body.model_dump(exclude_unset=True)
+    if "vehicle_id" in data:
+        vehicle_id = data["vehicle_id"]
+        if vehicle_id is not None:
+            vehicle = db.query(Vehicle).filter(Vehicle.id == vehicle_id).first()
+            if not vehicle:
+                raise HTTPException(status_code=404, detail="Véhicule inconnu")
+        s.vehicle_id = vehicle_id
+    if "odometer_km" in data:
+        s.odometer_km = data["odometer_km"]
+    if "battery_percent_start" in data:
+        s.battery_percent_start = data["battery_percent_start"]
+    if "battery_percent_end" in data:
+        s.battery_percent_end = data["battery_percent_end"]
     db.commit()
     return {"status": "ok"}
 

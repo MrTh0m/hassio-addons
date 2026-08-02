@@ -71,6 +71,7 @@ class LocalChargePoint(ChargePoint16):
     @on(Action.status_notification)
     async def on_status_notification(self, connector_id, status, **kwargs):
         db = self._db()
+        closed_duration_min = None
         try:
             charger = self._get_or_create_charger(db)
             charger.last_seen = datetime.utcnow()
@@ -92,6 +93,27 @@ class LocalChargePoint(ChargePoint16):
             if connector_id == 0:
                 charger.status = status
 
+            # La borne annonce elle-même que ce connecteur est disponible :
+            # si une transaction y restait "active" (StopTransaction jamais
+            # reçu, ex. après une coupure réseau ou un redémarrage), on la
+            # clôture nous-mêmes plutôt que de la laisser trainer pour
+            # toujours comme "en cours".
+            if status == "Available" and connector_id != 0:
+                stale = db.query(Transaction).filter(
+                    Transaction.charger_id == self.id,
+                    Transaction.connector_id == connector_id,
+                    Transaction.status == "active",
+                ).first()
+                if stale:
+                    stale.stop_time = datetime.utcnow()
+                    if stale.meter_stop is None:
+                        stale.meter_stop = stale.meter_start
+                    stale.status = "completed"
+                    if stale.start_time:
+                        closed_duration_min = round((stale.stop_time - stale.start_time).total_seconds() / 60, 1)
+                    db.flush()
+                    freeze_transaction_cost(db, stale)
+
             mode_value = charger.mode.value
             db.commit()
         finally:
@@ -103,6 +125,8 @@ class LocalChargePoint(ChargePoint16):
             await mqtt_bridge.publish_connector_discovery(self.id, connector_id, mode_value)
             await mqtt_bridge.publish_connector_state(self.id, connector_id, status=status)
             await mqtt_bridge.publish_charge_control_state(self.id, connector_id, status == "Charging")
+            if closed_duration_min is not None:
+                await mqtt_bridge.publish_connector_state(self.id, connector_id, session_duration_min=closed_duration_min)
 
         return call_result.StatusNotification()
 
