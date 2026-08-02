@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.14.0
+
+- **Fix : des sessions restaient "actives" indéfiniment même après le correctif de la 0.13.0.** Ce correctif ne se déclenchait que sur un *nouveau* `StatusNotification` ; les sessions déjà figées en base (d'avant le correctif, ou après une coupure survenue pendant que le serveur était à l'arrêt) n'étaient jamais rattrapées puisqu'aucune notification ne les déclenchait plus. Deux ajouts :
+  - **Rattrapage au démarrage du serveur** : toute transaction "active" dont le connecteur est déjà "Available" en base est clôturée immédiatement.
+  - **Redemande explicite du statut à chaque (re)connexion d'une borne** : plutôt que d'attendre qu'elle daigne renvoyer spontanément son statut, le serveur lui envoie un `TriggerMessage(StatusNotification)` pour chaque connecteur connu dès la reconnexion. C'est le seul moyen fiable, au sens du protocole OCPP, de connaître l'état réel après une coupure (la perte de connexion à elle seule ne signifie pas qu'une charge est terminée : la borne peut se reconnecter alors que la voiture charge toujours). Si la borne ne supporte pas `TriggerMessage`, ignoré silencieusement.
+  - Reproduit de bout en bout : charge démarrée, coupure brutale sans `StopTransaction`, connecteur figé sur "Charging" avant reconnexion, puis correctement clôturée dès la reconnexion suivante.
+
 ## 0.13.0
 
 - **Fix majeur : une session pouvait rester "active" indéfiniment** si la borne redevenait "Available" sans jamais envoyer de `StopTransaction` (coupure réseau, redémarrage du simulateur, etc.). Désormais, quand une borne annonce elle-même qu'un connecteur est "Available" alors qu'une transaction y était encore active, le serveur la clôture lui-même (avec calcul de coût) plutôt que de la laisser trainer pour toujours dans "Charge en cours". Reproduit et vérifié (mode local et relais).
