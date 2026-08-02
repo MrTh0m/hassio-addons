@@ -69,3 +69,28 @@ def compute_session_cost(transaction, meter_values, plan) -> dict:
         cost += (delta / 1000.0) * price
 
     return {"cost": round(cost, 4) if has_price_info else None, "energy_wh": total_wh}
+
+
+def resolve_plan_for_charger(db, charger):
+    """Le tarif d'une borne : celui qui lui est explicitement assigné, sinon
+    le plan marqué comme actif par défaut, s'il y en a un."""
+    from .models import TariffPlan
+    if charger is not None and charger.tariff_plan is not None:
+        return charger.tariff_plan
+    return db.query(TariffPlan).filter(TariffPlan.is_default.is_(True)).first()
+
+
+def freeze_transaction_cost(db, transaction):
+    """Calcule le coût final d'une transaction terminée et le fige en base
+    (montant, énergie, nom du tarif utilisé), pour qu'une modification
+    ultérieure des tarifs (prix, suppression d'une période...) n'altère
+    jamais rétroactivement le coût d'une charge déjà terminée."""
+    from .models import Charger, MeterValue
+    charger = db.query(Charger).filter(Charger.id == transaction.charger_id).first()
+    plan = resolve_plan_for_charger(db, charger)
+    meter_values = db.query(MeterValue).filter(MeterValue.transaction_id == transaction.id).all()
+    result = compute_session_cost(transaction, meter_values, plan)
+    transaction.cost = result["cost"]
+    transaction.energy_wh = result["energy_wh"]
+    transaction.tariff_plan_name = plan.name if plan else None
+    return result

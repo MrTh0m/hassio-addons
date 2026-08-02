@@ -50,6 +50,13 @@ class Transaction(Base):
     stop_time = Column(DateTime, nullable=True)
     status = Column(String, default="active")  # active | completed
 
+    # Figés au moment de la clôture (StopTransaction), pour qu'une modification
+    # ultérieure des tarifs (prix, suppression d'une période...) n'altère
+    # jamais rétroactivement le coût d'une charge déjà terminée.
+    cost = Column(Float, nullable=True)
+    energy_wh = Column(Float, nullable=True)
+    tariff_plan_name = Column(String, nullable=True)
+
     charger = relationship("Charger", back_populates="transactions")
     vehicle = relationship("Vehicle", back_populates="transactions")
 
@@ -116,6 +123,7 @@ class TariffPlan(Base):
     name = Column(String, nullable=False)
     is_default = Column(Boolean, default=False)
     fixed_price = Column(Float, nullable=True)  # €/kWh, utilisé si aucune période ne correspond
+    subscribed_power_kva = Column(Float, nullable=True)  # puissance souscrite de l'abonnement, informatif
     created_at = Column(DateTime, default=datetime.utcnow)
 
     periods = relationship(

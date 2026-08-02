@@ -9,6 +9,7 @@ from ocpp.v16.enums import (
 
 from .db import SessionLocal
 from .models import Charger, ChargerMode, Transaction, MeterValue, ConfigurationKey, ConnectorStatus, Vehicle
+from .pricing import freeze_transaction_cost
 from . import mqtt_bridge
 
 # Registre des bornes actuellement connectées en mode local, pour que l'API
@@ -146,6 +147,8 @@ class LocalChargePoint(ChargePoint16):
                 txn.status = "completed"
                 if txn.start_time:
                     duration_min = round((txn.stop_time - txn.start_time).total_seconds() / 60, 1)
+                db.flush()
+                freeze_transaction_cost(db, txn)
                 db.commit()
         finally:
             db.close()

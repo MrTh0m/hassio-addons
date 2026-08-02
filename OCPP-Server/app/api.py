@@ -10,7 +10,7 @@ from .models import (
     Charger, ChargerMode, Transaction, MeterValue, User, ConnectorStatus,
     Vehicle, TariffPlan, TariffPeriod,
 )
-from .pricing import compute_session_cost
+from .pricing import compute_session_cost, resolve_plan_for_charger, freeze_transaction_cost
 from .auth import verify_password, create_access_token, get_current_user, require_admin
 from .csms_local import CONNECTED_CHARGERS
 
@@ -176,12 +176,24 @@ def list_connector_statuses(charger_id: str, db: Session = Depends(get_db), user
 # --- Métriques et historique (disponibles quel que soit le mode) ---
 
 def _serialize_session(s: Transaction, db: Session) -> dict:
-    charger = db.query(Charger).filter(Charger.id == s.charger_id).first()
-    plan = charger.tariff_plan if charger else None
-    if plan is None:
-        plan = db.query(TariffPlan).filter(TariffPlan.is_default.is_(True)).first()
-    meter_values = db.query(MeterValue).filter(MeterValue.transaction_id == s.id).all()
-    cost_info = compute_session_cost(s, meter_values, plan)
+    if s.status == "completed":
+        if s.cost is None and s.energy_wh is None:
+            # Ancienne session (créée avant l'introduction du gel de coût) :
+            # on la fige maintenant, une seule fois, pour ne plus jamais la
+            # recalculer à partir d'un tarif qui aura pu changer depuis.
+            freeze_transaction_cost(db, s)
+            db.commit()
+        cost, energy_wh, tariff_plan_name = s.cost, s.energy_wh or 0.0, s.tariff_plan_name
+    else:
+        # Session encore active : calcul en direct, forcément amené à changer
+        # au fil de la charge, donc jamais figé.
+        charger = db.query(Charger).filter(Charger.id == s.charger_id).first()
+        plan = resolve_plan_for_charger(db, charger)
+        meter_values = db.query(MeterValue).filter(MeterValue.transaction_id == s.id).all()
+        cost_info = compute_session_cost(s, meter_values, plan)
+        cost, energy_wh = cost_info["cost"], cost_info["energy_wh"]
+        tariff_plan_name = plan.name if plan else None
+
     vehicle = db.query(Vehicle).filter(Vehicle.id == s.vehicle_id).first() if s.vehicle_id else None
     return {
         "id": s.id, "charger_id": s.charger_id, "connector_id": s.connector_id, "id_tag": s.id_tag,
@@ -190,8 +202,8 @@ def _serialize_session(s: Transaction, db: Session) -> dict:
         "start_time": s.start_time.isoformat() if s.start_time else None,
         "stop_time": s.stop_time.isoformat() if s.stop_time else None,
         "status": s.status,
-        "energy_wh": cost_info["energy_wh"], "cost": cost_info["cost"],
-        "tariff_plan_name": plan.name if plan else None,
+        "energy_wh": energy_wh, "cost": cost,
+        "tariff_plan_name": tariff_plan_name,
     }
 
 
@@ -307,6 +319,7 @@ class TariffPlanCreate(BaseModel):
     name: str
     is_default: bool = False
     fixed_price: Optional[float] = None
+    subscribed_power_kva: Optional[float] = None
 
 
 class TariffPeriodCreate(BaseModel):
@@ -320,6 +333,7 @@ class TariffPeriodCreate(BaseModel):
 def _serialize_plan(p: TariffPlan) -> dict:
     return {
         "id": p.id, "name": p.name, "is_default": p.is_default, "fixed_price": p.fixed_price,
+        "subscribed_power_kva": p.subscribed_power_kva,
         "periods": [
             {
                 "id": period.id, "name": period.name, "price": period.price,
@@ -341,7 +355,10 @@ def list_tariffs(db: Session = Depends(get_db), user=Depends(get_current_user)):
 def create_tariff(body: TariffPlanCreate, db: Session = Depends(get_db), user=Depends(require_admin)):
     if body.is_default:
         db.query(TariffPlan).update({TariffPlan.is_default: False})
-    plan = TariffPlan(name=body.name, is_default=body.is_default, fixed_price=body.fixed_price)
+    plan = TariffPlan(
+        name=body.name, is_default=body.is_default, fixed_price=body.fixed_price,
+        subscribed_power_kva=body.subscribed_power_kva,
+    )
     db.add(plan)
     db.commit()
     db.refresh(plan)
@@ -361,6 +378,20 @@ def update_tariff(
     plan.name = body.name
     plan.is_default = body.is_default
     plan.fixed_price = body.fixed_price
+    plan.subscribed_power_kva = body.subscribed_power_kva
+    db.commit()
+    return {"status": "ok"}
+
+
+@router.post("/tariffs/{plan_id}/set-default")
+def set_default_tariff(plan_id: int, db: Session = Depends(get_db), user=Depends(require_admin)):
+    """Marque cet abonnement comme celui utilisé par défaut (pour les bornes
+    sans tarif explicitement assigné), sans avoir à renvoyer tous ses champs."""
+    plan = db.query(TariffPlan).filter(TariffPlan.id == plan_id).first()
+    if not plan:
+        raise HTTPException(status_code=404, detail="Tarif inconnu")
+    db.query(TariffPlan).update({TariffPlan.is_default: False})
+    plan.is_default = True
     db.commit()
     return {"status": "ok"}
 
@@ -393,11 +424,33 @@ def add_period(
     return {"id": period.id}
 
 
+@router.put("/tariffs/{plan_id}/periods/{period_id}")
+def update_period(
+    plan_id: int, period_id: int, body: TariffPeriodCreate,
+    db: Session = Depends(get_db), user=Depends(require_admin),
+):
+    period = db.query(TariffPeriod).filter(
+        TariffPeriod.id == period_id, TariffPeriod.tariff_plan_id == plan_id
+    ).first()
+    if not period:
+        raise HTTPException(status_code=404, detail="Période inconnue")
+    period.name = body.name
+    period.price = body.price
+    period.days_of_week = body.days_of_week
+    period.start_time = body.start_time
+    period.end_time = body.end_time
+    db.commit()
+    return {"status": "ok"}
+
+
 @router.delete("/tariffs/{plan_id}/periods/{period_id}")
 def delete_period(
     plan_id: int, period_id: int,
     db: Session = Depends(get_db), user=Depends(require_admin),
 ):
+    # Les sessions déjà terminées ont leur coût figé indépendamment des
+    # périodes (voir freeze_transaction_cost) : supprimer une période ne
+    # modifie jamais rétroactivement un coût déjà calculé.
     period = db.query(TariffPeriod).filter(
         TariffPeriod.id == period_id, TariffPeriod.tariff_plan_id == plan_id
     ).first()
