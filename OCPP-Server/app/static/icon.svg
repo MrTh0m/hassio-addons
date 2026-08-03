@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="OCPP Server">
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#10b981"/>
+      <stop offset="1" stop-color="#047857"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" fill="url(#g)"/>
+  <!-- Prise / borne stylisée + éclair, dans la zone sûre (~80%) pour l'affichage maskable -->
+  <g fill="none" stroke="#ffffff" stroke-width="22" stroke-linejoin="round" stroke-linecap="round" opacity="0.92">
+    <rect x="150" y="120" width="150" height="220" rx="30"/>
+    <line x1="188" y1="120" x2="188" y2="86"/>
+    <line x1="262" y1="120" x2="262" y2="86"/>
+  </g>
+  <path d="M292 196 214 300h44l-16 96 96-124h-52z" fill="#ffffff"/>
+</svg>

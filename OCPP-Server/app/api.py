@@ -8,12 +8,12 @@ from sqlalchemy.orm import Session
 
 from .db import get_db
 from .models import (
-    Charger, ChargerMode, Transaction, MeterValue, User, ConnectorStatus,
+    Charger, ChargerMode, AuthMode, Transaction, MeterValue, User, ConnectorStatus,
     Vehicle, TariffPlan, TariffPeriod,
 )
 from .pricing import compute_session_cost, resolve_plan_for_charger, freeze_transaction_cost
 from .auth import verify_password, create_access_token, get_current_user, require_admin
-from .csms_local import CONNECTED_CHARGERS
+from .csms_local import CONNECTED_CHARGERS, PENDING_REMOTE_STARTS
 
 router = APIRouter(prefix="/api")
 
@@ -43,6 +43,7 @@ def list_chargers(db: Session = Depends(get_db), user=Depends(get_current_user))
         {
             "id": c.id, "vendor": c.vendor, "model": c.model,
             "ocpp_version": c.ocpp_version, "mode": c.mode.value,
+            "auth_mode": c.auth_mode.value if c.auth_mode else "free",
             "status": c.status, "connected": c.id in CONNECTED_CHARGERS,
         }
         for c in chargers
@@ -58,6 +59,7 @@ def get_charger(charger_id: str, db: Session = Depends(get_db), user=Depends(get
         "id": charger.id, "vendor": charger.vendor, "model": charger.model,
         "serial": charger.serial, "ocpp_version": charger.ocpp_version,
         "mode": charger.mode.value, "relay_url": charger.relay_url,
+        "auth_mode": charger.auth_mode.value if charger.auth_mode else "free",
         "status": charger.status, "connected": charger.id in CONNECTED_CHARGERS,
         "tariff_plan_id": charger.tariff_plan_id,
     }
@@ -76,6 +78,26 @@ def set_charger_mode(
         raise HTTPException(status_code=400, detail="relay_url requis en mode relais")
     charger.mode = update.mode
     charger.relay_url = update.relay_url if update.mode == ChargerMode.relay else None
+    db.commit()
+    return {"status": "ok"}
+
+
+class AuthModeUpdate(BaseModel):
+    auth_mode: AuthMode
+
+
+@router.put("/chargers/{charger_id}/auth-mode")
+def set_charger_auth_mode(
+    charger_id: str, update: AuthModeUpdate,
+    db: Session = Depends(get_db), user=Depends(require_admin),
+):
+    """Définit la politique de déclenchement de la charge pour cette borne :
+    'free' (sans autorisation, démarrage automatique au branchement) ou
+    'authorized' (badge connu ou bouton requis). N'a de sens qu'en mode local."""
+    charger = db.query(Charger).filter(Charger.id == charger_id).first()
+    if not charger:
+        raise HTTPException(status_code=404, detail="Borne inconnue")
+    charger.auth_mode = update.auth_mode
     db.commit()
     return {"status": "ok"}
 
@@ -99,7 +121,8 @@ def _require_local_and_connected(charger_id: str, db: Session):
 # --- Contrôle (mode local uniquement) ---
 
 class StartChargeRequest(BaseModel):
-    id_tag: str
+    vehicle_id: Optional[int] = None
+    id_tag: Optional[str] = None
 
 
 class StopChargeRequest(BaseModel):
@@ -112,7 +135,26 @@ async def start_charge(
     db: Session = Depends(get_db), user=Depends(get_current_user),
 ):
     cp = _require_local_and_connected(charger_id, db)
-    result = await cp.trigger_remote_start(connector_id, body.id_tag)
+
+    id_tag = body.id_tag
+    vehicle = None
+    if body.vehicle_id is not None:
+        vehicle = db.query(Vehicle).filter(Vehicle.id == body.vehicle_id).first()
+        if not vehicle:
+            raise HTTPException(status_code=404, detail="Véhicule inconnu")
+        # idTag du véhicule s'il en a un, sinon un tag distant dédié (accepté
+        # même en mode 'authorized', cf. RESERVED_TAGS / préfixe REMOTE-).
+        if not id_tag:
+            id_tag = vehicle.id_tag or f"REMOTE-{vehicle.id}"
+    if not id_tag:
+        id_tag = "WEBADMIN"
+
+    # Mémorise le véhicule visé pour rattacher la future session, même sans idTag
+    # (le StartTransaction qui suivra ne le porterait pas sinon).
+    if vehicle is not None:
+        PENDING_REMOTE_STARTS[(charger_id, connector_id)] = vehicle.id
+
+    result = await cp.trigger_remote_start(connector_id, id_tag)
     return {"status": result.status}
 
 

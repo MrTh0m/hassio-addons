@@ -4,7 +4,7 @@ import os
 from datetime import datetime
 
 from fastapi import FastAPI, WebSocket
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from starlette.websockets import WebSocketDisconnect
 from sqlalchemy.orm import Session
 from ocpp.v16 import call
@@ -26,6 +26,7 @@ app = FastAPI(title="OCPP Server")
 app.include_router(api_router)
 
 STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
+ROOT_DIR = os.path.dirname(os.path.dirname(__file__))  # racine de l'add-on (icon.png, logo.png)
 
 
 # Sert la même page directement à la racine ET sur /admin, sans redirection.
@@ -36,6 +37,64 @@ STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
 @app.get("/admin")
 def admin_page():
     return FileResponse(os.path.join(STATIC_DIR, "admin.html"))
+
+
+# --- Ressources PWA --------------------------------------------------------
+# Servies à la racine (chemins relatifs depuis admin.html) pour que le service
+# worker ait pour portée tout le sous-chemin de l'appli, y compris sous
+# l'ingress Home Assistant.
+
+def _static_file(filename: str, media_type: str, base: str = STATIC_DIR,
+                 extra_headers: dict | None = None):
+    path = os.path.join(base, filename)
+    if not os.path.exists(path):
+        return Response(status_code=404)
+    resp = FileResponse(path, media_type=media_type)
+    for k, v in (extra_headers or {}).items():
+        resp.headers[k] = v
+    return resp
+
+
+@app.get("/manifest.webmanifest")
+def pwa_manifest():
+    return _static_file("manifest.webmanifest", "application/manifest+json")
+
+
+@app.get("/sw.js")
+def pwa_service_worker():
+    # no-cache : le navigateur reverifie le SW à chaque chargement, pour qu'une
+    # nouvelle version soit prise en compte rapidement.
+    return _static_file(
+        "sw.js", "application/javascript",
+        extra_headers={"Service-Worker-Allowed": "./", "Cache-Control": "no-cache"},
+    )
+
+
+@app.get("/icon.svg")
+def pwa_icon_svg():
+    return _static_file("icon.svg", "image/svg+xml")
+
+
+@app.get("/icon.png")
+def pwa_icon_png():
+    # icon.png est à la racine de l'add-on ; les variantes 192/512 optionnelles,
+    # si tu les ajoutes, vont dans app/static/.
+    return _static_file("icon.png", "image/png", base=ROOT_DIR)
+
+
+@app.get("/icon-192.png")
+def pwa_icon_192():
+    return _static_file("icon-192.png", "image/png")
+
+
+@app.get("/icon-512.png")
+def pwa_icon_512():
+    return _static_file("icon-512.png", "image/png")
+
+
+@app.get("/icon-512-maskable.png")
+def pwa_icon_512_maskable():
+    return _static_file("icon-512-maskable.png", "image/png")
 
 
 def _reconcile_stale_transactions():
@@ -76,7 +135,7 @@ async def on_startup():
     asyncio.create_task(mqtt_bridge.run_mqtt_bridge())
 
 
-APP_VERSION = "0.14.0"
+APP_VERSION = "0.15.0"
 
 
 @app.get("/healthz")

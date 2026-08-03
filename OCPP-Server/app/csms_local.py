@@ -16,6 +16,35 @@ from . import mqtt_bridge
 # puisse leur envoyer des commandes (RemoteStart, ChangeConfiguration, ...).
 CONNECTED_CHARGERS: dict[str, "LocalChargePoint"] = {}
 
+# Démarrages distants en attente : quand l'appli lance une charge pour un
+# véhicule donné, on mémorise (borne, connecteur) -> vehicle_id, pour rattacher
+# la session au bon véhicule même s'il n'a pas d'idTag (le StartTransaction qui
+# suit ne portera alors aucun idTag connu).
+PENDING_REMOTE_STARTS: dict[tuple[str, int], int] = {}
+
+# idTags "système" toujours acceptés : ils ne proviennent que de nos propres
+# actions authentifiées (bouton de l'appli, commande MQTT, démarrage distant).
+RESERVED_TAGS = {"WEBADMIN", "MQTT"}
+
+
+def _auth_mode_value(charger) -> str:
+    """'free' par défaut : borne inconnue, ou base migrée sans la colonne."""
+    mode = getattr(charger, "auth_mode", None) if charger is not None else None
+    return mode.value if mode is not None else "free"
+
+
+def _tag_is_authorized(db, charger, id_tag) -> bool:
+    """En mode 'free', tout est accepté. En mode 'authorized', seuls un idTag
+    associé à un véhicule connu, un tag réservé (bouton appli / MQTT) ou un
+    tag de démarrage distant (préfixe REMOTE-) sont acceptés."""
+    if _auth_mode_value(charger) == "free":
+        return True
+    if not id_tag:
+        return False
+    if id_tag in RESERVED_TAGS or id_tag.startswith("REMOTE-"):
+        return True
+    return db.query(Vehicle).filter(Vehicle.id_tag == id_tag).first() is not None
+
 
 def now_iso() -> str:
     """Horodatage UTC conforme au type dateTime d'OCPP (ISO 8601, suffixe Z)."""
@@ -62,11 +91,16 @@ class LocalChargePoint(ChargePoint16):
 
     @on(Action.authorize)
     async def on_authorize(self, id_tag, **kwargs):
-        # Simplification v1 : tout badge est accepté. À affiner avec une vraie
-        # liste blanche d'idTags si plusieurs utilisateurs doivent être gérés.
-        return call_result.Authorize(
-            id_tag_info={"status": AuthorizationStatus.accepted}
-        )
+        # En mode 'authorized', on refuse un badge inconnu ; en mode 'free',
+        # tout est accepté (voir _tag_is_authorized).
+        db = self._db()
+        try:
+            charger = db.query(Charger).filter(Charger.id == self.id).first()
+            allowed = _tag_is_authorized(db, charger, id_tag)
+        finally:
+            db.close()
+        status = AuthorizationStatus.accepted if allowed else AuthorizationStatus.blocked
+        return call_result.Authorize(id_tag_info={"status": status})
 
     @on(Action.status_notification)
     async def on_status_notification(self, connector_id, status, **kwargs):
@@ -134,7 +168,24 @@ class LocalChargePoint(ChargePoint16):
     async def on_start_transaction(self, connector_id, id_tag, meter_start, **kwargs):
         db = self._db()
         try:
+            charger = db.query(Charger).filter(Charger.id == self.id).first()
+
+            # On consomme systématiquement l'éventuel démarrage distant en
+            # attente pour ce connecteur (pour ne pas le laisser fuiter).
+            pending_vehicle_id = PENDING_REMOTE_STARTS.pop((self.id, connector_id), None)
+
+            if not _tag_is_authorized(db, charger, id_tag):
+                # Autorisation refusée : aucune transaction créée.
+                # transaction_id=0 = "pas de transaction", conforme à l'usage
+                # OCPP quand l'idTag est rejeté.
+                return call_result.StartTransaction(
+                    transaction_id=0,
+                    id_tag_info={"status": AuthorizationStatus.blocked},
+                )
+
             vehicle = db.query(Vehicle).filter(Vehicle.id_tag == id_tag).first() if id_tag else None
+            if vehicle is None and pending_vehicle_id is not None:
+                vehicle = db.query(Vehicle).filter(Vehicle.id == pending_vehicle_id).first()
             txn = Transaction(
                 charger_id=self.id,
                 connector_id=connector_id,

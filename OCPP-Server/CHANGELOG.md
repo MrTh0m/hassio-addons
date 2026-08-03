@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.15.0
+
+- **Refonte complète de l'interface** : nouvelle charte graphique (palette énergie/verte, typographie, cartes, puces de statut cohérentes), navigation latérale sur ordinateur et barre inférieure sur mobile, tableaux qui se replient en cartes sur petit écran. Fini l'aspect « maquette » : l'appli se veut réellement responsive et utilisable au quotidien depuis le téléphone. Les `alert()` sont remplacés par des notifications discrètes (toasts).
+- **Application installable (PWA)** : manifeste web, icône vectorielle, et service worker (coquille hors-ligne). L'appli peut être « ajoutée à l'écran d'accueil » et lancée en plein écran. Le mode installable/hors-ligne complet fonctionne surtout via un accès HTTPS (Nabu Casa, reverse-proxy) ou en localhost ; sous l'ingress HA il s'enregistre dans le sous-chemin de l'ingress, et une éventuelle indisponibilité est sans effet sur le fonctionnement.
+- **Mode d'autorisation par borne** (nouveau champ `auth_mode`, mode local) :
+  - **Sans autorisation** (`free`, comportement historique) : tout idTag est accepté, la charge peut démarrer automatiquement au branchement, sans badge ni bouton.
+  - **Avec autorisation** (`authorized`) : seuls un idTag associé à un véhicule connu, ou un démarrage explicite depuis l'appli / MQTT, sont acceptés ; un badge inconnu est refusé (`Authorize`/`StartTransaction` renvoient `Blocked`). Réglable dans le détail de chaque borne. Nouvel endpoint `PUT /api/chargers/{id}/auth-mode`.
+  - Note : pour un vrai démarrage automatique au branchement, la borne elle-même doit être configurée en « charge libre » ; ce réglage pilote la décision d'autorisation côté serveur, indépendante du fabricant.
+- **Démarrage par véhicule (et non plus par idTag)** : partout où l'on lance une charge, on choisit désormais un **véhicule** plutôt qu'un idTag brut. `POST /connectors/{id}/start` accepte `vehicle_id`. Une charge lancée pour un véhicule **sans** idTag est tout de même rattachée au bon véhicule (mémorisation du démarrage distant en attente). Un champ « avancé » permet encore de forcer un idTag précis dans la fenêtre d'un connecteur.
+- **Accueil** : les bornes en état *Preparing* (véhicule branché, en attente) sont mises en avant ; en mode sans autorisation, une puce « Démarrage auto » remplace le bouton.
+- **Dernière charge** : passe en lecture seule avec un bouton **Modifier** (au lieu de champs éditables en permanence), pour un comportement cohérent avec les autres vues.
+- Icônes optionnelles haute résolution : si tu déposes `icon-192.png`, `icon-512.png`, `icon-512-maskable.png` dans `app/static/`, elles seront servies automatiquement (sinon l'icône SVG et `icon.png` suffisent).
+
 ## 0.14.0
 
 - **Fix : des sessions restaient "actives" indéfiniment même après le correctif de la 0.13.0.** Ce correctif ne se déclenchait que sur un *nouveau* `StatusNotification` ; les sessions déjà figées en base (d'avant le correctif, ou après une coupure survenue pendant que le serveur était à l'arrêt) n'étaient jamais rattrapées puisqu'aucune notification ne les déclenchait plus. Deux ajouts :

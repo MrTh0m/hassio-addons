@@ -2,1154 +2,1144 @@
 <html lang="fr">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>OCPP Server</title>
+
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icon.png">
+<meta name="theme-color" content="#0f172a" id="meta-theme-color">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="OCPP">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+
 <style>
   :root {
     color-scheme: light dark;
-    --bg: #f4f5f7;
-    --fg: #1a1a1a;
-    --card-bg: #ffffff;
-    --border: #d8dae0;
-    --header-bg: #1f2937;
-    --header-fg: #f4f5f7;
-    --accent: #2563eb;
-    --muted: #6b7280;
+    --bg: #f5f7f9;
+    --surface: #ffffff;
+    --surface-2: #eef1f5;
+    --surface-3: #e6eaf0;
+    --border: #e2e6ec;
+    --text: #0f172a;
+    --text-muted: #64748b;
+    --primary: #059669;
+    --primary-strong: #047857;
+    --primary-contrast: #ffffff;
+    --primary-soft: #ecfdf5;
+    --accent: #0ea5e9;
+    --accent-soft: #e0f2fe;
+    --warn: #d97706;
+    --warn-soft: #fef3c7;
+    --danger: #dc2626;
+    --danger-soft: #fee2e2;
+    --ok: #16a34a;
+    --ok-soft: #dcfce7;
+    --ring: rgba(5,150,105,.30);
+    --shadow-sm: 0 1px 2px rgba(15,23,42,.06);
+    --shadow: 0 1px 2px rgba(15,23,42,.05), 0 8px 24px rgba(15,23,42,.07);
+    --shadow-lg: 0 10px 40px rgba(15,23,42,.16);
+    --r-sm: 8px; --r: 12px; --r-lg: 16px; --r-pill: 999px;
+    --nav-w: 236px;
+    --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   }
   html[data-theme="dark"] {
-    --bg: #14161a;
-    --fg: #e8e9ec;
-    --card-bg: #1e2128;
-    --border: #33363d;
-    --header-bg: #101216;
-    --header-fg: #e8e9ec;
-    --accent: #4d8dff;
-    --muted: #9099a5;
+    --bg: #0b0f14;
+    --surface: #141a21;
+    --surface-2: #1a222b;
+    --surface-3: #212b35;
+    --border: #26313c;
+    --text: #e6edf3;
+    --text-muted: #8b98a5;
+    --primary: #10b981;
+    --primary-strong: #34d399;
+    --primary-contrast: #04120c;
+    --primary-soft: #0c2b22;
+    --accent: #38bdf8;
+    --accent-soft: #0b2a3b;
+    --warn: #f59e0b;
+    --warn-soft: #3a2a08;
+    --danger: #f87171;
+    --danger-soft: #3a1414;
+    --ok: #34d399;
+    --ok-soft: #0c2b1c;
+    --ring: rgba(16,185,129,.35);
+    --shadow-sm: 0 1px 2px rgba(0,0,0,.4);
+    --shadow: 0 1px 2px rgba(0,0,0,.4), 0 8px 24px rgba(0,0,0,.35);
+    --shadow-lg: 0 12px 44px rgba(0,0,0,.5);
   }
+
   * { box-sizing: border-box; }
+  html, body { height: 100%; }
   body {
-    font-family: system-ui, sans-serif;
-    margin: 0;
-    background: var(--bg);
-    color: var(--fg);
+    margin: 0; font-family: var(--font);
+    background: var(--bg); color: var(--text);
+    -webkit-font-smoothing: antialiased;
+    font-size: 15px; line-height: 1.5;
   }
-  header {
-    background: var(--header-bg);
-    color: var(--header-fg);
-    padding: 0.9rem 1.2rem;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
+  h1,h2,h3 { margin: 0; font-weight: 650; letter-spacing: -0.01em; }
+  a { color: var(--primary-strong); }
+  em { color: var(--text-muted); font-style: normal; }
+
+  /* --- Boutons --- */
+  .btn {
+    display: inline-flex; align-items: center; justify-content: center; gap: .45rem;
+    font: inherit; font-weight: 550; cursor: pointer; white-space: nowrap;
+    padding: .5rem .9rem; border-radius: var(--r-sm);
+    border: 1px solid var(--border); background: var(--surface); color: var(--text);
+    transition: background .15s, border-color .15s, transform .05s, box-shadow .15s;
   }
-  header .brand { display: flex; align-items: baseline; gap: 0.6rem; }
-  header .brand h1 { font-size: 1.15rem; margin: 0; }
-  header .version { font-size: 0.75rem; color: var(--muted); }
-  header button.icon-btn {
-    background: transparent; border: 1px solid #ffffff33; color: inherit;
-    border-radius: 6px; padding: 0.3rem 0.6rem; cursor: pointer; font-size: 0.95rem;
+  .btn:hover { background: var(--surface-2); }
+  .btn:active { transform: translateY(1px); }
+  .btn:focus-visible { outline: none; box-shadow: 0 0 0 3px var(--ring); }
+  .btn svg { width: 1.05em; height: 1.05em; flex: none; }
+  .btn-primary { background: var(--primary); border-color: var(--primary); color: var(--primary-contrast); }
+  .btn-primary:hover { background: var(--primary-strong); border-color: var(--primary-strong); }
+  .btn-danger { color: var(--danger); border-color: transparent; background: var(--danger-soft); }
+  .btn-danger:hover { background: var(--danger); color: #fff; }
+  .btn-ghost { background: transparent; border-color: transparent; }
+  .btn-ghost:hover { background: var(--surface-2); }
+  .btn-sm { padding: .32rem .6rem; font-size: .85rem; }
+  .btn-icon { padding: .45rem; border-radius: var(--r-sm); }
+  .btn[disabled] { opacity: .5; cursor: not-allowed; }
+  .linkbtn {
+    background: none; border: none; padding: 0; cursor: pointer; font: inherit;
+    color: var(--primary-strong); font-weight: 550;
   }
-  main { max-width: 1100px; margin: 0 auto; padding: 1.5rem 1rem 3rem; }
-  h1 { font-size: 1.4rem; }
-  h2 { font-size: 1.1rem; margin: 0 0 0.6rem; }
-  table { width: 100%; border-collapse: collapse; margin-top: 1rem; }
-  th, td { text-align: left; padding: 0.5rem; border-bottom: 1px solid var(--border); }
-  button {
-    cursor: pointer; padding: 0.35rem 0.8rem; border-radius: 6px;
-    border: 1px solid var(--border); background: var(--card-bg); color: var(--fg);
-  }
-  button:hover { border-color: var(--accent); }
+  .linkbtn:hover { text-decoration: underline; }
+  .linkbtn.danger { color: var(--danger); }
+
+  /* --- Champs --- */
   input, select {
-    padding: 0.35rem; border-radius: 6px; border: 1px solid var(--border);
-    background: var(--card-bg); color: var(--fg);
+    font: inherit; color: var(--text); background: var(--surface);
+    border: 1px solid var(--border); border-radius: var(--r-sm);
+    padding: .5rem .6rem; min-width: 0; max-width: 100%;
   }
-  .row { display: flex; gap: 0.5rem; align-items: center; margin: 0.3rem 0; flex-wrap: wrap; }
-  .badge { padding: 0.1rem 0.5rem; border-radius: 1rem; font-size: 0.8rem; }
-  .badge.local { background: #2a72; }
-  .badge.relay { background: #a742; }
-  .badge.on, .badge.Charging { background: #2a7; color: #fff; }
-  .badge.off { background: #888; color: #fff; }
-  .badge.Available { background: #2a7; color: #fff; }
-  .badge.Preparing, .badge.SuspendedEV, .badge.SuspendedEVSE { background: #d97706; color: #fff; }
-  .badge.Faulted { background: #dc2626; color: #fff; }
-  #login-box {
-    max-width: 340px; margin: 4rem auto; padding: 1.5rem;
-    background: var(--card-bg); border: 1px solid var(--border); border-radius: 10px;
-  }
-  .charger-detail {
-    display: none; padding: 0.8rem; background: var(--card-bg);
-    border: 1px solid var(--border); border-radius: 8px; margin: 0.3rem 0 1rem;
-  }
-  .charger-detail.open { display: block; }
-  .connector-card, .plan-card {
-    display: flex; justify-content: space-between; align-items: center;
-    padding: 0.6rem 0.8rem; border: 1px solid var(--border); border-radius: 8px; margin: 0.4rem 0;
-  }
-  .plan-card { flex-direction: column; align-items: stretch; }
-  .error { color: #e05555; }
-  a.expand, a.link { cursor: pointer; color: var(--accent); text-decoration: underline; }
+  input:focus, select:focus { outline: none; border-color: var(--primary); box-shadow: 0 0 0 3px var(--ring); }
+  input::placeholder { color: var(--text-muted); }
+  label.field { display: flex; flex-direction: column; gap: .25rem; font-size: .8rem; color: var(--text-muted); font-weight: 550; }
+  label.field > span { padding-left: .1rem; }
+  label.field input, label.field select { font-size: .95rem; color: var(--text); }
 
-  nav.tabs { display: flex; gap: 0.3rem; margin-bottom: 1rem; border-bottom: 1px solid var(--border); }
-  nav.tabs button {
-    border: none; border-bottom: 2px solid transparent; border-radius: 0;
-    background: transparent; padding: 0.6rem 0.9rem;
-  }
-  nav.tabs button.active { border-bottom-color: var(--accent); font-weight: 600; }
-  .tab-panel { display: none; }
-  .tab-panel.active { display: block; }
+  .cluster { display: flex; flex-wrap: wrap; gap: .6rem; align-items: flex-end; }
+  .cluster.center { align-items: center; }
+  .spread { display: flex; align-items: center; justify-content: space-between; gap: .8rem; flex-wrap: wrap; }
+  .muted { color: var(--text-muted); }
+  .small { font-size: .85rem; }
+  .tiny { font-size: .78rem; }
 
-  /* Splash-screen / modale */
+  /* --- Cartes --- */
+  .card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--r); box-shadow: var(--shadow-sm); padding: 1rem 1.1rem;
+  }
+  .card + .card { margin-top: .8rem; }
+  .card.pad-lg { padding: 1.2rem 1.3rem; }
+  .section-title { font-size: .82rem; text-transform: uppercase; letter-spacing: .06em; color: var(--text-muted); font-weight: 650; margin: 1.6rem 0 .7rem; }
+  .section-title:first-child { margin-top: .2rem; }
+
+  /* --- Badges / puces de statut --- */
+  .badge {
+    display: inline-flex; align-items: center; gap: .35rem;
+    padding: .15rem .55rem; border-radius: var(--r-pill);
+    font-size: .78rem; font-weight: 600; line-height: 1.4;
+    background: var(--surface-2); color: var(--text-muted);
+  }
+  .badge .dot { width: .5rem; height: .5rem; border-radius: 50%; background: currentColor; }
+  .badge.ok, .badge.Available { background: var(--ok-soft); color: var(--ok); }
+  .badge.Charging { background: var(--ok-soft); color: var(--ok); }
+  .badge.warn, .badge.Preparing, .badge.SuspendedEV, .badge.SuspendedEVSE, .badge.Finishing { background: var(--warn-soft); color: var(--warn); }
+  .badge.accent, .badge.Reserved { background: var(--accent-soft); color: var(--accent); }
+  .badge.danger, .badge.Faulted { background: var(--danger-soft); color: var(--danger); }
+  .badge.off, .badge.Unavailable { background: var(--surface-3); color: var(--text-muted); }
+  .badge.local { background: var(--primary-soft); color: var(--primary-strong); }
+  .badge.relay { background: var(--accent-soft); color: var(--accent); }
+
+  .charging-dot { width: .6rem; height: .6rem; border-radius: 50%; background: var(--ok); box-shadow: 0 0 0 0 var(--ok); animation: pulse 1.6s infinite; flex: none; }
+  @keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(22,163,74,.5);} 70% { box-shadow: 0 0 0 8px rgba(22,163,74,0);} 100% { box-shadow: 0 0 0 0 rgba(22,163,74,0);} }
+
+  /* --- Tables responsives --- */
+  .table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: .6rem .6rem; border-bottom: 1px solid var(--border); vertical-align: middle; }
+  th { font-size: .76rem; text-transform: uppercase; letter-spacing: .04em; color: var(--text-muted); font-weight: 650; }
+  tbody tr:last-child td { border-bottom: none; }
+  td .cell-actions { display: inline-flex; gap: .8rem; }
+
+  @media (max-width: 720px) {
+    table.responsive thead { display: none; }
+    table.responsive tbody tr {
+      display: block; background: var(--surface); border: 1px solid var(--border);
+      border-radius: var(--r); margin-bottom: .7rem; padding: .3rem .2rem;
+    }
+    table.responsive tbody td {
+      display: flex; justify-content: space-between; gap: 1rem; text-align: right;
+      border: none; padding: .4rem .8rem;
+    }
+    table.responsive tbody td::before {
+      content: attr(data-label); font-weight: 600; color: var(--text-muted); text-align: left; white-space: nowrap;
+    }
+    table.responsive tbody td:empty { display: none; }
+    table.responsive tbody td input, table.responsive tbody td select { max-width: 60%; }
+  }
+
+  /* --- Écran de connexion --- */
+  #login-view {
+    min-height: 100dvh; display: grid; place-items: center; padding: 1.2rem;
+  }
+  .login-card { width: 100%; max-width: 360px; }
+  .login-brand { display: flex; align-items: center; gap: .7rem; margin-bottom: 1.1rem; }
+  .login-brand img { width: 42px; height: 42px; border-radius: 11px; }
+  .login-brand .name { font-size: 1.2rem; font-weight: 700; }
+
+  /* --- Coquille appli --- */
+  #app { display: none; }
+  #app.on { display: block; }
+  .app-shell { min-height: 100dvh; }
+  @media (min-width: 900px) {
+    .app-shell { display: grid; grid-template-columns: var(--nav-w) 1fr; }
+  }
+
+  /* Navigation */
+  .sidenav {
+    display: flex; flex-direction: column; gap: .2rem;
+    background: var(--surface); border-right: 1px solid var(--border);
+    padding: 1rem .7rem; position: sticky; top: 0; height: 100dvh;
+  }
+  .sidenav .brand { display: flex; align-items: center; gap: .6rem; padding: .3rem .5rem 1rem; }
+  .sidenav .brand img { width: 34px; height: 34px; border-radius: 9px; }
+  .sidenav .brand .name { font-weight: 700; font-size: 1.05rem; }
+  .sidenav .brand .ver { font-size: .7rem; color: var(--text-muted); }
+  .navitem {
+    display: flex; align-items: center; gap: .7rem; width: 100%;
+    padding: .6rem .7rem; border-radius: var(--r-sm); border: none; background: none;
+    color: var(--text-muted); font: inherit; font-weight: 550; cursor: pointer; text-align: left;
+  }
+  .navitem svg { width: 1.25rem; height: 1.25rem; flex: none; }
+  .navitem:hover { background: var(--surface-2); color: var(--text); }
+  .navitem.active { background: var(--primary-soft); color: var(--primary-strong); font-weight: 650; }
+  .sidenav .nav-spacer { flex: 1; }
+  .navlabel-mobile { display: none; }
+
+  .topbar {
+    position: sticky; top: 0; z-index: 20;
+    display: flex; align-items: center; justify-content: space-between; gap: .8rem;
+    padding: .8rem 1rem; background: color-mix(in srgb, var(--bg) 82%, transparent);
+    backdrop-filter: saturate(1.4) blur(10px); border-bottom: 1px solid var(--border);
+  }
+  .topbar h1 { font-size: 1.15rem; }
+  .topbar .brand-mobile { display: none; align-items: center; gap: .5rem; }
+  .topbar .brand-mobile img { width: 28px; height: 28px; border-radius: 8px; }
+  .content { padding: 1.1rem 1rem 6rem; max-width: 1080px; margin: 0 auto; }
+  @media (min-width: 900px) { .content { padding: 1.4rem 1.6rem 3rem; } }
+
+  .view { display: none; }
+  .view.active { display: block; }
+
+  /* Barre de navigation basse (mobile) */
+  @media (max-width: 899px) {
+    .sidenav {
+      position: fixed; bottom: 0; left: 0; right: 0; top: auto; height: auto;
+      flex-direction: row; justify-content: space-around; gap: 0;
+      border-right: none; border-top: 1px solid var(--border);
+      padding: .35rem .3rem calc(.35rem + env(safe-area-inset-bottom)); z-index: 30;
+      box-shadow: 0 -2px 16px rgba(0,0,0,.06);
+    }
+    .sidenav .brand, .sidenav .nav-spacer, .sidenav .navitem.logout { display: none; }
+    .navitem { flex-direction: column; gap: .15rem; padding: .35rem .4rem; font-size: .68rem; border-radius: var(--r-sm); flex: 1; align-items: center; }
+    .navitem span.navlabel { display: none; }
+    .navitem .navlabel-mobile { display: block; }
+    .navitem.active { background: transparent; }
+    .topbar .brand-mobile { display: flex; }
+  }
+
+  /* Modale */
   #modal-overlay {
-    display: none; position: fixed; inset: 0; background: #0008;
-    align-items: center; justify-content: center; z-index: 100; padding: 1rem;
+    display: none; position: fixed; inset: 0; z-index: 60;
+    background: rgba(2,6,12,.55); align-items: flex-end; justify-content: center; padding: 0;
   }
-  #modal-overlay.open { display: flex; }
+  #modal-overlay.on { display: flex; }
+  @media (min-width: 640px) { #modal-overlay { align-items: center; padding: 1.2rem; } }
   #modal-box {
-    background: var(--card-bg); border: 1px solid var(--border); border-radius: 12px;
-    max-width: 640px; width: 100%; max-height: 85vh; overflow-y: auto; padding: 1.2rem;
+    background: var(--surface); width: 100%; max-width: 620px; max-height: 88dvh; overflow-y: auto;
+    border: 1px solid var(--border); border-radius: var(--r-lg) var(--r-lg) 0 0; box-shadow: var(--shadow-lg);
+    padding: 1.1rem 1.2rem calc(1.1rem + env(safe-area-inset-bottom));
   }
-  #modal-box .row.header { justify-content: space-between; margin-bottom: 0.8rem; }
+  @media (min-width: 640px) { #modal-box { border-radius: var(--r-lg); } }
+  #modal-box .modal-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: .8rem; }
 
-  footer {
-    max-width: 1100px; margin: 0 auto; padding: 1.5rem 1rem 2rem;
-    color: var(--muted); font-size: 0.8rem; text-align: center;
+  /* Toasts */
+  #toast-root { position: fixed; left: 0; right: 0; bottom: calc(1rem + env(safe-area-inset-bottom)); z-index: 80; display: flex; flex-direction: column; align-items: center; gap: .5rem; pointer-events: none; padding: 0 1rem; }
+  @media (max-width: 899px) { #toast-root { bottom: calc(4.6rem + env(safe-area-inset-bottom)); } }
+  .toast {
+    pointer-events: auto; max-width: 480px; width: fit-content;
+    background: var(--text); color: var(--bg); padding: .6rem .9rem; border-radius: var(--r-sm);
+    box-shadow: var(--shadow-lg); font-size: .9rem; font-weight: 550;
+    animation: toastin .2s ease; display: flex; align-items: center; gap: .5rem;
   }
-  footer a { color: var(--muted); }
+  .toast.err { background: var(--danger); color: #fff; }
+  .toast.ok { background: var(--primary); color: var(--primary-contrast); }
+  @keyframes toastin { from { opacity: 0; transform: translateY(8px);} to { opacity: 1; transform: none; } }
 
-  .charging-anim {
-    display: inline-block; width: 12px; height: 12px; border-radius: 50%;
-    background: #16a34a; margin-right: 0.3rem; vertical-align: middle;
-    animation: chargePulse 1.5s infinite;
-  }
-  @keyframes chargePulse {
-    0% { box-shadow: 0 0 0 0 rgba(22,163,74,0.5); }
-    70% { box-shadow: 0 0 0 9px rgba(22,163,74,0); }
-    100% { box-shadow: 0 0 0 0 rgba(22,163,74,0); }
-  }
+  .empty { color: var(--text-muted); padding: .8rem .2rem; }
+  .divider { height: 1px; background: var(--border); margin: .9rem 0; }
+  .grid-cards { display: grid; gap: .8rem; }
+  @media (min-width: 640px) { .grid-cards.two { grid-template-columns: 1fr 1fr; } }
+
+  .kv { display: flex; gap: .4rem; flex-wrap: wrap; align-items: baseline; }
+  .kv .k { color: var(--text-muted); font-size: .82rem; }
+  .metrics { display: flex; flex-wrap: wrap; gap: .3rem 1.1rem; margin-top: .3rem; color: var(--text-muted); font-size: .86rem; }
+  .metrics b { color: var(--text); font-weight: 650; }
 </style>
 </head>
 <body>
 
-<header>
-  <div class="brand">
-    <h1>OCPP Server</h1>
-    <span class="version" id="header-version"></span>
+<!-- Sprite d'icônes -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <symbol id="i-home" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.5V21h14V9.5"/><path d="M9 21v-6h6v6"/></symbol>
+    <symbol id="i-charger" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="3" width="10" height="18" rx="2"/><path d="M8 3V2M12 3V2"/><path d="m15 9 3 0a2 2 0 0 1 2 2v5a1.5 1.5 0 0 0 3 0v-6l-2-2"/><path d="m10 8-2 3h3l-2 3"/></symbol>
+    <symbol id="i-car" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 15h16"/><path d="M6 15V9.5A2 2 0 0 1 8 8h8a2 2 0 0 1 2 1.5L19 12l1 .5V17h-2M6 17H4v-4.5L5 12l1-2.5"/><circle cx="8" cy="17.5" r="1.5"/><circle cx="16" cy="17.5" r="1.5"/></symbol>
+    <symbol id="i-tariff" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 12a8 8 0 1 1-8-8"/><path d="M12 7v5l3 2"/><path d="M16 3h5v5"/><path d="m21 3-6 6"/></symbol>
+    <symbol id="i-history" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 4v4h4"/><path d="M12 8v4l3 2"/></symbol>
+    <symbol id="i-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></symbol>
+    <symbol id="i-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A8.5 8.5 0 1 1 11.2 3a6.5 6.5 0 0 0 9.8 9.8Z"/></symbol>
+    <symbol id="i-logout" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3"/><path d="M10 17l-5-5 5-5"/><path d="M5 12h12"/></symbol>
+    <symbol id="i-refresh" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 4v4h-4"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></symbol>
+    <symbol id="i-edit" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></symbol>
+    <symbol id="i-trash" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"/></symbol>
+    <symbol id="i-play" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></symbol>
+    <symbol id="i-stop" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></symbol>
+    <symbol id="i-close" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12M18 6 6 18"/></symbol>
+    <symbol id="i-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 6 6 6-6 6"/></symbol>
+    <symbol id="i-bolt" viewBox="0 0 24 24" fill="currentColor"><path d="M13 2 4 14h6l-1 8 9-12h-6z"/></symbol>
+  </defs>
+</svg>
+
+<!-- ================= CONNEXION ================= -->
+<div id="login-view">
+  <div class="card pad-lg login-card">
+    <div class="login-brand">
+      <img src="icon.svg" alt="">
+      <div>
+        <div class="name">OCPP Server</div>
+        <div class="tiny muted" id="login-version"></div>
+      </div>
+    </div>
+    <div style="display:flex; flex-direction:column; gap:.7rem">
+      <label class="field"><span>Utilisateur</span>
+        <input id="username" autocomplete="username" value="admin"></label>
+      <label class="field"><span>Mot de passe</span>
+        <input id="password" type="password" autocomplete="current-password" onkeydown="if(event.key==='Enter')login()"></label>
+      <button class="btn btn-primary" onclick="login()" style="width:100%; margin-top:.2rem">Se connecter</button>
+      <div id="login-error" class="small" style="color:var(--danger)"></div>
+    </div>
   </div>
-  <button class="icon-btn" onclick="toggleTheme()" id="theme-toggle" title="Basculer thème clair/sombre">🌙</button>
-</header>
-
-<main>
-
-<div id="login-box">
-  <h1 style="margin-top:0">Connexion</h1>
-  <div class="row"><input id="username" placeholder="Utilisateur" value="admin" style="flex:1"></div>
-  <div class="row"><input id="password" type="password" placeholder="Mot de passe" style="flex:1"></div>
-  <div class="row"><button onclick="login()">Se connecter</button></div>
-  <div id="login-error" class="error"></div>
 </div>
 
-<div id="app" style="display:none">
+<!-- ================= APPLICATION ================= -->
+<div id="app">
+<div class="app-shell">
 
-  <nav class="tabs">
-    <button class="tab-btn active" id="tabbtn-home" onclick="switchTab('home')">Accueil</button>
-    <button class="tab-btn" id="tabbtn-chargers" onclick="switchTab('chargers')">Bornes</button>
-    <button class="tab-btn" id="tabbtn-vehicles" onclick="switchTab('vehicles')">Véhicules</button>
-    <button class="tab-btn" id="tabbtn-tariffs" onclick="switchTab('tariffs')">Tarifs</button>
-    <button class="tab-btn" id="tabbtn-history" onclick="switchTab('history')">Historique</button>
-    <div style="flex:1"></div>
-    <button onclick="logout()">Déconnexion</button>
-  </nav>
-
-  <div id="tab-home" class="tab-panel active">
-    <div class="row" style="justify-content: space-between">
-      <h1>Accueil</h1>
-      <button onclick="loadHome()">Rafraîchir</button>
+  <aside class="sidenav">
+    <div class="brand">
+      <img src="icon.svg" alt="">
+      <div>
+        <div class="name">OCPP Server</div>
+        <div class="ver" id="side-version"></div>
+      </div>
     </div>
-    <h2>Charge en cours</h2>
-    <div id="home-current"><em>Chargement...</em></div>
-    <h2 style="margin-top:1.5rem">Bornes disponibles</h2>
-    <div id="home-available"></div>
-    <h2 style="margin-top:1.5rem">Dernière charge</h2>
-    <div id="home-last"></div>
-  </div>
+    <button class="navitem active" data-nav="home" onclick="switchView('home')"><svg><use href="#i-home"/></svg><span class="navlabel">Accueil</span><span class="navlabel-mobile">Accueil</span></button>
+    <button class="navitem" data-nav="chargers" onclick="switchView('chargers')"><svg><use href="#i-charger"/></svg><span class="navlabel">Bornes</span><span class="navlabel-mobile">Bornes</span></button>
+    <button class="navitem" data-nav="vehicles" onclick="switchView('vehicles')"><svg><use href="#i-car"/></svg><span class="navlabel">Véhicules</span><span class="navlabel-mobile">Autos</span></button>
+    <button class="navitem" data-nav="tariffs" onclick="switchView('tariffs')"><svg><use href="#i-tariff"/></svg><span class="navlabel">Abonnements</span><span class="navlabel-mobile">Tarifs</span></button>
+    <button class="navitem" data-nav="history" onclick="switchView('history')"><svg><use href="#i-history"/></svg><span class="navlabel">Historique</span><span class="navlabel-mobile">Histo.</span></button>
+    <div class="nav-spacer"></div>
+    <button class="navitem logout" onclick="logout()"><svg><use href="#i-logout"/></svg><span class="navlabel">Déconnexion</span></button>
+  </aside>
 
-  <div id="tab-chargers" class="tab-panel">
-    <div class="row" style="justify-content: space-between">
-      <h1>Bornes</h1>
-      <button onclick="loadChargers()">Rafraîchir</button>
+  <div class="main-col">
+    <div class="topbar">
+      <div class="brand-mobile"><img src="icon.svg" alt=""><h1 id="view-title">Accueil</h1></div>
+      <h1 id="view-title-desktop" style="display:none">Accueil</h1>
+      <div class="cluster center" style="gap:.4rem">
+        <button class="btn btn-icon btn-ghost" id="refresh-btn" title="Rafraîchir" onclick="refreshCurrentView()"><svg><use href="#i-refresh"/></svg></button>
+        <button class="btn btn-icon btn-ghost" id="theme-toggle" title="Thème clair/sombre" onclick="toggleTheme()"><svg><use href="#i-moon"/></svg></button>
+        <button class="btn btn-icon btn-ghost" title="Déconnexion" onclick="logout()" id="logout-mobile"><svg><use href="#i-logout"/></svg></button>
+      </div>
     </div>
-    <table id="chargers-table">
-      <thead>
-        <tr><th>ID</th><th>Vendeur / Modèle</th><th>Version</th><th>Mode</th><th>Statut</th><th>Connectée</th><th></th></tr>
-      </thead>
-      <tbody></tbody>
-    </table>
-  </div>
 
-  <div id="tab-vehicles" class="tab-panel">
-    <h1>Véhicules</h1>
-    <p style="color:var(--muted); font-size:0.85rem">
-      Associe un idTag (badge) à un véhicule : les sessions démarrées avec ce badge lui seront
-      automatiquement rattachées, pour le suivi des coûts et l'historique.
-    </p>
-    <div class="row">
-      <input id="veh-name" placeholder="Nom (ex. Tesla Model 3)">
-      <input id="veh-idtag" placeholder="idTag associé (optionnel)">
-      <input id="veh-battery" placeholder="Batterie (kWh, optionnel)" type="number" step="0.1" style="width:170px">
-      <button onclick="createVehicle()">Ajouter</button>
-    </div>
-    <table id="vehicles-table">
-      <thead><tr><th>Nom</th><th>idTag</th><th>Batterie (kWh)</th><th></th></tr></thead>
-      <tbody></tbody>
-    </table>
-  </div>
+    <main class="content">
 
-  <div id="tab-tariffs" class="tab-panel">
-    <h1>Abonnements</h1>
-    <p style="color:var(--muted); font-size:0.85rem">
-      Un abonnement représente ton contrat électrique (ex. "Domicile"). Le <b>prix par défaut</b>
-      s'applique tout le temps, sauf pendant les <b>plages horaires</b> que tu ajoutes en dessous
-      (heures creuses, week-end, ou tout autre découpage : elles ne sont pas forcément la nuit).
-      En cas de chevauchement entre deux plages, la première de la liste l'emporte. Un seul
-      abonnement peut être "actif" à la fois : c'est celui utilisé pour calculer le coût des
-      bornes qui n'ont pas de tarif assigné individuellement.
-    </p>
-    <div class="row">
-      <input id="tariff-name" placeholder="Nom (ex. Domicile)">
-      <input id="tariff-fixed" placeholder="Prix par défaut €/kWh" type="number" step="0.01" style="width:170px">
-      <input id="tariff-kva" placeholder="Puissance souscrite (kVA)" type="number" step="0.1" style="width:190px">
-      <button onclick="createTariff()">Ajouter un abonnement</button>
-    </div>
-    <div id="tariffs-list"></div>
-  </div>
+      <!-- ACCUEIL -->
+      <section class="view active" id="view-home">
+        <div class="section-title">Charge en cours</div>
+        <div id="home-current"><div class="empty">Chargement…</div></div>
+        <div class="section-title">Bornes</div>
+        <div id="home-available"></div>
+        <div class="section-title">Dernière charge terminée</div>
+        <div id="home-last"></div>
+      </section>
 
-  <div id="tab-history" class="tab-panel">
-    <h1>Historique des charges</h1>
-    <div class="row">
-      <label>Véhicule :</label>
-      <select id="hist-vehicle-filter" onchange="loadHistory()"><option value="">Tous</option></select>
-      <button onclick="loadHistory()">Rafraîchir</button>
-    </div>
-    <table id="history-table">
-      <thead><tr>
-        <th>Borne</th><th>Connecteur</th><th>Véhicule</th><th>Début</th><th>Fin</th><th>Durée</th>
-        <th>kWh</th><th>Coût</th><th>Tarif</th><th>km</th><th>% min</th><th>% max</th><th></th>
-      </tr></thead>
-      <tbody></tbody>
-    </table>
-  </div>
+      <!-- BORNES -->
+      <section class="view" id="view-chargers">
+        <div id="chargers-list"><div class="empty">Chargement…</div></div>
+      </section>
 
+      <!-- VÉHICULES -->
+      <section class="view" id="view-vehicles">
+        <div class="card">
+          <p class="small muted" style="margin:.1rem 0 .8rem">
+            Un véhicule peut être associé à un badge (idTag). Une charge démarrée avec ce badge — ou
+            démarrée pour ce véhicule depuis l'appli — lui est rattachée automatiquement, pour le suivi des coûts.
+          </p>
+          <div class="cluster">
+            <label class="field" style="flex:1; min-width:160px"><span>Nom</span>
+              <input id="veh-name" placeholder="ex. Tesla Model 3"></label>
+            <label class="field"><span>idTag associé (optionnel)</span>
+              <input id="veh-idtag" placeholder="badge"></label>
+            <label class="field"><span>Batterie kWh (optionnel)</span>
+              <input id="veh-battery" type="number" step="0.1" style="width:130px"></label>
+            <button class="btn btn-primary" onclick="createVehicle()"><svg><use href="#i-plus"/></svg>Ajouter</button>
+          </div>
+        </div>
+        <div class="card" style="margin-top:.8rem">
+          <div class="table-wrap"><table class="responsive" id="vehicles-table">
+            <thead><tr><th>Nom</th><th>idTag</th><th>Batterie</th><th></th></tr></thead>
+            <tbody></tbody>
+          </table></div>
+        </div>
+      </section>
+
+      <!-- ABONNEMENTS -->
+      <section class="view" id="view-tariffs">
+        <div class="card">
+          <p class="small muted" style="margin:.1rem 0 .8rem">
+            Un abonnement représente votre contrat électrique. Le <b>prix par défaut</b> s'applique tout le temps,
+            sauf pendant les <b>plages horaires</b> ajoutées ensuite (heures creuses, week-end…). En cas de
+            chevauchement, la première plage de la liste l'emporte. Un seul abonnement est « actif » à la fois :
+            c'est celui utilisé pour les bornes sans tarif propre.
+          </p>
+          <div class="cluster">
+            <label class="field" style="flex:1; min-width:150px"><span>Nom</span>
+              <input id="tariff-name" placeholder="ex. Domicile"></label>
+            <label class="field"><span>Prix par défaut €/kWh</span>
+              <input id="tariff-fixed" type="number" step="0.01" style="width:150px"></label>
+            <label class="field"><span>Puissance souscrite kVA</span>
+              <input id="tariff-kva" type="number" step="0.1" style="width:150px"></label>
+            <button class="btn btn-primary" onclick="createTariff()"><svg><use href="#i-plus"/></svg>Ajouter</button>
+          </div>
+        </div>
+        <div id="tariffs-list" style="margin-top:.8rem"></div>
+      </section>
+
+      <!-- HISTORIQUE -->
+      <section class="view" id="view-history">
+        <div class="card">
+          <div class="cluster center">
+            <label class="field"><span>Filtrer par véhicule</span>
+              <select id="hist-vehicle-filter" onchange="loadHistory()"><option value="">Tous</option></select></label>
+          </div>
+        </div>
+        <div class="card" style="margin-top:.8rem">
+          <div class="table-wrap"><table class="responsive" id="history-table">
+            <thead><tr>
+              <th>Borne</th><th>Conn.</th><th>Véhicule</th><th>Début</th><th>Fin</th><th>Durée</th>
+              <th>kWh</th><th>Coût</th><th>Tarif</th><th>km</th><th>% min</th><th>% max</th><th></th>
+            </tr></thead>
+            <tbody></tbody>
+          </table></div>
+        </div>
+      </section>
+
+    </main>
+  </div>
+</div>
 </div>
 
-</main>
-
-<div id="modal-overlay" onclick="if(event.target===this) closeModal()">
-  <div id="modal-box"></div>
-</div>
-
-<footer>
-  OCPP Backoffice Server v<span id="footer-version"></span> ·
-  <a href="https://github.com/MrTh0m/hassio-addons" target="_blank" rel="noopener">dépôt GitHub</a> ·
-  cœur protocole sous licence MIT (<a href="https://github.com/mobilityhouse/ocpp" target="_blank" rel="noopener">mobilityhouse/ocpp</a>)
-</footer>
+<div id="modal-overlay" onclick="if(event.target===this) closeModal()"><div id="modal-box"></div></div>
+<div id="toast-root"></div>
 
 <script>
 let token = localStorage.getItem("ocpp_token") || null;
 
+/* ---------- Thème ---------- */
 function applyTheme(theme) {
   document.documentElement.setAttribute("data-theme", theme);
-  document.getElementById("theme-toggle").textContent = theme === "dark" ? "☀️" : "🌙";
+  const t = document.querySelector("#theme-toggle use");
+  if (t) t.setAttribute("href", theme === "dark" ? "#i-sun" : "#i-moon");
+  const meta = document.getElementById("meta-theme-color");
+  if (meta) meta.setAttribute("content", theme === "dark" ? "#0b0f14" : "#0f172a");
 }
-
 function toggleTheme() {
-  const current = document.documentElement.getAttribute("data-theme") || "light";
-  const next = current === "dark" ? "light" : "dark";
+  const cur = document.documentElement.getAttribute("data-theme") || "light";
+  const next = cur === "dark" ? "light" : "dark";
   localStorage.setItem("ocpp_theme", next);
   applyTheme(next);
 }
-
-(function initTheme() {
+(function () {
   const stored = localStorage.getItem("ocpp_theme");
-  const preferred = stored || (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
-  applyTheme(preferred);
+  applyTheme(stored || (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light"));
 })();
 
+/* ---------- Version ---------- */
 fetch("api/version").then(r => r.json()).then(d => {
-  document.getElementById("header-version").textContent = "v" + d.version;
-  document.getElementById("footer-version").textContent = d.version;
+  ["login-version", "side-version"].forEach(id => {
+    const el = document.getElementById(id); if (el) el.textContent = "v" + d.version;
+  });
 }).catch(() => {});
 
+/* ---------- Utilitaires ---------- */
+function authHeaders() { return { "Authorization": "Bearer " + token }; }
+function jsonHeaders() { return { ...authHeaders(), "Content-Type": "application/json" }; }
+function esc(s) { return String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
+
 function formatDateTime(iso) {
-  if (!iso) return "-";
+  if (!iso) return "–";
   const hasTz = /Z|[+-]\d{2}:\d{2}$/.test(iso);
   const d = new Date(hasTz ? iso : iso + "Z");
   if (isNaN(d.getTime())) return iso;
-  const pad = n => String(n).padStart(2, "0");
-  return `${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${d.getFullYear()} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  const p = n => String(n).padStart(2, "0");
+  return `${p(d.getDate())}/${p(d.getMonth() + 1)}/${d.getFullYear()} ${p(d.getHours())}:${p(d.getMinutes())}`;
 }
-
-function isFocusWithin(elId) {
-  const el = document.getElementById(elId);
+function formatDuration(min) {
+  if (min == null) return "–";
+  return `${Math.floor(min / 60)}h${String(Math.round(min % 60)).padStart(2, "0")}`;
+}
+function kWh(wh) { return (wh / 1000).toFixed(2); }
+function eur(c) { return c != null ? c.toFixed(2) + " €" : "–"; }
+function isFocusWithin(id) {
+  const el = document.getElementById(id);
   return !!(el && document.activeElement && el.contains(document.activeElement) && document.activeElement !== el);
 }
 
-function authHeaders() {
-  return { "Authorization": "Bearer " + token };
+let toastTimer = null;
+function toast(msg, kind) {
+  const root = document.getElementById("toast-root");
+  const el = document.createElement("div");
+  el.className = "toast" + (kind ? " " + kind : "");
+  el.textContent = msg;
+  root.appendChild(el);
+  setTimeout(() => { el.style.opacity = "0"; el.style.transform = "translateY(8px)"; el.style.transition = "all .3s"; setTimeout(() => el.remove(), 300); }, 3200);
 }
 
-function openModal(html) {
-  document.getElementById("modal-box").innerHTML = html;
-  document.getElementById("modal-overlay").classList.add("open");
+async function apiCall(url, opts, okMsg) {
+  const resp = await fetch(url, opts);
+  if (resp.status === 401) { logout(); return { ok: false }; }
+  const data = await resp.json().catch(() => ({}));
+  if (resp.ok) { if (okMsg) toast(okMsg, "ok"); }
+  else { toast("Erreur : " + (data.detail || resp.status), "err"); }
+  return { ok: resp.ok, data };
 }
 
+/* ---------- Modale ---------- */
 let openModalConnector = null;
+function openModal(html) { document.getElementById("modal-box").innerHTML = html; document.getElementById("modal-overlay").classList.add("on"); }
+function closeModal() { document.getElementById("modal-overlay").classList.remove("on"); openModalConnector = null; }
 
-function closeModal() {
-  document.getElementById("modal-overlay").classList.remove("open");
-  openModalConnector = null;
-}
-
+/* ---------- Auth ---------- */
 async function login() {
   const username = document.getElementById("username").value;
   const password = document.getElementById("password").value;
-  const body = new URLSearchParams({ username, password });
-  const resp = await fetch("api/auth/login", { method: "POST", body });
-  if (!resp.ok) {
-    document.getElementById("login-error").textContent = "Identifiants invalides";
-    return;
-  }
-  const data = await resp.json();
-  token = data.access_token;
+  const resp = await fetch("api/auth/login", { method: "POST", body: new URLSearchParams({ username, password }) });
+  if (!resp.ok) { document.getElementById("login-error").textContent = "Identifiants invalides"; return; }
+  token = (await resp.json()).access_token;
   localStorage.setItem("ocpp_token", token);
   showApp();
 }
-
 function logout() {
-  localStorage.removeItem("ocpp_token");
-  token = null;
-  document.getElementById("app").style.display = "none";
-  document.getElementById("login-box").style.display = "block";
+  localStorage.removeItem("ocpp_token"); token = null;
+  document.getElementById("app").classList.remove("on");
+  document.getElementById("login-view").style.display = "grid";
 }
-
 function showApp() {
-  document.getElementById("login-box").style.display = "none";
-  document.getElementById("app").style.display = "block";
-  loadHome();
-  loadChargers();
+  document.getElementById("login-view").style.display = "none";
+  document.getElementById("app").classList.add("on");
+  switchView("home");
   if (!window._pollStarted) {
     window._pollStarted = true;
-    setInterval(() => {
-      const active = document.querySelector(".tab-panel.active");
-      if (active && active.id === "tab-home") { loadHome(); }
-      if (active && active.id === "tab-chargers") {
-        if (openCharger) {
-          if (!isFocusWithin("detail-" + openCharger)) { renderChargerDetail(openCharger); }
-        } else {
-          loadChargers();
-        }
-      }
-      if (openModalConnector && document.getElementById("modal-overlay").classList.contains("open")) {
-        if (!isFocusWithin("modal-box")) {
-          openConnectorModal(openModalConnector.chargerId, openModalConnector.connectorId, openModalConnector.isLocal, true);
-        }
-      }
-    }, 5000);
+    setInterval(pollTick, 5000);
+  }
+}
+function pollTick() {
+  if (currentView === "home" && !isFocusWithin("view-home")) loadHome();
+  if (currentView === "chargers") {
+    if (openCharger && !isFocusWithin("detail-" + openCharger)) renderChargerDetail(openCharger);
+    else if (!openCharger) loadChargers();
+  }
+  if (openModalConnector && document.getElementById("modal-overlay").classList.contains("on")) {
+    if (!isFocusWithin("modal-box")) openConnectorModal(openModalConnector.chargerId, openModalConnector.connectorId, openModalConnector.isLocal, true);
   }
 }
 
-// --- Onglets ---
-
-const tabsLoaded = { vehicles: false, tariffs: false, history: false };
-
-function switchTab(name) {
-  document.querySelectorAll(".tab-panel").forEach(el => el.classList.remove("active"));
-  document.querySelectorAll(".tab-btn").forEach(el => el.classList.remove("active"));
-  document.getElementById("tab-" + name).classList.add("active");
-  document.getElementById("tabbtn-" + name).classList.add("active");
-  if (name === "home") { loadHome(); }
-  if (name === "vehicles" && !tabsLoaded.vehicles) { loadVehicles(); tabsLoaded.vehicles = true; }
-  if (name === "tariffs" && !tabsLoaded.tariffs) { loadTariffs(); tabsLoaded.tariffs = true; }
-  if (name === "history" && !tabsLoaded.history) { populateVehicleFilter(); loadHistory(); tabsLoaded.history = true; }
+/* ---------- Navigation ---------- */
+let currentView = "home";
+const viewTitles = { home: "Accueil", chargers: "Bornes", vehicles: "Véhicules", tariffs: "Abonnements", history: "Historique" };
+const viewLoaded = {};
+function switchView(name) {
+  currentView = name;
+  document.querySelectorAll(".view").forEach(v => v.classList.remove("active"));
+  document.getElementById("view-" + name).classList.add("active");
+  document.querySelectorAll(".navitem[data-nav]").forEach(b => b.classList.toggle("active", b.dataset.nav === name));
+  document.getElementById("view-title").textContent = viewTitles[name];
+  const td = document.getElementById("view-title-desktop"); if (td) td.textContent = viewTitles[name];
+  const loaders = { home: loadHome, chargers: loadChargers, vehicles: loadVehicles, tariffs: loadTariffs, history: () => { populateVehicleFilter(); loadHistory(); } };
+  if (name === "home" || name === "chargers") loaders[name]();
+  else if (!viewLoaded[name]) { loaders[name](); viewLoaded[name] = true; }
+}
+function refreshCurrentView() {
+  const loaders = { home: loadHome, chargers: () => { openCharger = null; loadChargers(); }, vehicles: loadVehicles, tariffs: loadTariffs, history: loadHistory };
+  (loaders[currentView] || (() => {}))();
+  toast("Rafraîchi", "ok");
 }
 
-// --- Accueil ---
-
+/* ========================= ACCUEIL ========================= */
 async function loadHome() {
-  const [activeResp, recentResp, chargersResp] = await Promise.all([
-    fetch("api/history?status_filter=active&limit=20", { headers: authHeaders() }),
-    fetch("api/history?limit=10", { headers: authHeaders() }),
-    fetch("api/chargers", { headers: authHeaders() }),
+  const [active, recent, chargers] = await Promise.all([
+    fetch("api/history?status_filter=active&limit=20", { headers: authHeaders() }).then(r => r.json()),
+    fetch("api/history?limit=10", { headers: authHeaders() }).then(r => r.json()),
+    fetch("api/chargers", { headers: authHeaders() }).then(r => r.json()),
   ]);
-  const active = await activeResp.json();
-  const recent = await recentResp.json();
-  const chargers = await chargersResp.json();
   const lastCompleted = recent.find(s => s.status === "completed");
-
-  if (!isFocusWithin("home-current")) { await renderHomeCurrent(active); }
-  if (!isFocusWithin("home-last")) { renderHomeLast(lastCompleted); }
-  if (!isFocusWithin("home-available")) { await renderHomeAvailable(chargers, active); }
-}
-
-function formatDuration(minutes) {
-  if (minutes == null) return "-";
-  return `${Math.floor(minutes / 60)}h${String(Math.round(minutes % 60)).padStart(2, "0")}`;
+  if (!isFocusWithin("home-current")) await renderHomeCurrent(active);
+  if (!isFocusWithin("home-available")) await renderHomeAvailable(chargers, active);
+  if (!isFocusWithin("home-last")) renderHomeLast(lastCompleted);
 }
 
 async function renderHomeCurrent(active) {
   const el = document.getElementById("home-current");
-  if (active.length === 0) {
-    el.innerHTML = "<p><em>Aucune charge en cours.</em></p>";
-    return;
-  }
-  const vehiclesResp = await fetch("api/vehicles", { headers: authHeaders() });
-  const vehicles = await vehiclesResp.json();
-
-  let html = "";
-  for (const s of active) {
-    const kwh = (s.energy_wh / 1000).toFixed(2);
-    const cost = s.cost != null ? s.cost.toFixed(2) + " €" : "-";
-    html += `<div class="plan-card">
-      <div class="row" style="justify-content:space-between">
+  if (!active.length) { el.innerHTML = `<div class="card"><div class="empty">Aucune charge en cours.</div></div>`; return; }
+  const vehicles = await fetch("api/vehicles", { headers: authHeaders() }).then(r => r.json());
+  el.innerHTML = active.map(s => `
+    <div class="card">
+      <div class="spread">
         <div>
-          <span class="charging-anim"></span>
-          <b>${s.charger_id} · Connecteur ${s.connector_id}</b>${s.vehicle_name ? ` · ${s.vehicle_name}` : ""}
-          <div style="font-size:0.85rem;color:var(--muted)">Depuis ${formatDuration(s.duration_min)} · ${kwh} kWh · ${cost}</div>
+          <div class="cluster center" style="gap:.5rem">
+            <span class="charging-dot"></span>
+            <b>${esc(s.charger_id)} · Conn. ${s.connector_id}</b>
+            ${s.vehicle_name ? `<span class="badge accent">${esc(s.vehicle_name)}</span>` : ""}
+          </div>
+          <div class="metrics">
+            <span>Depuis <b>${formatDuration(s.duration_min)}</b></span>
+            <span><b>${kWh(s.energy_wh)}</b> kWh</span>
+            <span><b>${eur(s.cost)}</b></span>
+          </div>
         </div>
-        <button onclick="stopChargeFromHome('${s.charger_id}', ${s.connector_id}, ${s.id})">Arrêter</button>
+        <button class="btn btn-danger" onclick="stopChargeFromHome('${esc(s.charger_id)}', ${s.connector_id}, ${s.id})"><svg><use href="#i-stop"/></svg>Arrêter</button>
       </div>
-      <div class="row" style="margin-top:0.4rem">
-        <label>Véhicule :</label>
-        <select id="home-current-vehicle-${s.id}">
-          <option value="">(aucun)</option>
-          ${vehicles.map(v => `<option value="${v.id}" ${s.vehicle_id === v.id ? "selected" : ""}>${v.name}</option>`).join("")}
-        </select>
-        <button onclick="saveCurrentVehicle(${s.id})">Assigner</button>
+      <div class="divider"></div>
+      <div class="cluster center">
+        <label class="field"><span>Véhicule</span>
+          <select id="home-current-vehicle-${s.id}">
+            <option value="">(aucun)</option>
+            ${vehicles.map(v => `<option value="${v.id}" ${s.vehicle_id === v.id ? "selected" : ""}>${esc(v.name)}</option>`).join("")}
+          </select></label>
+        <button class="btn btn-sm" onclick="saveCurrentVehicle(${s.id})">Assigner</button>
       </div>
-    </div>`;
-  }
-  el.innerHTML = html;
+    </div>`).join("");
 }
 
 async function renderHomeAvailable(chargers, active) {
   const activeKeys = new Set(active.map(s => `${s.charger_id}:${s.connector_id}`));
-  const vehiclesResp = await fetch("api/vehicles", { headers: authHeaders() });
-  const vehicles = (await vehiclesResp.json()).filter(v => v.id_tag);
-
+  const vehicles = await fetch("api/vehicles", { headers: authHeaders() }).then(r => r.json());
+  const vehOptions = `<option value="">(véhicule ?)</option>` + vehicles.map(v => `<option value="${v.id}">${esc(v.name)}</option>`).join("");
   const el = document.getElementById("home-available");
-  let html = "";
+  let cards = "";
+
   for (const c of chargers) {
     if (c.mode !== "local") continue;
-    const connResp = await fetch(`api/chargers/${c.id}/connectors`, { headers: authHeaders() });
-    const connectors = (await connResp.json()).filter(x => x.connector_id !== 0);
+    const connectors = (await fetch(`api/chargers/${c.id}/connectors`, { headers: authHeaders() }).then(r => r.json())).filter(x => x.connector_id !== 0);
+    const isFree = (c.auth_mode || "free") === "free";
     for (const conn of connectors) {
       if (activeKeys.has(`${c.id}:${conn.connector_id}`)) continue;
-      html += `<div class="connector-card">
-        <div><b>${c.id} · Connecteur ${conn.connector_id}</b> <span class="badge ${conn.status}">${conn.status}</span></div>
-        <div class="row">
-          <select id="home-veh-${c.id}-${conn.connector_id}">
-            <option value="">idTag manuel</option>
-            ${vehicles.map(v => `<option value="${v.id_tag}">${v.name}</option>`).join("")}
-          </select>
-          <button onclick="startChargeFromHome('${c.id}', ${conn.connector_id})">Démarrer</button>
+      const preparing = conn.status === "Preparing";
+      let cta;
+      if (isFree) {
+        cta = `<span class="badge ok" title="Aucune autorisation requise : la charge démarre automatiquement au branchement."><svg style="width:.85em;height:.85em" fill="currentColor"><use href="#i-bolt"/></svg> Démarrage auto</span>`;
+      } else {
+        cta = `<div class="cluster center" style="gap:.4rem">
+          <select id="home-veh-${c.id}-${conn.connector_id}" style="min-width:130px">${vehOptions}</select>
+          <button class="btn ${preparing ? "btn-primary" : ""} btn-sm" onclick="startChargeFromHome('${esc(c.id)}', ${conn.connector_id})"><svg><use href="#i-play"/></svg>Démarrer</button>
+        </div>`;
+      }
+      const hint = preparing
+        ? `<span class="badge Preparing">Véhicule branché · prêt</span>`
+        : `<span class="badge ${esc(conn.status)}">${esc(conn.status)}</span>`;
+      cards += `<div class="card" ${preparing ? 'style="border-color:var(--warn)"' : ""}>
+        <div class="spread">
+          <div>
+            <b>${esc(c.id)} · Conn. ${conn.connector_id}</b>
+            <div style="margin-top:.35rem">${hint}</div>
+          </div>
+          ${cta}
         </div>
       </div>`;
     }
   }
-  el.innerHTML = html || "<p><em>Aucune borne locale disponible pour l'instant.</em></p>";
+  el.innerHTML = cards || `<div class="card"><div class="empty">Aucune borne locale disponible pour l'instant.</div></div>`;
 }
 
 async function startChargeFromHome(chargerId, connectorId) {
-  const select = document.getElementById(`home-veh-${chargerId}-${connectorId}`);
-  const id_tag = (select && select.value) || "WEBADMIN";
-  const resp = await fetch(`api/chargers/${chargerId}/connectors/${connectorId}/start`, {
-    method: "POST", headers: { ...authHeaders(), "Content-Type": "application/json" },
-    body: JSON.stringify({ id_tag }),
-  });
-  const data = await resp.json().catch(() => ({}));
-  if (resp.ok) { loadHome(); } else { alert("Erreur : " + (data.detail || resp.status)); }
+  const sel = document.getElementById(`home-veh-${chargerId}-${connectorId}`);
+  const vehicle_id = sel && sel.value ? parseInt(sel.value, 10) : null;
+  const { ok } = await apiCall(`api/chargers/${chargerId}/connectors/${connectorId}/start`,
+    { method: "POST", headers: jsonHeaders(), body: JSON.stringify({ vehicle_id }) });
+  if (ok) { toast("Démarrage demandé", "ok"); loadHome(); }
 }
-
 async function stopChargeFromHome(chargerId, connectorId, transactionId) {
-  const resp = await fetch(`api/chargers/${chargerId}/connectors/${connectorId}/stop`, {
-    method: "POST", headers: { ...authHeaders(), "Content-Type": "application/json" },
-    body: JSON.stringify({ transaction_id: transactionId }),
-  });
-  const data = await resp.json().catch(() => ({}));
-  if (resp.ok) { loadHome(); } else { alert("Erreur : " + (data.detail || resp.status)); }
+  const { ok } = await apiCall(`api/chargers/${chargerId}/connectors/${connectorId}/stop`,
+    { method: "POST", headers: jsonHeaders(), body: JSON.stringify({ transaction_id: transactionId }) });
+  if (ok) { toast("Arrêt demandé", "ok"); loadHome(); }
 }
-
 async function saveCurrentVehicle(sessionId) {
   const sel = document.getElementById(`home-current-vehicle-${sessionId}`);
   const vehicle_id = sel.value ? parseInt(sel.value, 10) : null;
-  const resp = await fetch(`api/sessions/${sessionId}`, {
-    method: "PUT", headers: { ...authHeaders(), "Content-Type": "application/json" },
-    body: JSON.stringify({ vehicle_id }),
-  });
-  if (resp.ok) { loadHome(); } else { alert("Erreur lors de l'assignation du véhicule"); }
+  const { ok } = await apiCall(`api/sessions/${sessionId}`, { method: "PUT", headers: jsonHeaders(), body: JSON.stringify({ vehicle_id }) });
+  if (ok) loadHome();
 }
 
+/* Dernière charge — lecture seule + bouton Modifier (comme les autres vues) */
+let editingLast = false;
+let lastVehicles = [];
 function renderHomeLast(s) {
   const el = document.getElementById("home-last");
-  if (!s) {
-    el.innerHTML = "<p><em>Aucune charge terminée pour l'instant.</em></p>";
-    return;
-  }
-  const kwh = (s.energy_wh / 1000).toFixed(2);
-  const cost = s.cost != null ? s.cost.toFixed(2) + " €" : "-";
-  el.innerHTML = `<div class="plan-card">
-    <div>
-      <b>${s.charger_id} · Connecteur ${s.connector_id}</b>${s.vehicle_name ? ` · ${s.vehicle_name}` : ""}
-      <div style="font-size:0.85rem;color:var(--muted)">
-        ${formatDateTime(s.start_time)} → ${formatDateTime(s.stop_time)} · ${formatDuration(s.duration_min)} · ${kwh} kWh · ${cost}
+  if (!s) { el.innerHTML = `<div class="card"><div class="empty">Aucune charge terminée pour l'instant.</div></div>`; editingLast = false; return; }
+
+  const head = `<div class="spread">
+      <div>
+        <b>${esc(s.charger_id)} · Conn. ${s.connector_id}</b>${s.vehicle_name ? ` <span class="badge accent">${esc(s.vehicle_name)}</span>` : ""}
+        <div class="metrics">
+          <span>${formatDateTime(s.start_time)} → ${formatDateTime(s.stop_time)}</span>
+          <span><b>${formatDuration(s.duration_min)}</b></span>
+          <span><b>${kWh(s.energy_wh)}</b> kWh</span>
+          <span><b>${eur(s.cost)}</b></span>
+          ${s.tariff_plan_name ? `<span>${esc(s.tariff_plan_name)}</span>` : ""}
+        </div>
       </div>
-    </div>
-    <div class="row" style="margin-top:0.5rem">
-      <label>Véhicule :</label>
-      <select id="home-last-vehicle"><option value="">(aucun)</option></select>
-      <label>km :</label><input id="home-last-km" type="number" value="${s.odometer_km ?? ""}" style="width:80px">
-      <label>% min :</label><input id="home-last-pmin" type="number" min="0" max="100" value="${s.battery_percent_start ?? ""}" style="width:60px">
-      <label>% max :</label><input id="home-last-pmax" type="number" min="0" max="100" value="${s.battery_percent_end ?? 100}" style="width:60px">
-      <button onclick="saveHomeLast(${s.id})">Enregistrer</button>
-    </div>
-  </div>`;
-  fetch("api/vehicles", { headers: authHeaders() }).then(r => r.json()).then(vehicles => {
-    const sel = document.getElementById("home-last-vehicle");
-    if (!sel) return;
-    sel.innerHTML = '<option value="">(aucun)</option>' +
-      vehicles.map(v => `<option value="${v.id}" ${s.vehicle_id === v.id ? "selected" : ""}>${v.name}</option>`).join("");
-  });
-}
+      ${editingLast ? "" : `<button class="btn btn-sm" onclick="editingLast=true; loadHome();"><svg><use href="#i-edit"/></svg>Modifier</button>`}
+    </div>`;
 
-async function saveHomeLast(id) {
-  const vehicleRaw = document.getElementById("home-last-vehicle").value;
-  const vehicle_id = vehicleRaw ? parseInt(vehicleRaw, 10) : null;
-  const kmRaw = document.getElementById("home-last-km").value;
-  const pminRaw = document.getElementById("home-last-pmin").value;
-  const pmaxRaw = document.getElementById("home-last-pmax").value;
-  const resp = await fetch(`api/sessions/${id}`, {
-    method: "PUT", headers: { ...authHeaders(), "Content-Type": "application/json" },
-    body: JSON.stringify({
-      vehicle_id,
-      odometer_km: kmRaw !== "" ? parseFloat(kmRaw) : null,
-      battery_percent_start: pminRaw !== "" ? parseFloat(pminRaw) : null,
-      battery_percent_end: pmaxRaw !== "" ? parseFloat(pmaxRaw) : null,
-    }),
-  });
-  if (resp.ok) { loadHome(); } else { alert("Erreur lors de l'enregistrement"); }
-}
-
-// --- Bornes ---
-
-async function loadChargers() {
-  const resp = await fetch("api/chargers", { headers: authHeaders() });
-  if (resp.status === 401) { logout(); return; }
-  const chargers = await resp.json();
-  const tbody = document.querySelector("#chargers-table tbody");
-  tbody.innerHTML = "";
-  for (const c of chargers) {
-    const tr = document.createElement("tr");
-    tr.innerHTML = `
-      <td>${c.id}</td>
-      <td>${c.vendor || "-"} ${c.model || ""}</td>
-      <td>${c.ocpp_version || "-"}</td>
-      <td><span class="badge ${c.mode}">${c.mode}</span></td>
-      <td>${c.status}</td>
-      <td><span class="badge ${c.connected ? "on" : "off"}">${c.connected ? "oui" : "non"}</span></td>
-      <td><a class="expand" onclick="toggleDetail('${c.id}')">détails</a></td>
-    `;
-    tbody.appendChild(tr);
-    const detailTr = document.createElement("tr");
-    detailTr.innerHTML = `<td colspan="7"><div class="charger-detail" id="detail-${c.id}"></div></td>`;
-    tbody.appendChild(detailTr);
-  }
-}
-
-let openCharger = null;
-
-function toggleDetail(id) {
-  const el = document.getElementById("detail-" + id);
-  if (openCharger === id) {
-    el.classList.remove("open");
-    openCharger = null;
+  if (!editingLast) {
+    el.innerHTML = `<div class="card">${head}
+      <div class="metrics" style="margin-top:.5rem">
+        <span class="k">km : <b>${s.odometer_km ?? "–"}</b></span>
+        <span class="k">% min : <b>${s.battery_percent_start ?? "–"}</b></span>
+        <span class="k">% max : <b>${s.battery_percent_end ?? "–"}</b></span>
+      </div></div>`;
     return;
   }
-  if (openCharger) {
-    const prev = document.getElementById("detail-" + openCharger);
-    if (prev) prev.classList.remove("open");
-  }
-  openCharger = id;
-  el.classList.add("open");
-  el.innerHTML = "chargement...";
-  renderChargerDetail(id);
+
+  el.innerHTML = `<div class="card">${head}
+    <div class="divider"></div>
+    <div class="cluster">
+      <label class="field"><span>Véhicule</span><select id="home-last-vehicle"><option value="">(aucun)</option></select></label>
+      <label class="field"><span>km</span><input id="home-last-km" type="number" value="${s.odometer_km ?? ""}" style="width:100px"></label>
+      <label class="field"><span>% min</span><input id="home-last-pmin" type="number" min="0" max="100" value="${s.battery_percent_start ?? ""}" style="width:80px"></label>
+      <label class="field"><span>% max</span><input id="home-last-pmax" type="number" min="0" max="100" value="${s.battery_percent_end ?? 100}" style="width:80px"></label>
+      <div class="cluster" style="gap:.4rem">
+        <button class="btn btn-primary btn-sm" onclick="saveHomeLast(${s.id})">Enregistrer</button>
+        <button class="btn btn-sm" onclick="editingLast=false; loadHome();">Annuler</button>
+      </div>
+    </div></div>`;
+  fetch("api/vehicles", { headers: authHeaders() }).then(r => r.json()).then(vehicles => {
+    lastVehicles = vehicles;
+    const sel = document.getElementById("home-last-vehicle"); if (!sel) return;
+    sel.innerHTML = `<option value="">(aucun)</option>` + vehicles.map(v => `<option value="${v.id}" ${s.vehicle_id === v.id ? "selected" : ""}>${esc(v.name)}</option>`).join("");
+  });
+}
+async function saveHomeLast(id) {
+  const num = v => v !== "" ? parseFloat(v) : null;
+  const body = {
+    vehicle_id: document.getElementById("home-last-vehicle").value ? parseInt(document.getElementById("home-last-vehicle").value, 10) : null,
+    odometer_km: num(document.getElementById("home-last-km").value),
+    battery_percent_start: num(document.getElementById("home-last-pmin").value),
+    battery_percent_end: num(document.getElementById("home-last-pmax").value),
+  };
+  const { ok } = await apiCall(`api/sessions/${id}`, { method: "PUT", headers: jsonHeaders(), body: JSON.stringify(body) }, "Enregistré");
+  if (ok) { editingLast = false; loadHome(); }
 }
 
+/* ========================= BORNES ========================= */
+let openCharger = null;
+async function loadChargers() {
+  const chargers = await fetch("api/chargers", { headers: authHeaders() }).then(r => r.json());
+  const el = document.getElementById("chargers-list");
+  if (!chargers.length) { el.innerHTML = `<div class="card"><div class="empty">Aucune borne connue. Elle apparaîtra dès sa première connexion.</div></div>`; return; }
+  el.innerHTML = chargers.map(c => `
+    <div class="card" style="padding:0; overflow:hidden">
+      <div class="spread" style="padding:1rem 1.1rem; cursor:pointer" onclick="toggleDetail('${esc(c.id)}')">
+        <div>
+          <div class="cluster center" style="gap:.5rem">
+            <b>${esc(c.id)}</b>
+            <span class="badge ${c.mode}">${c.mode}</span>
+            <span class="badge ${c.connected ? "ok" : "off"}"><span class="dot"></span>${c.connected ? "connectée" : "hors ligne"}</span>
+          </div>
+          <div class="small muted" style="margin-top:.3rem">${esc(c.vendor || "")} ${esc(c.model || "")} ${c.ocpp_version ? "· OCPP " + esc(c.ocpp_version) : ""} · ${esc(c.status)}</div>
+        </div>
+        <svg style="width:1.2rem;height:1.2rem;transition:transform .2s;transform:rotate(${openCharger === c.id ? 90 : 0}deg);color:var(--text-muted)"><use href="#i-chevron"/></svg>
+      </div>
+      <div id="detail-${esc(c.id)}" style="display:${openCharger === c.id ? "block" : "none"}; padding:0 1.1rem 1.1rem; border-top:1px solid var(--border)"></div>
+    </div>`).join("");
+  if (openCharger) renderChargerDetail(openCharger);
+}
+function toggleDetail(id) {
+  openCharger = (openCharger === id) ? null : id;
+  loadChargers();
+}
 async function renderChargerDetail(id) {
   const el = document.getElementById("detail-" + id);
   if (!el) return;
-
-  const [chargerResp, connectorsResp, tariffsResp] = await Promise.all([
-    fetch(`api/chargers/${id}`, { headers: authHeaders() }),
-    fetch(`api/chargers/${id}/connectors`, { headers: authHeaders() }),
-    fetch(`api/tariffs`, { headers: authHeaders() }),
+  const [charger, connectors, tariffs] = await Promise.all([
+    fetch(`api/chargers/${id}`, { headers: authHeaders() }).then(r => r.json()),
+    fetch(`api/chargers/${id}/connectors`, { headers: authHeaders() }).then(r => r.json()).then(a => a.filter(c => c.connector_id !== 0)),
+    fetch(`api/tariffs`, { headers: authHeaders() }).then(r => r.json()),
   ]);
-  const charger = await chargerResp.json();
-  const connectors = (await connectorsResp.json()).filter(c => c.connector_id !== 0);
-  const tariffs = await tariffsResp.json();
   const isLocal = charger.mode === "local";
+  const authMode = charger.auth_mode || "free";
 
-  let html = `<div class="row">
-    <label>Mode de la borne :</label>
-    <select id="mode-${id}" onchange="onModeChange('${id}')">
-      <option value="local" ${isLocal ? "selected" : ""}>local</option>
-      <option value="relay" ${!isLocal ? "selected" : ""}>relais</option>
-    </select>
-    <input id="relayurl-${id}" placeholder="wss://serveur-officiel/..." value="${charger.relay_url || ""}"
-      style="${isLocal ? "display:none" : ""}; min-width:280px">
-    <button onclick="saveMode('${id}')">Enregistrer</button>
-  </div>`;
-
-  html += `<div class="row">
-    <label>Tarif appliqué :</label>
-    <select id="tariff-select-${id}">
-      <option value="">(tarif par défaut)</option>
-      ${tariffs.map(t => `<option value="${t.id}" ${charger.tariff_plan_id === t.id ? "selected" : ""}>${t.name}</option>`).join("")}
-    </select>
-    <button onclick="saveTariff('${id}')">Enregistrer</button>
-  </div>`;
-
-  html += `<h2 style="margin-top:1rem">Connecteurs</h2>`;
-  if (connectors.length === 0) {
-    html += `<p><em>Aucun connecteur détecté pour l'instant (attends le premier StatusNotification de la borne).</em></p>`;
-  }
-  for (const c of connectors) {
-    html += `<div class="connector-card">
+  el.innerHTML = `
+    <div class="section-title">Réglages</div>
+    <div class="grid-cards two">
       <div>
-        <b>Connecteur ${c.connector_id}</b>
-        <span class="badge ${c.status}">${c.status}</span>
+        <label class="field"><span>Mode de pilotage</span>
+          <select id="mode-${id}" onchange="onModeChange('${id}')">
+            <option value="local" ${isLocal ? "selected" : ""}>Local (piloté ici)</option>
+            <option value="relay" ${!isLocal ? "selected" : ""}>Relais (serveur officiel)</option>
+          </select></label>
+        <div id="relaywrap-${id}" style="margin-top:.5rem; ${isLocal ? "display:none" : ""}">
+          <label class="field"><span>URL du serveur officiel</span>
+            <input id="relayurl-${id}" placeholder="wss://serveur/..." value="${esc(charger.relay_url || "")}"></label>
+        </div>
+        <button class="btn btn-sm btn-primary" style="margin-top:.5rem" onclick="saveMode('${id}')">Enregistrer le mode</button>
       </div>
-      <a class="link" onclick="openConnectorModal('${id}', ${c.connector_id}, ${isLocal})">détails</a>
-    </div>`;
-  }
+      <div>
+        <label class="field"><span>Autorisation de charge</span>
+          <select id="authmode-${id}" ${isLocal ? "" : "disabled"}>
+            <option value="free" ${authMode === "free" ? "selected" : ""}>Sans autorisation (démarrage auto)</option>
+            <option value="authorized" ${authMode === "authorized" ? "selected" : ""}>Avec autorisation (badge ou bouton)</option>
+          </select></label>
+        <p class="tiny muted" style="margin:.4rem 0 0">
+          <b>Sans autorisation</b> : la charge démarre seule au branchement, sans badge ni bouton.<br>
+          <b>Avec autorisation</b> : seuls un idTag connu (associé à un véhicule) ou le bouton « Démarrer » lancent la charge.
+        </p>
+        <button class="btn btn-sm btn-primary" style="margin-top:.5rem" onclick="saveAuthMode('${id}')" ${isLocal ? "" : "disabled"}>Enregistrer l'autorisation</button>
+      </div>
+    </div>
 
-  el.innerHTML = html;
+    <div style="margin-top:.9rem">
+      <label class="field" style="max-width:320px"><span>Tarif appliqué</span>
+        <select id="tariff-select-${id}">
+          <option value="">(abonnement actif par défaut)</option>
+          ${tariffs.map(t => `<option value="${t.id}" ${charger.tariff_plan_id === t.id ? "selected" : ""}>${esc(t.name)}</option>`).join("")}
+        </select></label>
+      <button class="btn btn-sm" style="margin-top:.5rem" onclick="saveTariff('${id}')">Enregistrer le tarif</button>
+    </div>
+
+    <div class="section-title">Connecteurs</div>
+    ${connectors.length ? "" : `<div class="empty">Aucun connecteur détecté (attendez le premier StatusNotification).</div>`}
+    ${connectors.map(cc => `
+      <div class="card" style="margin:.4rem 0; padding:.7rem .9rem">
+        <div class="spread">
+          <div class="cluster center" style="gap:.5rem"><b>Connecteur ${cc.connector_id}</b><span class="badge ${esc(cc.status)}">${esc(cc.status)}</span></div>
+          <button class="btn btn-sm" onclick="openConnectorModal('${id}', ${cc.connector_id}, ${isLocal})">Détails</button>
+        </div>
+      </div>`).join("")}
+  `;
 }
-
 function onModeChange(id) {
-  const mode = document.getElementById("mode-" + id).value;
-  document.getElementById("relayurl-" + id).style.display = mode === "relay" ? "inline-block" : "none";
+  const relay = document.getElementById("mode-" + id).value === "relay";
+  document.getElementById("relaywrap-" + id).style.display = relay ? "block" : "none";
+  const am = document.getElementById("authmode-" + id); if (am) am.disabled = relay;
 }
-
 async function saveMode(id) {
   const mode = document.getElementById("mode-" + id).value;
-  const relay_url = document.getElementById("relayurl-" + id).value;
   const body = { mode };
-  if (mode === "relay") body.relay_url = relay_url;
-  const resp = await fetch(`api/chargers/${id}/mode`, {
-    method: "PUT",
-    headers: { ...authHeaders(), "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  if (resp.ok) { renderChargerDetail(id); loadChargers(); } else { alert("Échec de la mise à jour du mode"); }
+  if (mode === "relay") body.relay_url = document.getElementById("relayurl-" + id).value;
+  const { ok } = await apiCall(`api/chargers/${id}/mode`, { method: "PUT", headers: jsonHeaders(), body: JSON.stringify(body) }, "Mode enregistré");
+  if (ok) { loadChargers(); }
 }
-
+async function saveAuthMode(id) {
+  const auth_mode = document.getElementById("authmode-" + id).value;
+  await apiCall(`api/chargers/${id}/auth-mode`, { method: "PUT", headers: jsonHeaders(), body: JSON.stringify({ auth_mode }) }, "Autorisation enregistrée");
+}
 async function saveTariff(id) {
   const val = document.getElementById("tariff-select-" + id).value;
-  const tariff_plan_id = val ? parseInt(val, 10) : null;
-  const resp = await fetch(`api/chargers/${id}/tariff`, {
-    method: "PUT",
-    headers: { ...authHeaders(), "Content-Type": "application/json" },
-    body: JSON.stringify({ tariff_plan_id }),
-  });
-  if (!resp.ok) alert("Erreur lors de l'enregistrement du tarif");
+  await apiCall(`api/chargers/${id}/tariff`, { method: "PUT", headers: jsonHeaders(), body: JSON.stringify({ tariff_plan_id: val ? parseInt(val, 10) : null }) }, "Tarif enregistré");
 }
 
 async function openConnectorModal(chargerId, connectorId, isLocal, silent) {
   openModalConnector = { chargerId, connectorId, isLocal };
-  if (!silent) openModal("chargement...");
-
-  const [sessionsResp, metersResp, vehiclesResp] = await Promise.all([
-    fetch(`api/chargers/${chargerId}/sessions?connector_id=${connectorId}`, { headers: authHeaders() }),
-    fetch(`api/chargers/${chargerId}/metervalues?connector_id=${connectorId}&limit=10`, { headers: authHeaders() }),
-    fetch(`api/vehicles`, { headers: authHeaders() }),
+  if (!silent) openModal(`<div class="empty">Chargement…</div>`);
+  const [sessions, meters, vehicles] = await Promise.all([
+    fetch(`api/chargers/${chargerId}/sessions?connector_id=${connectorId}`, { headers: authHeaders() }).then(r => r.json()),
+    fetch(`api/chargers/${chargerId}/metervalues?connector_id=${connectorId}&limit=10`, { headers: authHeaders() }).then(r => r.json()),
+    fetch(`api/vehicles`, { headers: authHeaders() }).then(r => r.json()),
   ]);
-  const sessions = await sessionsResp.json();
-  const meters = await metersResp.json();
-  const vehiclesWithTag = (await vehiclesResp.json()).filter(v => v.id_tag);
+  const activeSessions = sessions.filter(s => s.status === "active");
 
-  let html = `<div class="row header">
-    <h2>${chargerId} · Connecteur ${connectorId}</h2>
-    <button onclick="closeModal()">✕</button>
-  </div>`;
+  let html = `<div class="modal-head"><h2>${esc(chargerId)} · Conn. ${connectorId}</h2>
+    <button class="btn btn-icon btn-ghost" onclick="closeModal()"><svg><use href="#i-close"/></svg></button></div>`;
 
   if (isLocal) {
-    const activeSessions = sessions.filter(s => s.status === "active");
-    html += `<div class="row">
-      <select id="modal-vehicle" onchange="onModalVehicleChange()">
-        <option value="">idTag manuel</option>
-        ${vehiclesWithTag.map(v => `<option value="${v.id_tag}">${v.name}</option>`).join("")}
-      </select>
-      <input id="modal-idtag" placeholder="idTag" style="width:100px">
-      <button onclick="startCharge('${chargerId}', ${connectorId})">Démarrer</button>
-      <select id="modal-txn">
-        ${activeSessions.length === 0
-          ? '<option value="">(aucune session active)</option>'
-          : activeSessions.map(s => `<option value="${s.id}">#${s.id} · depuis ${formatDateTime(s.start_time)}</option>`).join("")}
-      </select>
-      <button onclick="stopCharge('${chargerId}', ${connectorId})" ${activeSessions.length === 0 ? "disabled" : ""}>Arrêter</button>
+    html += `<div class="card" style="padding:.8rem .9rem">
+      <div class="cluster center">
+        <label class="field"><span>Véhicule</span>
+          <select id="modal-vehicle" style="min-width:150px"><option value="">(véhicule ?)</option>
+            ${vehicles.map(v => `<option value="${v.id}">${esc(v.name)}</option>`).join("")}</select></label>
+        <button class="btn btn-primary btn-sm" onclick="startCharge('${esc(chargerId)}', ${connectorId})"><svg><use href="#i-play"/></svg>Démarrer</button>
+        <div style="flex:1"></div>
+        <label class="field"><span>Session active</span>
+          <select id="modal-txn">
+            ${activeSessions.length ? activeSessions.map(s => `<option value="${s.id}">#${s.id} · ${formatDateTime(s.start_time)}</option>`).join("") : `<option value="">(aucune)</option>`}
+          </select></label>
+        <button class="btn btn-danger btn-sm" onclick="stopCharge('${esc(chargerId)}', ${connectorId})" ${activeSessions.length ? "" : "disabled"}><svg><use href="#i-stop"/></svg>Arrêter</button>
+      </div>
+      <details style="margin-top:.6rem"><summary class="tiny muted" style="cursor:pointer">Avancé : forcer un idTag précis</summary>
+        <input id="modal-idtag" placeholder="idTag (laisser vide = véhicule ci-dessus)" style="margin-top:.4rem; width:100%"></details>
     </div>`;
   } else {
-    html += `<p><em>Pilotage indisponible : cette borne est en mode relais.</em></p>`;
+    html += `<div class="card"><div class="empty">Pilotage indisponible : cette borne est en mode relais.</div></div>`;
   }
 
-  html += `<p><b>Sessions récentes</b></p><table><thead><tr>
-    <th>#</th><th>Début</th><th>Fin</th><th>kWh</th><th>Coût</th><th>Statut</th>
-  </tr></thead><tbody>`;
-  for (const s of sessions.slice(0, 10)) {
-    const kwh = (s.energy_wh / 1000).toFixed(2);
-    const cost = s.cost != null ? s.cost.toFixed(2) + " €" : "-";
-    html += `<tr><td>${s.id}</td><td>${formatDateTime(s.start_time)}</td>
-      <td>${formatDateTime(s.stop_time)}</td><td>${kwh}</td><td>${cost}</td><td>${s.status}</td></tr>`;
-  }
-  if (sessions.length === 0) html += `<tr><td colspan="6"><em>Aucune session</em></td></tr>`;
-  html += `</tbody></table>`;
+  html += `<div class="section-title">Sessions récentes</div><div class="table-wrap"><table><thead><tr>
+    <th>#</th><th>Début</th><th>Fin</th><th>kWh</th><th>Coût</th><th>Statut</th></tr></thead><tbody>
+    ${sessions.slice(0, 10).map(s => `<tr><td>${s.id}</td><td>${formatDateTime(s.start_time)}</td><td>${formatDateTime(s.stop_time)}</td><td>${kWh(s.energy_wh)}</td><td>${eur(s.cost)}</td><td><span class="badge ${s.status === "active" ? "Charging" : "off"}">${s.status}</span></td></tr>`).join("") || `<tr><td colspan="6"><span class="empty">Aucune session</span></td></tr>`}
+  </tbody></table></div>`;
 
-  html += `<p><b>Dernières valeurs de compteur</b></p><table><thead><tr>
-    <th>Horodatage</th><th>Grandeur</th><th>Valeur</th><th>Unité</th>
-  </tr></thead><tbody>`;
-  for (const m of meters) {
-    html += `<tr><td>${formatDateTime(m.timestamp)}</td><td>${m.measurand}</td><td>${m.value}</td><td>${m.unit || "-"}</td></tr>`;
-  }
-  if (meters.length === 0) html += `<tr><td colspan="4"><em>Aucune valeur</em></td></tr>`;
-  html += `</tbody></table>`;
+  html += `<div class="section-title">Dernières valeurs de compteur</div><div class="table-wrap"><table><thead><tr>
+    <th>Horodatage</th><th>Grandeur</th><th>Valeur</th><th>Unité</th></tr></thead><tbody>
+    ${meters.map(m => `<tr><td>${formatDateTime(m.timestamp)}</td><td>${esc(m.measurand)}</td><td>${m.value}</td><td>${esc(m.unit || "–")}</td></tr>`).join("") || `<tr><td colspan="4"><span class="empty">Aucune valeur</span></td></tr>`}
+  </tbody></table></div>`;
 
   openModal(html);
 }
-
-function onModalVehicleChange() {
-  const select = document.getElementById("modal-vehicle");
-  const idtagInput = document.getElementById("modal-idtag");
-  if (select.value) {
-    idtagInput.value = select.value;
-    idtagInput.disabled = true;
-  } else {
-    idtagInput.disabled = false;
-    idtagInput.value = "";
-  }
+async function startCharge(chargerId, connectorId) {
+  const idtagEl = document.getElementById("modal-idtag");
+  const id_tag = idtagEl && idtagEl.value.trim() ? idtagEl.value.trim() : null;
+  const vsel = document.getElementById("modal-vehicle");
+  const vehicle_id = vsel && vsel.value ? parseInt(vsel.value, 10) : null;
+  const { ok } = await apiCall(`api/chargers/${chargerId}/connectors/${connectorId}/start`,
+    { method: "POST", headers: jsonHeaders(), body: JSON.stringify({ vehicle_id, id_tag }) }, "Démarrage demandé");
+  if (ok) openConnectorModal(chargerId, connectorId, true, true);
 }
-
-async function startCharge(id, connectorId) {
-  const id_tag = document.getElementById("modal-idtag").value || "WEBADMIN";
-  const resp = await fetch(`api/chargers/${id}/connectors/${connectorId}/start`, {
-    method: "POST",
-    headers: { ...authHeaders(), "Content-Type": "application/json" },
-    body: JSON.stringify({ id_tag }),
-  });
-  const data = await resp.json().catch(() => ({}));
-  alert(resp.ok ? "Démarrage : " + data.status : "Erreur : " + (data.detail || resp.status));
-}
-
-async function stopCharge(id, connectorId) {
+async function stopCharge(chargerId, connectorId) {
   const transaction_id = parseInt(document.getElementById("modal-txn").value, 10);
-  const resp = await fetch(`api/chargers/${id}/connectors/${connectorId}/stop`, {
-    method: "POST",
-    headers: { ...authHeaders(), "Content-Type": "application/json" },
-    body: JSON.stringify({ transaction_id }),
-  });
-  const data = await resp.json().catch(() => ({}));
-  alert(resp.ok ? "Arrêt : " + data.status : "Erreur : " + (data.detail || resp.status));
+  const { ok } = await apiCall(`api/chargers/${chargerId}/connectors/${connectorId}/stop`,
+    { method: "POST", headers: jsonHeaders(), body: JSON.stringify({ transaction_id }) }, "Arrêt demandé");
+  if (ok) openConnectorModal(chargerId, connectorId, true, true);
 }
 
-// --- Véhicules ---
-
-let cachedVehicles = [];
-let editingVehicle = null;
-
-async function loadVehicles() {
-  const resp = await fetch("api/vehicles", { headers: authHeaders() });
-  cachedVehicles = await resp.json();
-  renderVehicles();
-}
-
+/* ========================= VÉHICULES ========================= */
+let cachedVehicles = [], editingVehicle = null;
+async function loadVehicles() { cachedVehicles = await fetch("api/vehicles", { headers: authHeaders() }).then(r => r.json()); renderVehicles(); }
 function renderVehicles() {
-  const tbody = document.querySelector("#vehicles-table tbody");
-  tbody.innerHTML = "";
-  for (const v of cachedVehicles) {
-    const tr = document.createElement("tr");
-    if (editingVehicle === v.id) {
-      tr.innerHTML = `
-        <td><input id="edit-veh-name-${v.id}" value="${v.name}" style="width:140px"></td>
-        <td><input id="edit-veh-idtag-${v.id}" value="${v.id_tag || ""}" style="width:100px"></td>
-        <td><input id="edit-veh-battery-${v.id}" type="number" step="0.1" value="${v.battery_capacity_kwh ?? ""}" style="width:80px"></td>
-        <td>
-          <a class="link" onclick="saveVehicleEdit(${v.id})">enregistrer</a>
-          <a class="link" onclick="editingVehicle=null; renderVehicles();">annuler</a>
-        </td>`;
-    } else {
-      tr.innerHTML = `<td>${v.name}</td><td>${v.id_tag || "-"}</td><td>${v.battery_capacity_kwh ?? "-"}</td>
-        <td>
-          <a class="link" onclick="editingVehicle=${v.id}; renderVehicles();">modifier</a>
-          <a class="link" onclick="deleteVehicle(${v.id})">supprimer</a>
-        </td>`;
-    }
-    tbody.appendChild(tr);
-  }
-  if (cachedVehicles.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="4"><em>Aucun véhicule pour l\'instant.</em></td></tr>';
-  }
+  const tb = document.querySelector("#vehicles-table tbody");
+  if (!cachedVehicles.length) { tb.innerHTML = `<tr><td colspan="4"><span class="empty">Aucun véhicule pour l'instant.</span></td></tr>`; return; }
+  tb.innerHTML = cachedVehicles.map(v => editingVehicle === v.id ? `
+    <tr>
+      <td data-label="Nom"><input id="ev-name-${v.id}" value="${esc(v.name)}"></td>
+      <td data-label="idTag"><input id="ev-tag-${v.id}" value="${esc(v.id_tag || "")}"></td>
+      <td data-label="Batterie"><input id="ev-bat-${v.id}" type="number" step="0.1" value="${v.battery_capacity_kwh ?? ""}" style="width:90px"></td>
+      <td><span class="cell-actions"><button class="linkbtn" onclick="saveVehicleEdit(${v.id})">Enregistrer</button><button class="linkbtn" onclick="editingVehicle=null; renderVehicles()">Annuler</button></span></td>
+    </tr>` : `
+    <tr>
+      <td data-label="Nom"><b>${esc(v.name)}</b></td>
+      <td data-label="idTag">${v.id_tag ? esc(v.id_tag) : "–"}</td>
+      <td data-label="Batterie">${v.battery_capacity_kwh != null ? v.battery_capacity_kwh + " kWh" : "–"}</td>
+      <td><span class="cell-actions"><button class="linkbtn" onclick="editingVehicle=${v.id}; renderVehicles()">Modifier</button><button class="linkbtn danger" onclick="deleteVehicle(${v.id})">Supprimer</button></span></td>
+    </tr>`).join("");
 }
-
-async function saveVehicleEdit(id) {
-  const name = document.getElementById(`edit-veh-name-${id}`).value.trim();
-  if (!name) { alert("Nom requis"); return; }
-  const id_tag = document.getElementById(`edit-veh-idtag-${id}`).value.trim() || null;
-  const batteryRaw = document.getElementById(`edit-veh-battery-${id}`).value;
-  const battery_capacity_kwh = batteryRaw ? parseFloat(batteryRaw) : null;
-  const resp = await fetch(`api/vehicles/${id}`, {
-    method: "PUT", headers: { ...authHeaders(), "Content-Type": "application/json" },
-    body: JSON.stringify({ name, id_tag, battery_capacity_kwh }),
-  });
-  if (resp.ok) {
-    editingVehicle = null;
-    loadVehicles();
-  } else {
-    const data = await resp.json().catch(() => ({}));
-    alert("Erreur : " + (data.detail || resp.status));
-  }
-}
-
 async function createVehicle() {
   const name = document.getElementById("veh-name").value.trim();
-  if (!name) { alert("Nom requis"); return; }
-  const id_tag = document.getElementById("veh-idtag").value.trim() || null;
-  const batteryRaw = document.getElementById("veh-battery").value;
-  const battery_capacity_kwh = batteryRaw ? parseFloat(batteryRaw) : null;
-  const resp = await fetch("api/vehicles", {
-    method: "POST", headers: { ...authHeaders(), "Content-Type": "application/json" },
-    body: JSON.stringify({ name, id_tag, battery_capacity_kwh }),
-  });
-  if (resp.ok) {
-    document.getElementById("veh-name").value = "";
-    document.getElementById("veh-idtag").value = "";
-    document.getElementById("veh-battery").value = "";
-    loadVehicles();
-  } else {
-    const data = await resp.json().catch(() => ({}));
-    alert("Erreur : " + (data.detail || resp.status));
-  }
+  if (!name) { toast("Nom requis", "err"); return; }
+  const bat = document.getElementById("veh-battery").value;
+  const { ok } = await apiCall("api/vehicles", { method: "POST", headers: jsonHeaders(), body: JSON.stringify({
+    name, id_tag: document.getElementById("veh-idtag").value.trim() || null, battery_capacity_kwh: bat ? parseFloat(bat) : null }) }, "Véhicule ajouté");
+  if (ok) { ["veh-name", "veh-idtag", "veh-battery"].forEach(i => document.getElementById(i).value = ""); loadVehicles(); }
 }
-
+async function saveVehicleEdit(id) {
+  const name = document.getElementById(`ev-name-${id}`).value.trim();
+  if (!name) { toast("Nom requis", "err"); return; }
+  const bat = document.getElementById(`ev-bat-${id}`).value;
+  const { ok } = await apiCall(`api/vehicles/${id}`, { method: "PUT", headers: jsonHeaders(), body: JSON.stringify({
+    name, id_tag: document.getElementById(`ev-tag-${id}`).value.trim() || null, battery_capacity_kwh: bat ? parseFloat(bat) : null }) }, "Enregistré");
+  if (ok) { editingVehicle = null; loadVehicles(); }
+}
 async function deleteVehicle(id) {
   if (!confirm("Supprimer ce véhicule ?")) return;
   await fetch(`api/vehicles/${id}`, { method: "DELETE", headers: authHeaders() });
   loadVehicles();
 }
 
-// --- Tarifs (abonnements) ---
-
-function dayLabels(csv) {
-  const names = ["lun", "mar", "mer", "jeu", "ven", "sam", "dim"];
-  return csv.split(",").filter(x => x !== "").map(d => names[parseInt(d, 10)]).join(" ");
-}
-
-const PERIOD_COLORS = ["#2563eb", "#16a34a", "#d97706", "#dc2626", "#7c3aed", "#0891b2", "#db2777"];
-
+/* ========================= ABONNEMENTS ========================= */
+function dayLabels(csv) { const n = ["lun", "mar", "mer", "jeu", "ven", "sam", "dim"]; return csv.split(",").filter(x => x !== "").map(d => n[+d]).join(" "); }
+const PERIOD_COLORS = ["#059669", "#0ea5e9", "#d97706", "#dc2626", "#7c3aed", "#0891b2", "#db2777"];
 function planScheduleSvg(plan) {
-  const width = 640, dayH = 16, gap = 3, labelW = 30;
-  const height = 7 * (dayH + gap);
-  const barW = width - labelW;
+  const width = 640, dayH = 15, gap = 4, labelW = 32, height = 7 * (dayH + gap), barW = width - labelW;
   const dayNames = ["Lun", "Mar", "Mer", "Jeu", "Ven", "Sam", "Dim"];
   let rects = "";
   for (let d = 0; d < 7; d++) {
     const y = d * (dayH + gap);
-    rects += `<rect x="${labelW}" y="${y}" width="${barW}" height="${dayH}" fill="#88888844" />`;
-    plan.periods.forEach((period, i) => {
-      const days = period.days_of_week.split(",").filter(x => x !== "").map(Number);
+    rects += `<rect x="${labelW}" y="${y}" width="${barW}" height="${dayH}" rx="3" fill="var(--surface-3)"/>`;
+    plan.periods.forEach((p, i) => {
+      const days = p.days_of_week.split(",").filter(x => x !== "").map(Number);
       if (!days.includes(d)) return;
-      const [sh, sm] = period.start_time.split(":").map(Number);
-      const [eh, em] = period.end_time.split(":").map(Number);
-      const startPct = (sh + sm / 60) / 24;
-      const endPct = (eh + em / 60) / 24;
-      const color = PERIOD_COLORS[i % PERIOD_COLORS.length];
-      if (endPct > startPct) {
-        rects += `<rect x="${labelW + startPct * barW}" y="${y}" width="${(endPct - startPct) * barW}" height="${dayH}" fill="${color}" />`;
-      } else {
-        rects += `<rect x="${labelW + startPct * barW}" y="${y}" width="${(1 - startPct) * barW}" height="${dayH}" fill="${color}" />`;
-        rects += `<rect x="${labelW}" y="${y}" width="${endPct * barW}" height="${dayH}" fill="${color}" />`;
-      }
+      const [sh, sm] = p.start_time.split(":").map(Number), [eh, em] = p.end_time.split(":").map(Number);
+      const s = (sh + sm / 60) / 24, e = (eh + em / 60) / 24, col = PERIOD_COLORS[i % PERIOD_COLORS.length];
+      if (e > s) rects += `<rect x="${labelW + s * barW}" y="${y}" width="${(e - s) * barW}" height="${dayH}" rx="3" fill="${col}"/>`;
+      else { rects += `<rect x="${labelW + s * barW}" y="${y}" width="${(1 - s) * barW}" height="${dayH}" rx="3" fill="${col}"/>`; rects += `<rect x="${labelW}" y="${y}" width="${e * barW}" height="${dayH}" rx="3" fill="${col}"/>`; }
     });
-    rects += `<text x="0" y="${y + dayH - 4}" font-size="10" fill="currentColor">${dayNames[d]}</text>`;
+    rects += `<text x="0" y="${y + dayH - 3}" font-size="10" fill="var(--text-muted)">${dayNames[d]}</text>`;
   }
-  const legend = plan.periods.map((p, i) =>
-    `<span style="display:inline-flex;align-items:center;gap:4px;margin-right:10px">
-      <span style="width:10px;height:10px;background:${PERIOD_COLORS[i % PERIOD_COLORS.length]};display:inline-block;border-radius:2px"></span>
-      ${p.name} (${p.price}€)
-    </span>`
-  ).join("") + `<span style="display:inline-flex;align-items:center;gap:4px">
-      <span style="width:10px;height:10px;background:#88888844;display:inline-block;border-radius:2px"></span>
-      reste (${plan.fixed_price != null ? plan.fixed_price + "€" : "non défini"})
-    </span>`;
-  return `<svg viewBox="0 0 ${width} ${height}" style="width:100%;max-width:480px;height:auto;display:block;margin:0.5rem 0">${rects}</svg>
-    <div style="font-size:0.75rem;color:var(--muted)">${legend}</div>`;
+  const legend = plan.periods.map((p, i) => `<span class="badge" style="background:${PERIOD_COLORS[i % PERIOD_COLORS.length]}22;color:${PERIOD_COLORS[i % PERIOD_COLORS.length]}"><span class="dot"></span>${esc(p.name)} · ${p.price}€</span>`).join(" ")
+    + ` <span class="badge off"><span class="dot"></span>reste · ${plan.fixed_price != null ? plan.fixed_price + "€" : "n/d"}</span>`;
+  return `<svg viewBox="0 0 ${width} ${height}" style="width:100%;max-width:480px;height:auto;display:block;margin:.6rem 0">${rects}</svg><div class="cluster" style="gap:.3rem">${legend}</div>`;
 }
 
-let cachedPlans = [];
-let editingPlanId = null;
-let editingPeriod = null; // { planId, periodId }
-
-async function loadTariffs() {
-  const resp = await fetch("api/tariffs", { headers: authHeaders() });
-  cachedPlans = await resp.json();
-  renderTariffs();
-}
-
+let cachedPlans = [], editingPlanId = null, editingPeriod = null;
+async function loadTariffs() { cachedPlans = await fetch("api/tariffs", { headers: authHeaders() }).then(r => r.json()); renderTariffs(); }
 function renderTariffs() {
-  const container = document.getElementById("tariffs-list");
-  container.innerHTML = "";
-  for (const p of cachedPlans) {
-    const div = document.createElement("div");
-    div.className = "plan-card";
+  const c = document.getElementById("tariffs-list");
+  if (!cachedPlans.length) { c.innerHTML = `<div class="card"><div class="empty">Aucun abonnement pour l'instant.</div></div>`; return; }
+  c.innerHTML = cachedPlans.map(p => {
+    if (editingPlanId === p.id) return `<div class="card"><div class="cluster">
+      <label class="field"><span>Nom</span><input id="ep-name-${p.id}" value="${esc(p.name)}"></label>
+      <label class="field"><span>Prix par défaut €/kWh</span><input id="ep-fixed-${p.id}" type="number" step="0.01" value="${p.fixed_price ?? ""}" style="width:150px"></label>
+      <label class="field"><span>Puissance kVA</span><input id="ep-kva-${p.id}" type="number" step="0.1" value="${p.subscribed_power_kva ?? ""}" style="width:130px"></label>
+      <div class="cluster" style="gap:.4rem"><button class="btn btn-primary btn-sm" onclick="saveTariffEdit(${p.id})">Enregistrer</button><button class="btn btn-sm" onclick="editingPlanId=null; renderTariffs()">Annuler</button></div>
+    </div></div>`;
 
-    if (editingPlanId === p.id) {
-      div.innerHTML = `<div class="row">
-        <input id="edit-plan-name-${p.id}" value="${p.name}" style="width:160px">
-        <input id="edit-plan-fixed-${p.id}" type="number" step="0.01" value="${p.fixed_price ?? ""}" placeholder="Prix par défaut €/kWh" style="width:170px">
-        <input id="edit-plan-kva-${p.id}" type="number" step="0.1" value="${p.subscribed_power_kva ?? ""}" placeholder="Puissance kVA" style="width:150px">
-        <button onclick="saveTariffEdit(${p.id})">Enregistrer</button>
-        <button onclick="editingPlanId=null; renderTariffs();">Annuler</button>
-      </div>`;
-      container.appendChild(div);
-      continue;
-    }
-
-    let html = `<div class="row" style="justify-content:space-between">
-      <div>
-        <b>${p.name}</b> ${p.is_default ? '<span class="badge on">actif</span>' : ""}
-        <div style="font-size:0.85rem; color:var(--muted)">
-          Prix par défaut : ${p.fixed_price != null ? p.fixed_price + " €/kWh" : "non défini"}
-          ${p.subscribed_power_kva != null ? ` · Puissance souscrite : ${p.subscribed_power_kva} kVA` : ""}
-        </div>
-      </div>
-      <div class="row">
-        ${!p.is_default ? `<a class="link" onclick="setDefaultTariff(${p.id})">définir comme actif</a>` : ""}
-        <a class="link" onclick="editingPlanId=${p.id}; renderTariffs();">modifier</a>
-        <a class="link" onclick="deleteTariff(${p.id})">supprimer</a>
-      </div>
-    </div>`;
-
-    html += planScheduleSvg(p);
-
-    html += `<table><thead><tr><th>Période</th><th>€/kWh</th><th>Jours</th><th>Début</th><th>Fin</th><th></th></tr></thead><tbody>`;
-    html += `<tr style="color:var(--muted); font-style:italic">
-      <td>Prix par défaut (reste de la semaine)</td><td>${p.fixed_price ?? "-"}</td><td>7j/7</td><td>-</td><td>-</td><td></td>
-    </tr>`;
-    for (const period of p.periods) {
-      if (editingPeriod && editingPeriod.planId === p.id && editingPeriod.periodId === period.id) {
-        const checkedDays = period.days_of_week.split(",");
-        html += `<tr><td colspan="6"><div class="row">
-          <input id="edit-period-name-${period.id}" value="${period.name}" style="width:110px">
-          <input id="edit-period-price-${period.id}" type="number" step="0.01" value="${period.price}" style="width:80px">
-          ${[0, 1, 2, 3, 4, 5, 6].map(d => `<label style="font-size:0.8rem"><input type="checkbox" class="edit-period-day-${period.id}" value="${d}" ${checkedDays.includes(String(d)) ? "checked" : ""}> ${dayLabels(String(d))}</label>`).join("")}
-          <input id="edit-period-start-${period.id}" type="time" value="${period.start_time}">
-          <input id="edit-period-end-${period.id}" type="time" value="${period.end_time}">
-          <button onclick="savePeriodEdit(${p.id}, ${period.id})">Enregistrer</button>
-          <button onclick="editingPeriod=null; renderTariffs();">Annuler</button>
+    let periodsRows = `<tr class="muted" style="font-style:italic"><td data-label="Période">Prix par défaut</td><td data-label="€/kWh">${p.fixed_price ?? "–"}</td><td data-label="Jours">7j/7</td><td data-label="Début">–</td><td data-label="Fin">–</td><td></td></tr>`;
+    for (const per of p.periods) {
+      if (editingPeriod && editingPeriod.planId === p.id && editingPeriod.periodId === per.id) {
+        const cd = per.days_of_week.split(",");
+        periodsRows += `<tr><td colspan="6"><div class="cluster">
+          <label class="field"><span>Nom</span><input id="epr-name-${per.id}" value="${esc(per.name)}" style="width:110px"></label>
+          <label class="field"><span>€/kWh</span><input id="epr-price-${per.id}" type="number" step="0.01" value="${per.price}" style="width:80px"></label>
+          <div class="field"><span>Jours</span><div class="cluster" style="gap:.3rem">${[0, 1, 2, 3, 4, 5, 6].map(d => `<label class="tiny" style="display:flex;gap:.2rem;align-items:center"><input type="checkbox" class="eprd-${per.id}" value="${d}" ${cd.includes(String(d)) ? "checked" : ""}>${dayLabels(String(d))}</label>`).join("")}</div></div>
+          <label class="field"><span>Début</span><input id="epr-start-${per.id}" type="time" value="${per.start_time}"></label>
+          <label class="field"><span>Fin</span><input id="epr-end-${per.id}" type="time" value="${per.end_time}"></label>
+          <div class="cluster" style="gap:.4rem"><button class="btn btn-primary btn-sm" onclick="savePeriodEdit(${p.id}, ${per.id})">OK</button><button class="btn btn-sm" onclick="editingPeriod=null; renderTariffs()">Annuler</button></div>
         </div></td></tr>`;
       } else {
-        html += `<tr><td>${period.name}</td><td>${period.price}</td><td>${dayLabels(period.days_of_week)}</td>
-          <td>${period.start_time}</td><td>${period.end_time}</td>
-          <td>
-            <a class="link" onclick="editingPeriod={planId:${p.id},periodId:${period.id}}; renderTariffs();">modifier</a>
-            <a class="link" onclick="deletePeriod(${p.id}, ${period.id})">supprimer</a>
-          </td></tr>`;
+        periodsRows += `<tr><td data-label="Période">${esc(per.name)}</td><td data-label="€/kWh">${per.price}</td><td data-label="Jours">${dayLabels(per.days_of_week)}</td><td data-label="Début">${per.start_time}</td><td data-label="Fin">${per.end_time}</td>
+          <td><span class="cell-actions"><button class="linkbtn" onclick="editingPeriod={planId:${p.id},periodId:${per.id}}; renderTariffs()">Modifier</button><button class="linkbtn danger" onclick="deletePeriod(${p.id}, ${per.id})">Suppr.</button></span></td></tr>`;
       }
     }
-    html += `</tbody></table>`;
-    html += `<div class="row">
-      <input id="period-name-${p.id}" placeholder="Nom (ex. Creuses)" style="width:110px">
-      <input id="period-price-${p.id}" placeholder="€/kWh" type="number" step="0.01" style="width:80px">
-      ${[0, 1, 2, 3, 4, 5, 6].map(d => `<label style="font-size:0.8rem"><input type="checkbox" class="period-day-${p.id}" value="${d}" checked> ${dayLabels(String(d))}</label>`).join("")}
-      <input id="period-start-${p.id}" type="time" value="23:00">
-      <input id="period-end-${p.id}" type="time" value="07:00">
-      <button onclick="addPeriod(${p.id})">+ ajouter une plage</button>
-    </div>`;
-    div.innerHTML = html;
-    container.appendChild(div);
-  }
-  if (cachedPlans.length === 0) {
-    container.innerHTML = "<p><em>Aucun abonnement pour l'instant.</em></p>";
-  }
-}
 
+    return `<div class="card">
+      <div class="spread">
+        <div><div class="cluster center" style="gap:.5rem"><b>${esc(p.name)}</b>${p.is_default ? `<span class="badge ok">actif</span>` : ""}</div>
+          <div class="small muted" style="margin-top:.25rem">Prix par défaut : ${p.fixed_price != null ? p.fixed_price + " €/kWh" : "non défini"}${p.subscribed_power_kva != null ? ` · ${p.subscribed_power_kva} kVA souscrits` : ""}</div></div>
+        <div class="cell-actions">${!p.is_default ? `<button class="linkbtn" onclick="setDefaultTariff(${p.id})">Définir actif</button>` : ""}<button class="linkbtn" onclick="editingPlanId=${p.id}; renderTariffs()">Modifier</button><button class="linkbtn danger" onclick="deleteTariff(${p.id})">Supprimer</button></div>
+      </div>
+      ${planScheduleSvg(p)}
+      <div class="table-wrap"><table class="responsive"><thead><tr><th>Période</th><th>€/kWh</th><th>Jours</th><th>Début</th><th>Fin</th><th></th></tr></thead><tbody>${periodsRows}</tbody></table></div>
+      <div class="divider"></div>
+      <div class="cluster">
+        <label class="field"><span>Nom</span><input id="pn-${p.id}" placeholder="ex. Creuses" style="width:110px"></label>
+        <label class="field"><span>€/kWh</span><input id="pp-${p.id}" type="number" step="0.01" style="width:80px"></label>
+        <div class="field"><span>Jours</span><div class="cluster" style="gap:.3rem">${[0, 1, 2, 3, 4, 5, 6].map(d => `<label class="tiny" style="display:flex;gap:.2rem;align-items:center"><input type="checkbox" class="pd-${p.id}" value="${d}" checked>${dayLabels(String(d))}</label>`).join("")}</div></div>
+        <label class="field"><span>Début</span><input id="ps-${p.id}" type="time" value="23:00"></label>
+        <label class="field"><span>Fin</span><input id="pe-${p.id}" type="time" value="07:00"></label>
+        <button class="btn btn-sm" onclick="addPeriod(${p.id})"><svg><use href="#i-plus"/></svg>Ajouter une plage</button>
+      </div>
+    </div>`;
+  }).join("");
+}
 async function createTariff() {
   const name = document.getElementById("tariff-name").value.trim();
-  if (!name) { alert("Nom requis"); return; }
-  const fixedRaw = document.getElementById("tariff-fixed").value;
-  const fixed_price = fixedRaw ? parseFloat(fixedRaw) : null;
-  const kvaRaw = document.getElementById("tariff-kva").value;
-  const subscribed_power_kva = kvaRaw ? parseFloat(kvaRaw) : null;
-  const resp = await fetch("api/tariffs", {
-    method: "POST", headers: { ...authHeaders(), "Content-Type": "application/json" },
-    body: JSON.stringify({ name, fixed_price, subscribed_power_kva, is_default: false }),
-  });
-  if (resp.ok) {
-    document.getElementById("tariff-name").value = "";
-    document.getElementById("tariff-fixed").value = "";
-    document.getElementById("tariff-kva").value = "";
-    loadTariffs();
-  } else {
-    alert("Erreur lors de la création de l'abonnement");
-  }
+  if (!name) { toast("Nom requis", "err"); return; }
+  const f = document.getElementById("tariff-fixed").value, k = document.getElementById("tariff-kva").value;
+  const { ok } = await apiCall("api/tariffs", { method: "POST", headers: jsonHeaders(), body: JSON.stringify({ name, fixed_price: f ? parseFloat(f) : null, subscribed_power_kva: k ? parseFloat(k) : null, is_default: false }) }, "Abonnement créé");
+  if (ok) { ["tariff-name", "tariff-fixed", "tariff-kva"].forEach(i => document.getElementById(i).value = ""); loadTariffs(); }
 }
-
 async function saveTariffEdit(planId) {
   const plan = cachedPlans.find(p => p.id === planId);
-  const name = document.getElementById(`edit-plan-name-${planId}`).value.trim();
-  if (!name) { alert("Nom requis"); return; }
-  const fixedRaw = document.getElementById(`edit-plan-fixed-${planId}`).value;
-  const fixed_price = fixedRaw ? parseFloat(fixedRaw) : null;
-  const kvaRaw = document.getElementById(`edit-plan-kva-${planId}`).value;
-  const subscribed_power_kva = kvaRaw ? parseFloat(kvaRaw) : null;
-  const resp = await fetch(`api/tariffs/${planId}`, {
-    method: "PUT", headers: { ...authHeaders(), "Content-Type": "application/json" },
-    body: JSON.stringify({ name, fixed_price, subscribed_power_kva, is_default: plan ? plan.is_default : false }),
-  });
-  if (resp.ok) { editingPlanId = null; loadTariffs(); } else { alert("Erreur lors de l'enregistrement"); }
+  const name = document.getElementById(`ep-name-${planId}`).value.trim();
+  if (!name) { toast("Nom requis", "err"); return; }
+  const f = document.getElementById(`ep-fixed-${planId}`).value, k = document.getElementById(`ep-kva-${planId}`).value;
+  const { ok } = await apiCall(`api/tariffs/${planId}`, { method: "PUT", headers: jsonHeaders(), body: JSON.stringify({ name, fixed_price: f ? parseFloat(f) : null, subscribed_power_kva: k ? parseFloat(k) : null, is_default: plan ? plan.is_default : false }) }, "Enregistré");
+  if (ok) { editingPlanId = null; loadTariffs(); }
 }
-
-async function setDefaultTariff(planId) {
-  await fetch(`api/tariffs/${planId}/set-default`, { method: "POST", headers: authHeaders() });
-  loadTariffs();
-}
-
-async function deleteTariff(id) {
-  if (!confirm("Supprimer cet abonnement ? (les coûts déjà calculés sur des charges terminées ne seront pas affectés)")) return;
-  await fetch(`api/tariffs/${id}`, { method: "DELETE", headers: authHeaders() });
-  loadTariffs();
-}
-
+async function setDefaultTariff(id) { await fetch(`api/tariffs/${id}/set-default`, { method: "POST", headers: authHeaders() }); loadTariffs(); }
+async function deleteTariff(id) { if (!confirm("Supprimer cet abonnement ? (les coûts déjà figés ne changent pas)")) return; await fetch(`api/tariffs/${id}`, { method: "DELETE", headers: authHeaders() }); loadTariffs(); }
 async function addPeriod(planId) {
-  const name = document.getElementById(`period-name-${planId}`).value.trim() || "Période";
-  const price = parseFloat(document.getElementById(`period-price-${planId}`).value);
-  const start_time = document.getElementById(`period-start-${planId}`).value;
-  const end_time = document.getElementById(`period-end-${planId}`).value;
-  const days = Array.from(document.querySelectorAll(`.period-day-${planId}:checked`)).map(el => el.value).join(",");
-  if (isNaN(price) || !start_time || !end_time) { alert("Prix, début et fin requis"); return; }
-  const resp = await fetch(`api/tariffs/${planId}/periods`, {
-    method: "POST", headers: { ...authHeaders(), "Content-Type": "application/json" },
-    body: JSON.stringify({ name, price, days_of_week: days, start_time, end_time }),
-  });
-  if (resp.ok) { loadTariffs(); } else { alert("Erreur lors de l'ajout de la période"); }
+  const price = parseFloat(document.getElementById(`pp-${planId}`).value);
+  const start_time = document.getElementById(`ps-${planId}`).value, end_time = document.getElementById(`pe-${planId}`).value;
+  const days = Array.from(document.querySelectorAll(`.pd-${planId}:checked`)).map(e => e.value).join(",");
+  if (isNaN(price) || !start_time || !end_time) { toast("Prix, début et fin requis", "err"); return; }
+  const { ok } = await apiCall(`api/tariffs/${planId}/periods`, { method: "POST", headers: jsonHeaders(), body: JSON.stringify({ name: document.getElementById(`pn-${planId}`).value.trim() || "Période", price, days_of_week: days, start_time, end_time }) }, "Plage ajoutée");
+  if (ok) loadTariffs();
 }
-
 async function savePeriodEdit(planId, periodId) {
-  const name = document.getElementById(`edit-period-name-${periodId}`).value.trim() || "Période";
-  const price = parseFloat(document.getElementById(`edit-period-price-${periodId}`).value);
-  const start_time = document.getElementById(`edit-period-start-${periodId}`).value;
-  const end_time = document.getElementById(`edit-period-end-${periodId}`).value;
-  const days = Array.from(document.querySelectorAll(`.edit-period-day-${periodId}:checked`)).map(el => el.value).join(",");
-  if (isNaN(price) || !start_time || !end_time) { alert("Prix, début et fin requis"); return; }
-  const resp = await fetch(`api/tariffs/${planId}/periods/${periodId}`, {
-    method: "PUT", headers: { ...authHeaders(), "Content-Type": "application/json" },
-    body: JSON.stringify({ name, price, days_of_week: days, start_time, end_time }),
-  });
-  if (resp.ok) { editingPeriod = null; loadTariffs(); } else { alert("Erreur lors de l'enregistrement de la période"); }
+  const price = parseFloat(document.getElementById(`epr-price-${periodId}`).value);
+  const start_time = document.getElementById(`epr-start-${periodId}`).value, end_time = document.getElementById(`epr-end-${periodId}`).value;
+  const days = Array.from(document.querySelectorAll(`.eprd-${periodId}:checked`)).map(e => e.value).join(",");
+  if (isNaN(price) || !start_time || !end_time) { toast("Prix, début et fin requis", "err"); return; }
+  const { ok } = await apiCall(`api/tariffs/${planId}/periods/${periodId}`, { method: "PUT", headers: jsonHeaders(), body: JSON.stringify({ name: document.getElementById(`epr-name-${periodId}`).value.trim() || "Période", price, days_of_week: days, start_time, end_time }) }, "Enregistré");
+  if (ok) { editingPeriod = null; loadTariffs(); }
 }
+async function deletePeriod(planId, periodId) { await fetch(`api/tariffs/${planId}/periods/${periodId}`, { method: "DELETE", headers: authHeaders() }); loadTariffs(); }
 
-async function deletePeriod(planId, periodId) {
-  await fetch(`api/tariffs/${planId}/periods/${periodId}`, { method: "DELETE", headers: authHeaders() });
-  loadTariffs();
-}
-
-// --- Historique ---
-
-let cachedHistoryVehicles = [];
-let cachedHistory = [];
-let editingHistoryId = null;
-
+/* ========================= HISTORIQUE ========================= */
+let cachedHistoryVehicles = [], cachedHistory = [], editingHistoryId = null;
 async function populateVehicleFilter() {
-  const resp = await fetch("api/vehicles", { headers: authHeaders() });
-  cachedHistoryVehicles = await resp.json();
-  const select = document.getElementById("hist-vehicle-filter");
-  select.innerHTML = '<option value="">Tous</option>' +
-    cachedHistoryVehicles.map(v => `<option value="${v.id}">${v.name}</option>`).join("");
+  cachedHistoryVehicles = await fetch("api/vehicles", { headers: authHeaders() }).then(r => r.json());
+  const sel = document.getElementById("hist-vehicle-filter");
+  sel.innerHTML = `<option value="">Tous</option>` + cachedHistoryVehicles.map(v => `<option value="${v.id}">${esc(v.name)}</option>`).join("");
 }
-
 async function loadHistory() {
-  const vehicleId = document.getElementById("hist-vehicle-filter").value;
-  let url = "api/history?limit=200";
-  if (vehicleId) url += `&vehicle_id=${vehicleId}`;
-  const resp = await fetch(url, { headers: authHeaders() });
-  cachedHistory = await resp.json();
+  const vid = document.getElementById("hist-vehicle-filter").value;
+  let url = "api/history?limit=200"; if (vid) url += `&vehicle_id=${vid}`;
+  cachedHistory = await fetch(url, { headers: authHeaders() }).then(r => r.json());
   renderHistory();
 }
-
 function renderHistory() {
-  const tbody = document.querySelector("#history-table tbody");
-  tbody.innerHTML = "";
-  for (const s of cachedHistory) {
-    const tr = document.createElement("tr");
-    const kwh = (s.energy_wh / 1000).toFixed(2);
-    const cost = s.cost != null ? s.cost.toFixed(2) + " €" : "-";
-    const duration = s.duration_min != null ? `${Math.floor(s.duration_min / 60)}h${String(Math.round(s.duration_min % 60)).padStart(2, "0")}` : "-";
-
-    if (editingHistoryId === s.id) {
-      tr.innerHTML = `
-        <td>${s.charger_id}</td><td>${s.connector_id}</td>
-        <td>
-          <select id="hist-edit-vehicle-${s.id}">
-            <option value="">(aucun)</option>
-            ${cachedHistoryVehicles.map(v => `<option value="${v.id}" ${s.vehicle_id === v.id ? "selected" : ""}>${v.name}</option>`).join("")}
-          </select>
-        </td>
-        <td>${formatDateTime(s.start_time)}</td><td>${formatDateTime(s.stop_time)}</td><td>${duration}</td>
-        <td>${kwh}</td><td>${cost}</td><td>${s.tariff_plan_name || "-"}</td>
-        <td><input id="hist-edit-km-${s.id}" type="number" step="1" value="${s.odometer_km ?? ""}" style="width:70px"></td>
-        <td><input id="hist-edit-pmin-${s.id}" type="number" step="1" min="0" max="100" value="${s.battery_percent_start ?? ""}" style="width:55px"></td>
-        <td><input id="hist-edit-pmax-${s.id}" type="number" step="1" min="0" max="100" value="${s.battery_percent_end ?? 100}" style="width:55px"></td>
-        <td>
-          <a class="link" onclick="saveHistoryEdit(${s.id})">enregistrer</a>
-          <a class="link" onclick="editingHistoryId=null; renderHistory();">annuler</a>
-        </td>`;
-    } else {
-      tr.innerHTML = `
-        <td>${s.charger_id}</td><td>${s.connector_id}</td><td>${s.vehicle_name || "-"}</td>
-        <td>${formatDateTime(s.start_time)}</td><td>${formatDateTime(s.stop_time)}</td><td>${duration}</td>
-        <td>${kwh}</td><td>${cost}</td><td>${s.tariff_plan_name || "-"}</td>
-        <td>${s.odometer_km ?? "-"}</td>
-        <td>${s.battery_percent_start ?? "-"}</td>
-        <td>${s.battery_percent_end ?? "-"}</td>
-        <td><a class="link" onclick="editingHistoryId=${s.id}; renderHistory();">modifier</a></td>`;
-    }
-    tbody.appendChild(tr);
-  }
-  if (cachedHistory.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="13"><em>Aucune session</em></td></tr>';
-  }
+  const tb = document.querySelector("#history-table tbody");
+  if (!cachedHistory.length) { tb.innerHTML = `<tr><td colspan="13"><span class="empty">Aucune session</span></td></tr>`; return; }
+  tb.innerHTML = cachedHistory.map(s => {
+    const dur = formatDuration(s.duration_min);
+    if (editingHistoryId === s.id) return `<tr>
+      <td data-label="Borne">${esc(s.charger_id)}</td><td data-label="Conn.">${s.connector_id}</td>
+      <td data-label="Véhicule"><select id="he-veh-${s.id}"><option value="">(aucun)</option>${cachedHistoryVehicles.map(v => `<option value="${v.id}" ${s.vehicle_id === v.id ? "selected" : ""}>${esc(v.name)}</option>`).join("")}</select></td>
+      <td data-label="Début">${formatDateTime(s.start_time)}</td><td data-label="Fin">${formatDateTime(s.stop_time)}</td><td data-label="Durée">${dur}</td>
+      <td data-label="kWh">${kWh(s.energy_wh)}</td><td data-label="Coût">${eur(s.cost)}</td><td data-label="Tarif">${esc(s.tariff_plan_name || "–")}</td>
+      <td data-label="km"><input id="he-km-${s.id}" type="number" value="${s.odometer_km ?? ""}" style="width:80px"></td>
+      <td data-label="% min"><input id="he-pmin-${s.id}" type="number" min="0" max="100" value="${s.battery_percent_start ?? ""}" style="width:65px"></td>
+      <td data-label="% max"><input id="he-pmax-${s.id}" type="number" min="0" max="100" value="${s.battery_percent_end ?? 100}" style="width:65px"></td>
+      <td><span class="cell-actions"><button class="linkbtn" onclick="saveHistoryEdit(${s.id})">Enregistrer</button><button class="linkbtn" onclick="editingHistoryId=null; renderHistory()">Annuler</button></span></td>
+    </tr>`;
+    return `<tr>
+      <td data-label="Borne">${esc(s.charger_id)}</td><td data-label="Conn.">${s.connector_id}</td><td data-label="Véhicule">${esc(s.vehicle_name || "–")}</td>
+      <td data-label="Début">${formatDateTime(s.start_time)}</td><td data-label="Fin">${formatDateTime(s.stop_time)}</td><td data-label="Durée">${dur}</td>
+      <td data-label="kWh">${kWh(s.energy_wh)}</td><td data-label="Coût">${eur(s.cost)}</td><td data-label="Tarif">${esc(s.tariff_plan_name || "–")}</td>
+      <td data-label="km">${s.odometer_km ?? "–"}</td><td data-label="% min">${s.battery_percent_start ?? "–"}</td><td data-label="% max">${s.battery_percent_end ?? "–"}</td>
+      <td><button class="linkbtn" onclick="editingHistoryId=${s.id}; renderHistory()">Modifier</button></td>
+    </tr>`;
+  }).join("");
 }
-
 async function saveHistoryEdit(id) {
-  const vehicleRaw = document.getElementById(`hist-edit-vehicle-${id}`).value;
-  const vehicle_id = vehicleRaw ? parseInt(vehicleRaw, 10) : null;
-  const kmRaw = document.getElementById(`hist-edit-km-${id}`).value;
-  const odometer_km = kmRaw !== "" ? parseFloat(kmRaw) : null;
-  const pminRaw = document.getElementById(`hist-edit-pmin-${id}`).value;
-  const battery_percent_start = pminRaw !== "" ? parseFloat(pminRaw) : null;
-  const pmaxRaw = document.getElementById(`hist-edit-pmax-${id}`).value;
-  const battery_percent_end = pmaxRaw !== "" ? parseFloat(pmaxRaw) : null;
-
-  const resp = await fetch(`api/sessions/${id}`, {
-    method: "PUT", headers: { ...authHeaders(), "Content-Type": "application/json" },
-    body: JSON.stringify({ vehicle_id, odometer_km, battery_percent_start, battery_percent_end }),
-  });
-  if (resp.ok) {
-    editingHistoryId = null;
-    loadHistory();
-  } else {
-    const data = await resp.json().catch(() => ({}));
-    alert("Erreur : " + (data.detail || resp.status));
-  }
+  const num = v => v !== "" ? parseFloat(v) : null;
+  const body = {
+    vehicle_id: document.getElementById(`he-veh-${id}`).value ? parseInt(document.getElementById(`he-veh-${id}`).value, 10) : null,
+    odometer_km: num(document.getElementById(`he-km-${id}`).value),
+    battery_percent_start: num(document.getElementById(`he-pmin-${id}`).value),
+    battery_percent_end: num(document.getElementById(`he-pmax-${id}`).value),
+  };
+  const { ok } = await apiCall(`api/sessions/${id}`, { method: "PUT", headers: jsonHeaders(), body: JSON.stringify(body) }, "Enregistré");
+  if (ok) { editingHistoryId = null; loadHistory(); }
 }
 
-if (token) { showApp(); }
+/* ---------- PWA ---------- */
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => { navigator.serviceWorker.register("sw.js").catch(() => {}); });
+}
+
+/* ---------- Démarrage ---------- */
+if (token) showApp();
 </script>
 </body>
 </html>

@@ -14,6 +14,20 @@ class ChargerMode(str, enum.Enum):
     relay = "relay"
 
 
+class AuthMode(str, enum.Enum):
+    """Politique de déclenchement de la charge, par borne (mode local seulement).
+
+    - free       : sans autorisation. Tout idTag est accepté ; la charge peut
+                   démarrer automatiquement au branchement (plug & charge),
+                   sans badge ni bouton. C'est le comportement historique.
+    - authorized : avec autorisation. Seuls un idTag connu (associé à un
+                   véhicule) ou un démarrage explicite depuis l'appli / MQTT
+                   sont acceptés ; un badge inconnu est refusé.
+    """
+    free = "free"
+    authorized = "authorized"
+
+
 class Charger(Base):
     __tablename__ = "chargers"
 
@@ -23,6 +37,9 @@ class Charger(Base):
     serial = Column(String, nullable=True)
     ocpp_version = Column(String, nullable=True)  # "1.6" ou "2.0.1", détecté à la connexion
     mode = Column(Enum(ChargerMode), default=ChargerMode.local, nullable=False)
+    # Politique d'autorisation de charge (mode local). NULL possible sur une
+    # base migrée depuis une version antérieure : interprété comme 'free'.
+    auth_mode = Column(Enum(AuthMode), default=AuthMode.free, nullable=True)
     relay_url = Column(String, nullable=True)  # URL de base du serveur officiel, si mode=relay
     status = Column(String, default="Unknown")  # dernier StatusNotification connu
     tariff_plan_id = Column(Integer, ForeignKey("tariff_plans.id"), nullable=True)
