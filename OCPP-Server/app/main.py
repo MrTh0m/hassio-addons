@@ -135,7 +135,7 @@ async def on_startup():
     asyncio.create_task(mqtt_bridge.run_mqtt_bridge())
 
 
-APP_VERSION = "0.15.0"
+APP_VERSION = "0.15.1"
 
 
 @app.get("/healthz")

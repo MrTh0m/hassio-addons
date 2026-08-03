@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.15.1
+
+- **Démarrage automatique effectif au branchement (mode « sans autorisation »)** : en 0.15.0, une borne en mode `free` passait bien en *Preparing* quand on branchait un véhicule, mais rien ne lançait la charge (le simulateur — comme une borne sans free-vend configuré — n'émet pas de `StartTransaction` de lui-même). Le serveur envoie désormais un `RemoteStartTransaction` dès qu'un connecteur passe en *Preparing* en mode `free`, une seule fois par branchement (nouveau garde-fou `AUTO_START_ATTEMPTED`, réarmé au débranchement). Un arrêt manuel « véhicule encore branché » ne relance donc pas la charge.
+- **Interface plus dense et plus lisible** : cartes, marges de sections et interlignes resserrés ; champs de saisie plus contrastés (nouveau token `--field-border` + légère ombre) ; les formulaires d'ajout (Véhicules, Abonnements) apparaissent comme une zone de saisie distincte (fond teinté + liseré). Sur mobile, séparateurs entre champs dans les cartes issues des tableaux.
+- **Version + lien GitHub visibles** : ajout d'un pied de page (`v… · GitHub`) affiché sur toutes les tailles d'écran — le numéro de version n'apparaissait auparavant qu'en barre latérale, masquée sur mobile.
+
 ## 0.15.0
 
 - **Refonte complète de l'interface** : nouvelle charte graphique (palette énergie/verte, typographie, cartes, puces de statut cohérentes), navigation latérale sur ordinateur et barre inférieure sur mobile, tableaux qui se replient en cartes sur petit écran. Fini l'aspect « maquette » : l'appli se veut réellement responsive et utilisable au quotidien depuis le téléphone. Les `alert()` sont remplacés par des notifications discrètes (toasts).

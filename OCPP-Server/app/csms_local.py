@@ -1,3 +1,4 @@
+import asyncio
 from datetime import datetime
 
 from ocpp.routing import on
@@ -21,6 +22,12 @@ CONNECTED_CHARGERS: dict[str, "LocalChargePoint"] = {}
 # la session au bon véhicule même s'il n'a pas d'idTag (le StartTransaction qui
 # suit ne portera alors aucun idTag connu).
 PENDING_REMOTE_STARTS: dict[tuple[str, int], int] = {}
+
+# Connecteurs pour lesquels un démarrage automatique (mode 'free') a déjà été
+# tenté depuis le dernier branchement. Évite de relancer en boucle tant que le
+# connecteur reste en "Preparing" (y compris après un arrêt manuel : on ne
+# relance qu'après un débranchement, c'est-à-dire un retour à "Available").
+AUTO_START_ATTEMPTED: set[tuple[str, int]] = set()
 
 # idTags "système" toujours acceptés : ils ne proviennent que de nos propres
 # actions authentifiées (bouton de l'appli, commande MQTT, démarrage distant).
@@ -106,6 +113,7 @@ class LocalChargePoint(ChargePoint16):
     async def on_status_notification(self, connector_id, status, **kwargs):
         db = self._db()
         closed_duration_min = None
+        do_auto_start = False
         try:
             charger = self._get_or_create_charger(db)
             charger.last_seen = datetime.utcnow()
@@ -148,6 +156,29 @@ class LocalChargePoint(ChargePoint16):
                     db.flush()
                     freeze_transaction_cost(db, stale)
 
+            # --- Démarrage automatique (mode 'free') -------------------------
+            # En "sans autorisation", brancher un véhicule doit lancer la charge
+            # tout seul. La borne signale "Preparing" (câble branché, en
+            # attente) mais n'émet pas forcément de StartTransaction de
+            # lui-même : on déclenche alors un RemoteStart, une seule fois par
+            # branchement (le drapeau est levé au débranchement).
+            if connector_id != 0:
+                if status == "Available":
+                    AUTO_START_ATTEMPTED.discard((self.id, connector_id))
+                elif (
+                    status == "Preparing"
+                    and _auth_mode_value(charger) == "free"
+                    and (self.id, connector_id) not in AUTO_START_ATTEMPTED
+                ):
+                    has_active = db.query(Transaction).filter(
+                        Transaction.charger_id == self.id,
+                        Transaction.connector_id == connector_id,
+                        Transaction.status == "active",
+                    ).first() is not None
+                    if not has_active:
+                        AUTO_START_ATTEMPTED.add((self.id, connector_id))
+                        do_auto_start = True
+
             mode_value = charger.mode.value
             db.commit()
         finally:
@@ -161,6 +192,9 @@ class LocalChargePoint(ChargePoint16):
             await mqtt_bridge.publish_charge_control_state(self.id, connector_id, status == "Charging")
             if closed_duration_min is not None:
                 await mqtt_bridge.publish_connector_state(self.id, connector_id, session_duration_min=closed_duration_min)
+
+        if do_auto_start:
+            asyncio.create_task(self._auto_start(connector_id))
 
         return call_result.StatusNotification()
 
@@ -283,6 +317,15 @@ class LocalChargePoint(ChargePoint16):
         return await self.call(call.RemoteStartTransaction(
             connector_id=connector_id, id_tag=id_tag
         ))
+
+    async def _auto_start(self, connector_id: int):
+        """Démarrage automatique (mode 'free'), lancé en tâche de fond : appeler
+        self.call() directement dans un handler bloquerait la boucle de
+        réception (la réponse ne pourrait jamais être lue)."""
+        try:
+            await self.trigger_remote_start(connector_id, "WEBADMIN")
+        except Exception:
+            AUTO_START_ATTEMPTED.discard((self.id, connector_id))
 
     async def trigger_remote_stop(self, transaction_id: int):
         return await self.call(call.RemoteStopTransaction(transaction_id=transaction_id))
