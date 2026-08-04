@@ -142,8 +142,9 @@
   /* Zone de saisie : fond teinté + liseré, distincte des cartes de données. */
   .form-card { background: var(--surface-2); border-left: 3px solid var(--primary); }
   .form-card input, .form-card select { background: var(--surface); }
-  .section-title { font-size: .8rem; text-transform: uppercase; letter-spacing: .06em; color: var(--text-muted); font-weight: 650; margin: 1.15rem 0 .5rem; }
+  .section-title { font-size: .8rem; text-transform: uppercase; letter-spacing: .06em; color: var(--text-muted); font-weight: 650; margin: 1.15rem 0 .5rem; display:flex; align-items:center; justify-content:space-between; gap:.6rem; }
   .section-title:first-child { margin-top: .2rem; }
+  .section-title .st-action { text-transform: none; letter-spacing: 0; }
 
   /* --- Badges / puces de statut --- */
   .badge {
@@ -161,9 +162,16 @@
   .badge.off, .badge.Unavailable { background: var(--surface-3); color: var(--text-muted); }
   .badge.local { background: var(--primary-soft); color: var(--primary-strong); }
   .badge.relay { background: var(--accent-soft); color: var(--accent); }
+  .badge.ext { background: var(--accent-soft); color: var(--accent); }
 
   .charging-dot { width: .6rem; height: .6rem; border-radius: 50%; background: var(--ok); box-shadow: 0 0 0 0 var(--ok); animation: pulse 1.6s infinite; flex: none; }
   @keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(22,163,74,.5);} 70% { box-shadow: 0 0 0 8px rgba(22,163,74,0);} 100% { box-shadow: 0 0 0 0 rgba(22,163,74,0);} }
+
+  /* --- Barres de progression / jauges --- */
+  .gauge { height: .55rem; border-radius: var(--r-pill); background: var(--surface-3); overflow: hidden; }
+  .gauge > span { display: block; height: 100%; background: var(--primary); border-radius: var(--r-pill); transition: width .4s; }
+  .gauge.warn > span { background: var(--warn); }
+  .gauge.danger > span { background: var(--danger); }
 
   /* --- Tables responsives --- */
   .table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
@@ -278,7 +286,7 @@
   #modal-overlay.on { display: flex; }
   @media (min-width: 640px) { #modal-overlay { align-items: center; padding: 1.2rem; } }
   #modal-box {
-    background: var(--surface); width: 100%; max-width: 620px; max-height: 88dvh; overflow-y: auto;
+    background: var(--surface); width: 100%; max-width: 680px; max-height: 88dvh; overflow-y: auto;
     border: 1px solid var(--border); border-radius: var(--r-lg) var(--r-lg) 0 0; box-shadow: var(--shadow-lg);
     padding: 1.1rem 1.2rem calc(1.1rem + env(safe-area-inset-bottom));
   }
@@ -307,6 +315,14 @@
   .kv .k { color: var(--text-muted); font-size: .82rem; }
   .metrics { display: flex; flex-wrap: wrap; gap: .3rem 1.1rem; margin-top: .3rem; color: var(--text-muted); font-size: .86rem; }
   .metrics b { color: var(--text); font-weight: 650; }
+
+  /* Statistiques (fiches véhicule / borne) */
+  .stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: .6rem; }
+  .stat { background: var(--surface-2); border-radius: var(--r-sm); padding: .6rem .7rem; }
+  .stat .sv { font-size: 1.15rem; font-weight: 700; }
+  .stat .sl { font-size: .72rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: .04em; }
+  .clickable { cursor: pointer; }
+  .clickable:hover { background: var(--surface-2); }
 </style>
 </head>
 <body>
@@ -332,6 +348,9 @@
     <symbol id="i-close" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12M18 6 6 18"/></symbol>
     <symbol id="i-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 6 6 6-6 6"/></symbol>
     <symbol id="i-bolt" viewBox="0 0 24 24" fill="currentColor"><path d="M13 2 4 14h6l-1 8 9-12h-6z"/></symbol>
+    <symbol id="i-clock" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
+    <symbol id="i-info" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/></symbol>
+    <symbol id="i-ext" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></symbol>
   </defs>
 </svg>
 
@@ -371,7 +390,7 @@
     <button class="navitem active" data-nav="home" onclick="switchView('home')"><svg><use href="#i-home"/></svg><span class="navlabel">Accueil</span><span class="navlabel-mobile">Accueil</span></button>
     <button class="navitem" data-nav="chargers" onclick="switchView('chargers')"><svg><use href="#i-charger"/></svg><span class="navlabel">Bornes</span><span class="navlabel-mobile">Bornes</span></button>
     <button class="navitem" data-nav="vehicles" onclick="switchView('vehicles')"><svg><use href="#i-car"/></svg><span class="navlabel">Véhicules</span><span class="navlabel-mobile">Autos</span></button>
-    <button class="navitem" data-nav="tariffs" onclick="switchView('tariffs')"><svg><use href="#i-tariff"/></svg><span class="navlabel">Abonnements</span><span class="navlabel-mobile">Tarifs</span></button>
+    <button class="navitem" data-nav="tariffs" onclick="switchView('tariffs')"><svg><use href="#i-tariff"/></svg><span class="navlabel">Abo. électrique</span><span class="navlabel-mobile">Abo.</span></button>
     <button class="navitem" data-nav="history" onclick="switchView('history')"><svg><use href="#i-history"/></svg><span class="navlabel">Historique</span><span class="navlabel-mobile">Histo.</span></button>
     <div class="nav-spacer"></div>
     <button class="navitem logout" onclick="logout()"><svg><use href="#i-logout"/></svg><span class="navlabel">Déconnexion</span></button>
@@ -392,9 +411,11 @@
 
       <!-- ACCUEIL -->
       <section class="view active" id="view-home">
+        <div class="section-title">Occupation de l'alimentation</div>
+        <div id="home-occupancy"></div>
         <div class="section-title">Charge en cours</div>
         <div id="home-current"><div class="empty">Chargement…</div></div>
-        <div class="section-title">Bornes</div>
+        <div class="section-title">Bornes disponibles</div>
         <div id="home-available"></div>
         <div class="section-title">Dernière charge terminée</div>
         <div id="home-last"></div>
@@ -417,14 +438,14 @@
               <input id="veh-name" placeholder="ex. Tesla Model 3"></label>
             <label class="field"><span>idTag associé (optionnel)</span>
               <input id="veh-idtag" placeholder="badge"></label>
-            <label class="field"><span>Batterie kWh (optionnel)</span>
-              <input id="veh-battery" type="number" step="0.1" style="width:130px"></label>
+            <label class="field"><span>Capacité de la batterie kWh (optionnel)</span>
+              <input id="veh-battery" type="number" step="0.1" style="width:160px"></label>
             <button class="btn btn-primary" onclick="createVehicle()"><svg><use href="#i-plus"/></svg>Ajouter</button>
           </div>
         </div>
         <div class="card" style="margin-top:.8rem">
           <div class="table-wrap"><table class="responsive" id="vehicles-table">
-            <thead><tr><th>Nom</th><th>idTag</th><th>Batterie</th><th></th></tr></thead>
+            <thead><tr><th>Nom</th><th>idTag</th><th>Capacité batt.</th><th>Charges</th><th></th></tr></thead>
             <tbody></tbody>
           </table></div>
         </div>
@@ -455,16 +476,18 @@
       <!-- HISTORIQUE -->
       <section class="view" id="view-history">
         <div class="card">
-          <div class="cluster center">
+          <div class="spread">
             <label class="field"><span>Filtrer par véhicule</span>
               <select id="hist-vehicle-filter" onchange="loadHistory()"><option value="">Tous</option></select></label>
+            <button class="btn btn-sm" onclick="openExternalChargeModal()"><svg><use href="#i-ext"/></svg>Ajouter une charge externe</button>
           </div>
         </div>
         <div class="card" style="margin-top:.8rem">
           <div class="table-wrap"><table class="responsive" id="history-table">
             <thead><tr>
               <th>Borne</th><th>Conn.</th><th>Véhicule</th><th>Début</th><th>Fin</th><th>Durée</th>
-              <th>kWh</th><th>Coût</th><th>Tarif</th><th>km</th><th>% min</th><th>% max</th><th></th>
+              <th>kWh</th><th>P. max</th><th>Coût</th><th>Tarif</th><th>km</th><th>km parc.</th>
+              <th>kWh/100</th><th>% init.</th><th>% fin</th><th>Recharge</th><th></th>
             </tr></thead>
             <tbody></tbody>
           </table></div>
@@ -533,9 +556,22 @@ function formatDuration(min) {
 }
 function kWh(wh) { return (wh / 1000).toFixed(2); }
 function eur(c) { return c != null ? c.toFixed(2) + " €" : "–"; }
+function kW(w) { return w != null ? (w / 1000).toFixed(2) + " kW" : "–"; }
+function num(v, suffix) { return v != null && v !== "" ? v + (suffix || "") : "–"; }
 function isFocusWithin(id) {
   const el = document.getElementById(id);
   return !!(el && document.activeElement && el.contains(document.activeElement) && document.activeElement !== el);
+}
+
+/* Un statut « suspendu » signale un délestage (borne ou véhicule) : la charge
+   n'est pas terminée, la puissance est juste bridée. On l'affiche à part. */
+function statusLabel(status) {
+  const map = {
+    Available: "Disponible", Preparing: "Branché · prêt", Charging: "En charge",
+    SuspendedEV: "Suspendu (véhicule)", SuspendedEVSE: "Suspendu (délestage)",
+    Finishing: "Fin de charge", Reserved: "Réservé", Unavailable: "Indisponible", Faulted: "Défaut",
+  };
+  return map[status] || status;
 }
 
 let toastTimer = null;
@@ -558,7 +594,7 @@ async function apiCall(url, opts, okMsg) {
 }
 
 /* ---------- Modale ---------- */
-let openModalConnector = null;
+let openModalConnector = null;   // détail connecteur en cours (pour rafraîchissement)
 function openModal(html) { document.getElementById("modal-box").innerHTML = html; document.getElementById("modal-overlay").classList.add("on"); }
 function closeModal() { document.getElementById("modal-overlay").classList.remove("on"); openModalConnector = null; }
 
@@ -593,13 +629,13 @@ function pollTick() {
     else if (!openCharger) loadChargers();
   }
   if (openModalConnector && document.getElementById("modal-overlay").classList.contains("on")) {
-    if (!isFocusWithin("modal-box")) openConnectorModal(openModalConnector.chargerId, openModalConnector.connectorId, openModalConnector.isLocal, true);
+    if (!isFocusWithin("modal-box")) openConnectorModal(openModalConnector.chargerId, openModalConnector.connectorId, true);
   }
 }
 
 /* ---------- Navigation ---------- */
 let currentView = "home";
-const viewTitles = { home: "Accueil", chargers: "Bornes", vehicles: "Véhicules", tariffs: "Abonnements", history: "Historique" };
+const viewTitles = { home: "Accueil", chargers: "Bornes", vehicles: "Véhicules", tariffs: "Abo. électrique", history: "Historique" };
 const viewLoaded = {};
 function switchView(name) {
   currentView = name;
@@ -620,34 +656,75 @@ function refreshCurrentView() {
 
 /* ========================= ACCUEIL ========================= */
 async function loadHome() {
-  const [active, recent, chargers] = await Promise.all([
+  const [active, recent, chargers, occupancy] = await Promise.all([
     fetch("api/history?status_filter=active&limit=20", { headers: authHeaders() }).then(r => r.json()),
     fetch("api/history?limit=10", { headers: authHeaders() }).then(r => r.json()),
     fetch("api/chargers", { headers: authHeaders() }).then(r => r.json()),
+    fetch("api/occupancy", { headers: authHeaders() }).then(r => r.json()),
   ]);
   const lastCompleted = recent.find(s => s.status === "completed");
-  if (!isFocusWithin("home-current")) await renderHomeCurrent(active);
+  if (!isFocusWithin("home-occupancy")) renderOccupancy(occupancy);
+  if (!isFocusWithin("home-current")) await renderHomeCurrent(active, chargers);
   if (!isFocusWithin("home-available")) await renderHomeAvailable(chargers, active);
   if (!isFocusWithin("home-last")) renderHomeLast(lastCompleted);
 }
 
-async function renderHomeCurrent(active) {
+/* Taux d'occupation de l'abonnement électrique : puissance délivrée à l'instant
+   T rapportée à la puissance souscrite. Une jauge par abonnement concerné. */
+function renderOccupancy(occ) {
+  const el = document.getElementById("home-occupancy");
+  const withPower = occ.filter(o => o.delivered_power_w > 0 || o.active_sessions > 0);
+  if (!withPower.length) {
+    el.innerHTML = `<div class="card"><div class="empty">Aucune charge active : alimentation au repos.</div></div>`;
+    return;
+  }
+  el.innerHTML = withPower.map(o => {
+    const pct = o.occupancy_percent;
+    const cls = pct == null ? "" : (pct >= 90 ? "danger" : pct >= 70 ? "warn" : "");
+    const width = pct == null ? 0 : Math.min(pct, 100);
+    return `<div class="card">
+      <div class="spread" style="margin-bottom:.4rem">
+        <b>${esc(o.plan_name)}</b>
+        <span class="small muted">${kW(o.delivered_power_w)}${o.subscribed_power_kva != null ? ` / ${o.subscribed_power_kva} kVA` : ""}${o.active_sessions ? ` · ${o.active_sessions} charge${o.active_sessions > 1 ? "s" : ""}` : ""}</span>
+      </div>
+      <div class="gauge ${cls}"><span style="width:${width}%"></span></div>
+      <div class="tiny muted" style="margin-top:.3rem">${pct != null ? `Occupation : <b>${pct} %</b>` : "Puissance souscrite non renseignée sur cet abonnement"}</div>
+    </div>`;
+  }).join("");
+}
+
+async function renderHomeCurrent(active, chargers) {
   const el = document.getElementById("home-current");
   if (!active.length) { el.innerHTML = `<div class="card"><div class="empty">Aucune charge en cours.</div></div>`; return; }
   const vehicles = await fetch("api/vehicles", { headers: authHeaders() }).then(r => r.json());
-  el.innerHTML = active.map(s => `
-    <div class="card">
+  // Statuts connecteurs pour repérer un délestage (SuspendedEVSE / SuspendedEV).
+  const statusMap = {};
+  await Promise.all(active.map(async s => {
+    if (!s.charger_id) return;
+    const conns = await fetch(`api/chargers/${s.charger_id}/connectors`, { headers: authHeaders() }).then(r => r.json()).catch(() => []);
+    const c = conns.find(x => x.connector_id === s.connector_id);
+    if (c) statusMap[`${s.charger_id}:${s.connector_id}`] = c.status;
+  }));
+
+  el.innerHTML = active.map(s => {
+    const st = statusMap[`${s.charger_id}:${s.connector_id}`];
+    const suspended = st === "SuspendedEVSE" || st === "SuspendedEV";
+    const recharge = s.battery_recharge_percent != null
+      ? `<span>Recharge <b>${s.battery_recharge_percent}%</b>${s.battery_percent_end_est != null ? ` → ~<b>${s.battery_percent_end_est}%</b>` : ""}</span>` : "";
+    return `<div class="card">
       <div class="spread">
         <div>
           <div class="cluster center" style="gap:.5rem">
-            <span class="charging-dot"></span>
+            <span class="charging-dot" ${suspended ? 'style="background:var(--warn)"' : ""}></span>
             <b>${esc(s.charger_id)} · Conn. ${s.connector_id}</b>
             ${s.vehicle_name ? `<span class="badge accent">${esc(s.vehicle_name)}</span>` : ""}
+            ${suspended ? `<span class="badge ${esc(st)}">${statusLabel(st)}</span>` : ""}
           </div>
           <div class="metrics">
             <span>Depuis <b>${formatDuration(s.duration_min)}</b></span>
             <span><b>${kWh(s.energy_wh)}</b> kWh</span>
             <span><b>${eur(s.cost)}</b></span>
+            ${recharge}
           </div>
         </div>
         <button class="btn btn-danger" onclick="stopChargeFromHome('${esc(s.charger_id)}', ${s.connector_id}, ${s.id})"><svg><use href="#i-stop"/></svg>Arrêter</button>
@@ -661,7 +738,8 @@ async function renderHomeCurrent(active) {
           </select></label>
         <button class="btn btn-sm" onclick="saveCurrentVehicle(${s.id})">Assigner</button>
       </div>
-    </div>`).join("");
+    </div>`;
+  }).join("");
 }
 
 async function renderHomeAvailable(chargers, active) {
@@ -677,19 +755,24 @@ async function renderHomeAvailable(chargers, active) {
     const isFree = (c.auth_mode || "free") === "free";
     for (const conn of connectors) {
       if (activeKeys.has(`${c.id}:${conn.connector_id}`)) continue;
+      // Le véhicule n'est prêt à charger QUE lorsqu'il est branché (Preparing).
+      // Available = connecteur libre : rien à démarrer, on n'affiche pas de bouton.
       const preparing = conn.status === "Preparing";
       let cta;
       if (isFree) {
         cta = `<span class="badge ok" title="Aucune autorisation requise : la charge démarre automatiquement au branchement."><svg style="width:.85em;height:.85em" fill="currentColor"><use href="#i-bolt"/></svg> Démarrage auto</span>`;
-      } else {
+      } else if (preparing) {
         cta = `<div class="cluster center" style="gap:.4rem">
           <select id="home-veh-${c.id}-${conn.connector_id}" style="min-width:130px">${vehOptions}</select>
-          <button class="btn ${preparing ? "btn-primary" : ""} btn-sm" onclick="startChargeFromHome('${esc(c.id)}', ${conn.connector_id})"><svg><use href="#i-play"/></svg>Démarrer</button>
+          <button class="btn btn-primary btn-sm" onclick="startChargeFromHome('${esc(c.id)}', ${conn.connector_id})"><svg><use href="#i-play"/></svg>Démarrer</button>
         </div>`;
+      } else {
+        // Available (ou autre) sans véhicule branché : pas de bouton Démarrer.
+        cta = `<span class="badge ${esc(conn.status)}">${statusLabel(conn.status)}</span>`;
       }
       const hint = preparing
         ? `<span class="badge Preparing">Véhicule branché · prêt</span>`
-        : `<span class="badge ${esc(conn.status)}">${esc(conn.status)}</span>`;
+        : `<span class="badge ${esc(conn.status)}">${statusLabel(conn.status)}</span>`;
       cards += `<div class="card" ${preparing ? 'style="border-color:var(--warn)"' : ""}>
         <div class="spread">
           <div>
@@ -723,21 +806,23 @@ async function saveCurrentVehicle(sessionId) {
   if (ok) loadHome();
 }
 
-/* Dernière charge — lecture seule + bouton Modifier (comme les autres vues) */
+/* Dernière charge — lecture seule + bouton Modifier */
 let editingLast = false;
-let lastVehicles = [];
 function renderHomeLast(s) {
   const el = document.getElementById("home-last");
   if (!s) { el.innerHTML = `<div class="card"><div class="empty">Aucune charge terminée pour l'instant.</div></div>`; editingLast = false; return; }
 
+  const recharge = s.battery_recharge_percent != null
+    ? `<span>Recharge <b>${s.battery_recharge_percent}%</b>${s.battery_percent_end_est != null ? ` → ~<b>${s.battery_percent_end_est}%</b>` : ""}</span>` : "";
   const head = `<div class="spread">
       <div>
-        <b>${esc(s.charger_id)} · Conn. ${s.connector_id}</b>${s.vehicle_name ? ` <span class="badge accent">${esc(s.vehicle_name)}</span>` : ""}
+        <b>${esc(s.charger_id || s.location_label || "Externe")}${s.connector_id != null ? ` · Conn. ${s.connector_id}` : ""}</b>${s.vehicle_name ? ` <span class="badge accent">${esc(s.vehicle_name)}</span>` : ""}${s.is_external ? ` <span class="badge ext"><svg style="width:.85em;height:.85em"><use href="#i-ext"/></svg> externe</span>` : ""}
         <div class="metrics">
           <span>${formatDateTime(s.start_time)} → ${formatDateTime(s.stop_time)}</span>
           <span><b>${formatDuration(s.duration_min)}</b></span>
           <span><b>${kWh(s.energy_wh)}</b> kWh</span>
           <span><b>${eur(s.cost)}</b></span>
+          ${recharge}
           ${s.tariff_plan_name ? `<span>${esc(s.tariff_plan_name)}</span>` : ""}
         </div>
       </div>
@@ -747,9 +832,9 @@ function renderHomeLast(s) {
   if (!editingLast) {
     el.innerHTML = `<div class="card">${head}
       <div class="metrics" style="margin-top:.5rem">
-        <span class="k">km : <b>${s.odometer_km ?? "–"}</b></span>
-        <span class="k">% min : <b>${s.battery_percent_start ?? "–"}</b></span>
-        <span class="k">% max : <b>${s.battery_percent_end ?? "–"}</b></span>
+        <span class="k">km : <b>${num(s.odometer_km)}</b></span>
+        <span class="k">% init. : <b>${num(s.battery_percent_start)}</b></span>
+        <span class="k">% fin : <b>${num(s.battery_percent_end)}</b></span>
       </div></div>`;
     return;
   }
@@ -759,26 +844,25 @@ function renderHomeLast(s) {
     <div class="cluster">
       <label class="field"><span>Véhicule</span><select id="home-last-vehicle"><option value="">(aucun)</option></select></label>
       <label class="field"><span>km</span><input id="home-last-km" type="number" value="${s.odometer_km ?? ""}" style="width:100px"></label>
-      <label class="field"><span>% min</span><input id="home-last-pmin" type="number" min="0" max="100" value="${s.battery_percent_start ?? ""}" style="width:80px"></label>
-      <label class="field"><span>% max</span><input id="home-last-pmax" type="number" min="0" max="100" value="${s.battery_percent_end ?? 100}" style="width:80px"></label>
+      <label class="field"><span>% init.</span><input id="home-last-pmin" type="number" min="0" max="100" value="${s.battery_percent_start ?? ""}" style="width:80px"></label>
+      <label class="field"><span>% fin</span><input id="home-last-pmax" type="number" min="0" max="100" value="${s.battery_percent_end ?? ""}" style="width:80px"></label>
       <div class="cluster" style="gap:.4rem">
         <button class="btn btn-primary btn-sm" onclick="saveHomeLast(${s.id})">Enregistrer</button>
         <button class="btn btn-sm" onclick="editingLast=false; loadHome();">Annuler</button>
       </div>
     </div></div>`;
   fetch("api/vehicles", { headers: authHeaders() }).then(r => r.json()).then(vehicles => {
-    lastVehicles = vehicles;
     const sel = document.getElementById("home-last-vehicle"); if (!sel) return;
     sel.innerHTML = `<option value="">(aucun)</option>` + vehicles.map(v => `<option value="${v.id}" ${s.vehicle_id === v.id ? "selected" : ""}>${esc(v.name)}</option>`).join("");
   });
 }
 async function saveHomeLast(id) {
-  const num = v => v !== "" ? parseFloat(v) : null;
+  const n = v => v !== "" ? parseFloat(v) : null;
   const body = {
     vehicle_id: document.getElementById("home-last-vehicle").value ? parseInt(document.getElementById("home-last-vehicle").value, 10) : null,
-    odometer_km: num(document.getElementById("home-last-km").value),
-    battery_percent_start: num(document.getElementById("home-last-pmin").value),
-    battery_percent_end: num(document.getElementById("home-last-pmax").value),
+    odometer_km: n(document.getElementById("home-last-km").value),
+    battery_percent_start: n(document.getElementById("home-last-pmin").value),
+    battery_percent_end: n(document.getElementById("home-last-pmax").value),
   };
   const { ok } = await apiCall(`api/sessions/${id}`, { method: "PUT", headers: jsonHeaders(), body: JSON.stringify(body) }, "Enregistré");
   if (ok) { editingLast = false; loadHome(); }
@@ -792,16 +876,20 @@ async function loadChargers() {
   if (!chargers.length) { el.innerHTML = `<div class="card"><div class="empty">Aucune borne connue. Elle apparaîtra dès sa première connexion.</div></div>`; return; }
   el.innerHTML = chargers.map(c => `
     <div class="card" style="padding:0; overflow:hidden">
-      <div class="spread" style="padding:1rem 1.1rem; cursor:pointer" onclick="toggleDetail('${esc(c.id)}')">
-        <div>
+      <div class="spread" style="padding:1rem 1.1rem">
+        <div class="clickable" style="flex:1; margin:-1rem -.4rem -1rem -1.1rem; padding:1rem .4rem 1rem 1.1rem; border-radius:var(--r)" onclick="toggleDetail('${esc(c.id)}')">
           <div class="cluster center" style="gap:.5rem">
             <b>${esc(c.id)}</b>
             <span class="badge ${c.mode}">${c.mode}</span>
             <span class="badge ${c.connected ? "ok" : "off"}"><span class="dot"></span>${c.connected ? "connectée" : "hors ligne"}</span>
           </div>
-          <div class="small muted" style="margin-top:.3rem">${esc(c.vendor || "")} ${esc(c.model || "")} ${c.ocpp_version ? "· OCPP " + esc(c.ocpp_version) : ""} · ${esc(c.status)}</div>
+          <div class="small muted" style="margin-top:.3rem">${esc(c.vendor || "")} ${esc(c.model || "")} ${c.ocpp_version ? "· OCPP " + esc(c.ocpp_version) : ""} · ${statusLabel(c.status)}</div>
         </div>
-        <svg style="width:1.2rem;height:1.2rem;transition:transform .2s;transform:rotate(${openCharger === c.id ? 90 : 0}deg);color:var(--text-muted)"><use href="#i-chevron"/></svg>
+        <div class="cluster center" style="gap:.3rem">
+          <button class="btn btn-icon btn-ghost" title="Fiche & statistiques" onclick="openChargerStatsModal('${esc(c.id)}')"><svg><use href="#i-info"/></svg></button>
+          <button class="btn btn-icon btn-ghost" title="Supprimer du CSMS" onclick="deleteCharger('${esc(c.id)}')"><svg style="color:var(--danger)"><use href="#i-trash"/></svg></button>
+          <svg class="clickable" style="width:1.2rem;height:1.2rem;transition:transform .2s;transform:rotate(${openCharger === c.id ? 90 : 0}deg);color:var(--text-muted)" onclick="toggleDetail('${esc(c.id)}')"><use href="#i-chevron"/></svg>
+        </div>
       </div>
       <div id="detail-${esc(c.id)}" style="display:${openCharger === c.id ? "block" : "none"}; padding:0 1.1rem 1.1rem; border-top:1px solid var(--border)"></div>
     </div>`).join("");
@@ -811,16 +899,35 @@ function toggleDetail(id) {
   openCharger = (openCharger === id) ? null : id;
   loadChargers();
 }
+async function deleteCharger(id) {
+  if (!confirm(`Retirer la borne « ${id} » du CSMS ?\n\nSon historique de charges est conservé. Si elle se reconnecte, elle réapparaîtra.`)) return;
+  const { ok } = await apiCall(`api/chargers/${id}`, { method: "DELETE", headers: authHeaders() }, "Borne retirée");
+  if (ok) { if (openCharger === id) openCharger = null; loadChargers(); }
+}
+
+const CONDITION_LABELS = { off_peak: "Heures creuses uniquement", start_after: "Différer le départ après", ready_by: "Terminée pour" };
 async function renderChargerDetail(id) {
   const el = document.getElementById("detail-" + id);
   if (!el) return;
-  const [charger, connectors, tariffs] = await Promise.all([
+  const [charger, connectors, tariffs, conditions] = await Promise.all([
     fetch(`api/chargers/${id}`, { headers: authHeaders() }).then(r => r.json()),
     fetch(`api/chargers/${id}/connectors`, { headers: authHeaders() }).then(r => r.json()).then(a => a.filter(c => c.connector_id !== 0)),
     fetch(`api/tariffs`, { headers: authHeaders() }).then(r => r.json()),
+    fetch(`api/chargers/${id}/conditions`, { headers: authHeaders() }).then(r => r.json()),
   ]);
   const isLocal = charger.mode === "local";
   const authMode = charger.auth_mode || "free";
+
+  const condRows = conditions.length ? conditions.map(cd => `
+    <div class="card" style="margin:.35rem 0; padding:.55rem .75rem">
+      <div class="spread">
+        <div class="cluster center" style="gap:.5rem">
+          <span class="badge ${cd.enabled ? "ok" : "off"}"><span class="dot"></span>${cd.enabled ? "active" : "inactive"}</span>
+          <span>${CONDITION_LABELS[cd.type]}${cd.time_value ? ` <b>${esc(cd.time_value)}</b>` : ""}${cd.connector_id != null ? ` · conn. ${cd.connector_id}` : ""}</span>
+        </div>
+        <button class="linkbtn danger" onclick="deleteCondition('${id}', ${cd.id})">Suppr.</button>
+      </div>
+    </div>`).join("") : `<div class="empty">Aucune condition : la charge n'est pas programmée sur cette borne.</div>`;
 
   el.innerHTML = `
     <div class="section-title">Réglages</div>
@@ -844,29 +951,34 @@ async function renderChargerDetail(id) {
             <option value="authorized" ${authMode === "authorized" ? "selected" : ""}>Avec autorisation (badge ou bouton)</option>
           </select></label>
         <p class="tiny muted" style="margin:.4rem 0 0">
-          <b>Sans autorisation</b> : la charge démarre seule au branchement, sans badge ni bouton.<br>
-          <b>Avec autorisation</b> : seuls un idTag connu (associé à un véhicule) ou le bouton « Démarrer » lancent la charge.
+          <b>Sans autorisation</b> : la charge démarre seule au branchement.<br>
+          <b>Avec autorisation</b> : badge connu ou bouton « Démarrer » requis.
         </p>
         <button class="btn btn-sm btn-primary" style="margin-top:.5rem" onclick="saveAuthMode('${id}')" ${isLocal ? "" : "disabled"}>Enregistrer l'autorisation</button>
       </div>
     </div>
 
-    <div style="margin-top:.9rem">
-      <label class="field" style="max-width:320px"><span>Tarif appliqué</span>
+    <div class="cluster" style="margin-top:.9rem; align-items:flex-end">
+      <label class="field" style="max-width:320px; flex:1"><span>Abonnement / tarif appliqué</span>
         <select id="tariff-select-${id}">
           <option value="">(abonnement actif par défaut)</option>
           ${tariffs.map(t => `<option value="${t.id}" ${charger.tariff_plan_id === t.id ? "selected" : ""}>${esc(t.name)}</option>`).join("")}
         </select></label>
-      <button class="btn btn-sm" style="margin-top:.5rem" onclick="saveTariff('${id}')">Enregistrer le tarif</button>
+      <button class="btn btn-sm" onclick="saveTariff('${id}')">Enregistrer le tarif</button>
     </div>
+
+    <div class="section-title">Programmation de la charge
+      ${isLocal ? `<button class="btn btn-sm st-action" onclick="openConditionModal('${id}')"><svg><use href="#i-plus"/></svg>Ajouter</button>` : ""}
+    </div>
+    ${isLocal ? condRows : `<div class="empty">Indisponible en mode relais (la borne est pilotée par son serveur officiel).</div>`}
 
     <div class="section-title">Connecteurs</div>
     ${connectors.length ? "" : `<div class="empty">Aucun connecteur détecté (attendez le premier StatusNotification).</div>`}
     ${connectors.map(cc => `
       <div class="card" style="margin:.4rem 0; padding:.7rem .9rem">
         <div class="spread">
-          <div class="cluster center" style="gap:.5rem"><b>Connecteur ${cc.connector_id}</b><span class="badge ${esc(cc.status)}">${esc(cc.status)}</span></div>
-          <button class="btn btn-sm" onclick="openConnectorModal('${id}', ${cc.connector_id}, ${isLocal})">Détails</button>
+          <div class="cluster center" style="gap:.5rem"><b>Connecteur ${cc.connector_id}</b><span class="badge ${esc(cc.status)}">${statusLabel(cc.status)}</span></div>
+          <button class="btn btn-sm" onclick="openConnectorModal('${id}', ${cc.connector_id})">Détails</button>
         </div>
       </div>`).join("")}
   `;
@@ -892,43 +1004,62 @@ async function saveTariff(id) {
   await apiCall(`api/chargers/${id}/tariff`, { method: "PUT", headers: jsonHeaders(), body: JSON.stringify({ tariff_plan_id: val ? parseInt(val, 10) : null }) }, "Tarif enregistré");
 }
 
-async function openConnectorModal(chargerId, connectorId, isLocal, silent) {
-  openModalConnector = { chargerId, connectorId, isLocal };
+/* --- Conditions de charge --- */
+function openConditionModal(chargerId) {
+  const html = `<div class="modal-head"><h2>Nouvelle condition</h2>
+    <button class="btn btn-icon btn-ghost" onclick="closeModal()"><svg><use href="#i-close"/></svg></button></div>
+    <p class="small muted" style="margin:0 0 .8rem">Plusieurs conditions se cumulent : la charge n'a lieu que si <b>toutes</b> sont satisfaites. Le serveur pilote via SmartCharging si la borne le supporte, sinon par démarrage/arrêt.</p>
+    <div class="cluster">
+      <label class="field" style="flex:1; min-width:200px"><span>Type de condition</span>
+        <select id="cond-type" onchange="onCondTypeChange()">
+          <option value="off_peak">Charger en heures creuses uniquement</option>
+          <option value="start_after">Différer le départ après une heure</option>
+          <option value="ready_by">Terminée pour une heure</option>
+        </select></label>
+      <label class="field" id="cond-time-wrap" style="display:none"><span>Heure</span><input id="cond-time" type="time" value="23:00"></label>
+      <label class="field"><span>Connecteur</span><input id="cond-conn" type="number" min="1" placeholder="tous" style="width:90px"></label>
+    </div>
+    <div class="cluster" style="margin-top:1rem; justify-content:flex-end">
+      <button class="btn" onclick="closeModal()">Annuler</button>
+      <button class="btn btn-primary" onclick="createCondition('${chargerId}')">Ajouter</button>
+    </div>`;
+  openModal(html);
+}
+function onCondTypeChange() {
+  const t = document.getElementById("cond-type").value;
+  document.getElementById("cond-time-wrap").style.display = (t === "off_peak") ? "none" : "flex";
+}
+async function createCondition(chargerId) {
+  const type = document.getElementById("cond-type").value;
+  const time_value = type === "off_peak" ? null : document.getElementById("cond-time").value;
+  const connEl = document.getElementById("cond-conn");
+  const connector_id = connEl.value ? parseInt(connEl.value, 10) : null;
+  const { ok } = await apiCall(`api/chargers/${chargerId}/conditions`, { method: "POST", headers: jsonHeaders(),
+    body: JSON.stringify({ type, time_value, connector_id, enabled: true }) }, "Condition ajoutée");
+  if (ok) { closeModal(); renderChargerDetail(chargerId); }
+}
+async function deleteCondition(chargerId, condId) {
+  await fetch(`api/chargers/${chargerId}/conditions/${condId}`, { method: "DELETE", headers: authHeaders() });
+  renderChargerDetail(chargerId);
+}
+
+/* --- Détail connecteur (lecture seule : plus de démarrage/arrêt ici) --- */
+async function openConnectorModal(chargerId, connectorId, silent) {
+  openModalConnector = { chargerId, connectorId };
   if (!silent) openModal(`<div class="empty">Chargement…</div>`);
-  const [sessions, meters, vehicles] = await Promise.all([
+  const [sessions, meters] = await Promise.all([
     fetch(`api/chargers/${chargerId}/sessions?connector_id=${connectorId}`, { headers: authHeaders() }).then(r => r.json()),
     fetch(`api/chargers/${chargerId}/metervalues?connector_id=${connectorId}&limit=10`, { headers: authHeaders() }).then(r => r.json()),
-    fetch(`api/vehicles`, { headers: authHeaders() }).then(r => r.json()),
   ]);
-  const activeSessions = sessions.filter(s => s.status === "active");
 
   let html = `<div class="modal-head"><h2>${esc(chargerId)} · Conn. ${connectorId}</h2>
     <button class="btn btn-icon btn-ghost" onclick="closeModal()"><svg><use href="#i-close"/></svg></button></div>`;
 
-  if (isLocal) {
-    html += `<div class="card" style="padding:.8rem .9rem">
-      <div class="cluster center">
-        <label class="field"><span>Véhicule</span>
-          <select id="modal-vehicle" style="min-width:150px"><option value="">(véhicule ?)</option>
-            ${vehicles.map(v => `<option value="${v.id}">${esc(v.name)}</option>`).join("")}</select></label>
-        <button class="btn btn-primary btn-sm" onclick="startCharge('${esc(chargerId)}', ${connectorId})"><svg><use href="#i-play"/></svg>Démarrer</button>
-        <div style="flex:1"></div>
-        <label class="field"><span>Session active</span>
-          <select id="modal-txn">
-            ${activeSessions.length ? activeSessions.map(s => `<option value="${s.id}">#${s.id} · ${formatDateTime(s.start_time)}</option>`).join("") : `<option value="">(aucune)</option>`}
-          </select></label>
-        <button class="btn btn-danger btn-sm" onclick="stopCharge('${esc(chargerId)}', ${connectorId})" ${activeSessions.length ? "" : "disabled"}><svg><use href="#i-stop"/></svg>Arrêter</button>
-      </div>
-      <details style="margin-top:.6rem"><summary class="tiny muted" style="cursor:pointer">Avancé : forcer un idTag précis</summary>
-        <input id="modal-idtag" placeholder="idTag (laisser vide = véhicule ci-dessus)" style="margin-top:.4rem; width:100%"></details>
-    </div>`;
-  } else {
-    html += `<div class="card"><div class="empty">Pilotage indisponible : cette borne est en mode relais.</div></div>`;
-  }
+  html += `<p class="small muted" style="margin:0 0 .6rem">Pour démarrer ou arrêter une charge, utilisez la page <b>Accueil</b> (bornes disponibles / charge en cours).</p>`;
 
   html += `<div class="section-title">Sessions récentes</div><div class="table-wrap"><table><thead><tr>
-    <th>#</th><th>Début</th><th>Fin</th><th>kWh</th><th>Coût</th><th>Statut</th></tr></thead><tbody>
-    ${sessions.slice(0, 10).map(s => `<tr><td>${s.id}</td><td>${formatDateTime(s.start_time)}</td><td>${formatDateTime(s.stop_time)}</td><td>${kWh(s.energy_wh)}</td><td>${eur(s.cost)}</td><td><span class="badge ${s.status === "active" ? "Charging" : "off"}">${s.status}</span></td></tr>`).join("") || `<tr><td colspan="6"><span class="empty">Aucune session</span></td></tr>`}
+    <th>#</th><th>Début</th><th>Fin</th><th>kWh</th><th>P. max</th><th>Coût</th><th>Statut</th></tr></thead><tbody>
+    ${sessions.slice(0, 10).map(s => `<tr><td>${s.id}</td><td>${formatDateTime(s.start_time)}</td><td>${formatDateTime(s.stop_time)}</td><td>${kWh(s.energy_wh)}</td><td>${kW(s.power_max_w)}</td><td>${eur(s.cost)}</td><td><span class="badge ${s.status === "active" ? "Charging" : "off"}">${s.status === "active" ? "en cours" : "terminée"}</span></td></tr>`).join("") || `<tr><td colspan="7"><span class="empty">Aucune session</span></td></tr>`}
   </tbody></table></div>`;
 
   html += `<div class="section-title">Dernières valeurs de compteur</div><div class="table-wrap"><table><thead><tr>
@@ -938,20 +1069,40 @@ async function openConnectorModal(chargerId, connectorId, isLocal, silent) {
 
   openModal(html);
 }
-async function startCharge(chargerId, connectorId) {
-  const idtagEl = document.getElementById("modal-idtag");
-  const id_tag = idtagEl && idtagEl.value.trim() ? idtagEl.value.trim() : null;
-  const vsel = document.getElementById("modal-vehicle");
-  const vehicle_id = vsel && vsel.value ? parseInt(vsel.value, 10) : null;
-  const { ok } = await apiCall(`api/chargers/${chargerId}/connectors/${connectorId}/start`,
-    { method: "POST", headers: jsonHeaders(), body: JSON.stringify({ vehicle_id, id_tag }) }, "Démarrage demandé");
-  if (ok) openConnectorModal(chargerId, connectorId, true, true);
+
+/* --- Fiche & statistiques d'une borne --- */
+async function openChargerStatsModal(chargerId) {
+  openModalConnector = null;
+  openModal(`<div class="empty">Chargement…</div>`);
+  const data = await fetch(`api/chargers/${chargerId}/stats`, { headers: authHeaders() }).then(r => r.json());
+  const st = data.stats;
+  let html = `<div class="modal-head"><h2>${esc(data.id)}</h2>
+    <button class="btn btn-icon btn-ghost" onclick="closeModal()"><svg><use href="#i-close"/></svg></button></div>
+    <div class="small muted" style="margin:-.4rem 0 .8rem">${esc(data.vendor || "")} ${esc(data.model || "")}</div>
+    <div class="stat-grid">
+      <div class="stat"><div class="sv">${st.charge_count}</div><div class="sl">Charges</div></div>
+      <div class="stat"><div class="sv">${st.total_energy_kwh}</div><div class="sl">kWh cumulés</div></div>
+      <div class="stat"><div class="sv">${st.total_cost.toFixed(2)} €</div><div class="sl">Coût cumulé</div></div>
+      <div class="stat"><div class="sv">${kW(st.power_max_w)}</div><div class="sl">Puissance max</div></div>
+    </div>`;
+  html += renderSessionsTable(data.sessions, false);
+  openModal(html);
 }
-async function stopCharge(chargerId, connectorId) {
-  const transaction_id = parseInt(document.getElementById("modal-txn").value, 10);
-  const { ok } = await apiCall(`api/chargers/${chargerId}/connectors/${connectorId}/stop`,
-    { method: "POST", headers: jsonHeaders(), body: JSON.stringify({ transaction_id }) }, "Arrêt demandé");
-  if (ok) openConnectorModal(chargerId, connectorId, true, true);
+
+/* --- Tableau de sessions réutilisable (fiches véhicule / borne) --- */
+function renderSessionsTable(sessions, withVehicle) {
+  const rows = sessions.map(s => `<tr>
+    <td>${formatDateTime(s.start_time)}</td>
+    ${withVehicle ? `<td>${esc(s.charger_id || s.location_label || "Externe")}${s.is_external ? ' <span class="badge ext" style="padding:.05rem .35rem">ext</span>' : ""}</td>` : ""}
+    <td>${kWh(s.energy_wh)}</td>
+    <td>${eur(s.cost)}</td>
+    <td>${num(s.km_since_last, " km")}</td>
+    <td>${s.kwh_per_100km != null ? s.kwh_per_100km : "–"}</td>
+    <td>${s.battery_recharge_percent != null ? s.battery_recharge_percent + " %" : "–"}</td>
+  </tr>`).join("");
+  return `<div class="section-title">Historique des charges</div><div class="table-wrap"><table><thead><tr>
+    <th>Début</th>${withVehicle ? "<th>Borne</th>" : ""}<th>kWh</th><th>Coût</th><th>km parc.</th><th>kWh/100</th><th>Recharge</th>
+  </tr></thead><tbody>${rows || `<tr><td colspan="${withVehicle ? 7 : 6}"><span class="empty">Aucune charge</span></td></tr>`}</tbody></table></div>`;
 }
 
 /* ========================= VÉHICULES ========================= */
@@ -959,18 +1110,20 @@ let cachedVehicles = [], editingVehicle = null;
 async function loadVehicles() { cachedVehicles = await fetch("api/vehicles", { headers: authHeaders() }).then(r => r.json()); renderVehicles(); }
 function renderVehicles() {
   const tb = document.querySelector("#vehicles-table tbody");
-  if (!cachedVehicles.length) { tb.innerHTML = `<tr><td colspan="4"><span class="empty">Aucun véhicule pour l'instant.</span></td></tr>`; return; }
+  if (!cachedVehicles.length) { tb.innerHTML = `<tr><td colspan="5"><span class="empty">Aucun véhicule pour l'instant.</span></td></tr>`; return; }
   tb.innerHTML = cachedVehicles.map(v => editingVehicle === v.id ? `
     <tr>
       <td data-label="Nom"><input id="ev-name-${v.id}" value="${esc(v.name)}"></td>
       <td data-label="idTag"><input id="ev-tag-${v.id}" value="${esc(v.id_tag || "")}"></td>
-      <td data-label="Batterie"><input id="ev-bat-${v.id}" type="number" step="0.1" value="${v.battery_capacity_kwh ?? ""}" style="width:90px"></td>
+      <td data-label="Capacité batt."><input id="ev-bat-${v.id}" type="number" step="0.1" value="${v.battery_capacity_kwh ?? ""}" style="width:90px"></td>
+      <td></td>
       <td><span class="cell-actions"><button class="linkbtn" onclick="saveVehicleEdit(${v.id})">Enregistrer</button><button class="linkbtn" onclick="editingVehicle=null; renderVehicles()">Annuler</button></span></td>
     </tr>` : `
     <tr>
       <td data-label="Nom"><b>${esc(v.name)}</b></td>
       <td data-label="idTag">${v.id_tag ? esc(v.id_tag) : "–"}</td>
-      <td data-label="Batterie">${v.battery_capacity_kwh != null ? v.battery_capacity_kwh + " kWh" : "–"}</td>
+      <td data-label="Capacité batt.">${v.battery_capacity_kwh != null ? v.battery_capacity_kwh + " kWh" : "–"}</td>
+      <td data-label="Charges"><button class="linkbtn" onclick="openVehicleStatsModal(${v.id})">Voir la fiche</button></td>
       <td><span class="cell-actions"><button class="linkbtn" onclick="editingVehicle=${v.id}; renderVehicles()">Modifier</button><button class="linkbtn danger" onclick="deleteVehicle(${v.id})">Supprimer</button></span></td>
     </tr>`).join("");
 }
@@ -991,9 +1144,28 @@ async function saveVehicleEdit(id) {
   if (ok) { editingVehicle = null; loadVehicles(); }
 }
 async function deleteVehicle(id) {
-  if (!confirm("Supprimer ce véhicule ?")) return;
+  if (!confirm("Supprimer ce véhicule ?\n\nSes charges passées restent dans l'historique.")) return;
   await fetch(`api/vehicles/${id}`, { method: "DELETE", headers: authHeaders() });
   loadVehicles();
+}
+async function openVehicleStatsModal(vehicleId) {
+  openModalConnector = null;
+  openModal(`<div class="empty">Chargement…</div>`);
+  const data = await fetch(`api/vehicles/${vehicleId}/stats`, { headers: authHeaders() }).then(r => r.json());
+  const st = data.stats;
+  let html = `<div class="modal-head"><h2>${esc(data.name)}</h2>
+    <button class="btn btn-icon btn-ghost" onclick="closeModal()"><svg><use href="#i-close"/></svg></button></div>
+    <div class="small muted" style="margin:-.4rem 0 .8rem">${data.id_tag ? "Badge : " + esc(data.id_tag) + " · " : ""}${data.battery_capacity_kwh != null ? "Batterie " + data.battery_capacity_kwh + " kWh" : "Capacité batterie non renseignée"}</div>
+    <div class="stat-grid">
+      <div class="stat"><div class="sv">${st.charge_count}</div><div class="sl">Charges${st.external_count ? ` (${st.external_count} ext.)` : ""}</div></div>
+      <div class="stat"><div class="sv">${st.total_energy_kwh}</div><div class="sl">kWh cumulés</div></div>
+      <div class="stat"><div class="sv">${st.total_cost.toFixed(2)} €</div><div class="sl">Coût cumulé</div></div>
+      <div class="stat"><div class="sv">${st.total_km ? st.total_km + " km" : "–"}</div><div class="sl">Distance</div></div>
+      <div class="stat"><div class="sv">${st.avg_kwh_per_100km != null ? st.avg_kwh_per_100km : "–"}</div><div class="sl">kWh/100km moy.</div></div>
+      <div class="stat"><div class="sv">${st.last_odometer_km != null ? st.last_odometer_km : "–"}</div><div class="sl">Odomètre</div></div>
+    </div>`;
+  html += renderSessionsTable(data.sessions, true);
+  openModal(html);
 }
 
 /* ========================= ABONNEMENTS ========================= */
@@ -1118,42 +1290,116 @@ async function loadHistory() {
   const vid = document.getElementById("hist-vehicle-filter").value;
   let url = "api/history?limit=200"; if (vid) url += `&vehicle_id=${vid}`;
   cachedHistory = await fetch(url, { headers: authHeaders() }).then(r => r.json());
+  if (!cachedHistoryVehicles.length) await populateVehicleFilter();
   renderHistory();
 }
 function renderHistory() {
   const tb = document.querySelector("#history-table tbody");
-  if (!cachedHistory.length) { tb.innerHTML = `<tr><td colspan="13"><span class="empty">Aucune session</span></td></tr>`; return; }
+  if (!cachedHistory.length) { tb.innerHTML = `<tr><td colspan="17"><span class="empty">Aucune session</span></td></tr>`; return; }
   tb.innerHTML = cachedHistory.map(s => {
     const dur = formatDuration(s.duration_min);
-    if (editingHistoryId === s.id) return `<tr>
-      <td data-label="Borne">${esc(s.charger_id)}</td><td data-label="Conn.">${s.connector_id}</td>
-      <td data-label="Véhicule"><select id="he-veh-${s.id}"><option value="">(aucun)</option>${cachedHistoryVehicles.map(v => `<option value="${v.id}" ${s.vehicle_id === v.id ? "selected" : ""}>${esc(v.name)}</option>`).join("")}</select></td>
-      <td data-label="Début">${formatDateTime(s.start_time)}</td><td data-label="Fin">${formatDateTime(s.stop_time)}</td><td data-label="Durée">${dur}</td>
-      <td data-label="kWh">${kWh(s.energy_wh)}</td><td data-label="Coût">${eur(s.cost)}</td><td data-label="Tarif">${esc(s.tariff_plan_name || "–")}</td>
-      <td data-label="km"><input id="he-km-${s.id}" type="number" value="${s.odometer_km ?? ""}" style="width:80px"></td>
-      <td data-label="% min"><input id="he-pmin-${s.id}" type="number" min="0" max="100" value="${s.battery_percent_start ?? ""}" style="width:65px"></td>
-      <td data-label="% max"><input id="he-pmax-${s.id}" type="number" min="0" max="100" value="${s.battery_percent_end ?? 100}" style="width:65px"></td>
-      <td><span class="cell-actions"><button class="linkbtn" onclick="saveHistoryEdit(${s.id})">Enregistrer</button><button class="linkbtn" onclick="editingHistoryId=null; renderHistory()">Annuler</button></span></td>
-    </tr>`;
+    const bornCell = s.is_external
+      ? `${esc(s.location_label || "Externe")} <span class="badge ext" style="padding:.05rem .35rem">ext</span>`
+      : esc(s.charger_id || "–");
+    if (editingHistoryId === s.id) {
+      const extraExt = s.is_external ? `
+        <td data-label="Lieu"><input id="he-loc-${s.id}" value="${esc(s.location_label || "")}" style="width:110px"></td>` : `<td></td>`;
+      return `<tr>
+        <td data-label="Borne">${bornCell}</td><td data-label="Conn.">${s.connector_id ?? "–"}</td>
+        <td data-label="Véhicule"><select id="he-veh-${s.id}"><option value="">(aucun)</option>${cachedHistoryVehicles.map(v => `<option value="${v.id}" ${s.vehicle_id === v.id ? "selected" : ""}>${esc(v.name)}</option>`).join("")}</select></td>
+        <td data-label="Début">${formatDateTime(s.start_time)}</td><td data-label="Fin">${formatDateTime(s.stop_time)}</td><td data-label="Durée">${dur}</td>
+        <td data-label="kWh">${s.is_external ? `<input id="he-kwh-${s.id}" type="number" step="0.01" value="${(s.energy_wh/1000).toFixed(2)}" style="width:80px">` : kWh(s.energy_wh)}</td>
+        <td data-label="P. max">${kW(s.power_max_w)}</td>
+        <td data-label="Coût">${s.is_external ? `<input id="he-cost-${s.id}" type="number" step="0.01" value="${s.cost ?? ""}" style="width:80px">` : eur(s.cost)}</td>
+        <td data-label="Tarif">${esc(s.tariff_plan_name || "–")}</td>
+        <td data-label="km"><input id="he-km-${s.id}" type="number" value="${s.odometer_km ?? ""}" style="width:80px"></td>
+        <td data-label="km parc.">${num(s.km_since_last)}</td>
+        <td data-label="kWh/100">${s.kwh_per_100km != null ? s.kwh_per_100km : "–"}</td>
+        <td data-label="% init."><input id="he-pmin-${s.id}" type="number" min="0" max="100" value="${s.battery_percent_start ?? ""}" style="width:65px"></td>
+        <td data-label="% fin"><input id="he-pmax-${s.id}" type="number" min="0" max="100" value="${s.battery_percent_end ?? ""}" style="width:65px"></td>
+        <td data-label="Recharge">${s.battery_recharge_percent != null ? s.battery_recharge_percent + " %" : "–"}</td>
+        <td><span class="cell-actions"><button class="linkbtn" onclick="saveHistoryEdit(${s.id}, ${s.is_external})">Enregistrer</button><button class="linkbtn" onclick="editingHistoryId=null; renderHistory()">Annuler</button></span></td>
+      </tr>`;
+    }
+    const est = s.battery_percent_end_est != null && s.battery_percent_end == null ? ` <span class="tiny muted">(~${s.battery_percent_end_est})</span>` : "";
     return `<tr>
-      <td data-label="Borne">${esc(s.charger_id)}</td><td data-label="Conn.">${s.connector_id}</td><td data-label="Véhicule">${esc(s.vehicle_name || "–")}</td>
+      <td data-label="Borne">${bornCell}</td><td data-label="Conn.">${s.connector_id ?? "–"}</td><td data-label="Véhicule">${esc(s.vehicle_name || "–")}</td>
       <td data-label="Début">${formatDateTime(s.start_time)}</td><td data-label="Fin">${formatDateTime(s.stop_time)}</td><td data-label="Durée">${dur}</td>
-      <td data-label="kWh">${kWh(s.energy_wh)}</td><td data-label="Coût">${eur(s.cost)}</td><td data-label="Tarif">${esc(s.tariff_plan_name || "–")}</td>
-      <td data-label="km">${s.odometer_km ?? "–"}</td><td data-label="% min">${s.battery_percent_start ?? "–"}</td><td data-label="% max">${s.battery_percent_end ?? "–"}</td>
-      <td><button class="linkbtn" onclick="editingHistoryId=${s.id}; renderHistory()">Modifier</button></td>
+      <td data-label="kWh">${kWh(s.energy_wh)}</td><td data-label="P. max">${kW(s.power_max_w)}</td><td data-label="Coût">${eur(s.cost)}</td><td data-label="Tarif">${esc(s.tariff_plan_name || "–")}</td>
+      <td data-label="km">${num(s.odometer_km)}</td><td data-label="km parc.">${num(s.km_since_last)}</td><td data-label="kWh/100">${s.kwh_per_100km != null ? s.kwh_per_100km : "–"}</td>
+      <td data-label="% init.">${num(s.battery_percent_start)}</td><td data-label="% fin">${num(s.battery_percent_end)}${est}</td>
+      <td data-label="Recharge">${s.battery_recharge_percent != null ? s.battery_recharge_percent + " %" : "–"}</td>
+      <td><span class="cell-actions"><button class="linkbtn" onclick="editingHistoryId=${s.id}; renderHistory()">Modifier</button>${s.is_external ? `<button class="linkbtn danger" onclick="deleteSession(${s.id})">Suppr.</button>` : ""}</span></td>
     </tr>`;
   }).join("");
 }
-async function saveHistoryEdit(id) {
-  const num = v => v !== "" ? parseFloat(v) : null;
+async function saveHistoryEdit(id, isExternal) {
+  const n = v => v !== "" && v != null ? parseFloat(v) : null;
   const body = {
     vehicle_id: document.getElementById(`he-veh-${id}`).value ? parseInt(document.getElementById(`he-veh-${id}`).value, 10) : null,
-    odometer_km: num(document.getElementById(`he-km-${id}`).value),
-    battery_percent_start: num(document.getElementById(`he-pmin-${id}`).value),
-    battery_percent_end: num(document.getElementById(`he-pmax-${id}`).value),
+    odometer_km: n(document.getElementById(`he-km-${id}`).value),
+    battery_percent_start: n(document.getElementById(`he-pmin-${id}`).value),
+    battery_percent_end: n(document.getElementById(`he-pmax-${id}`).value),
   };
+  if (isExternal) {
+    const kwhEl = document.getElementById(`he-kwh-${id}`), costEl = document.getElementById(`he-cost-${id}`), locEl = document.getElementById(`he-loc-${id}`);
+    if (kwhEl) body.energy_kwh = n(kwhEl.value);
+    if (costEl) body.cost = n(costEl.value);
+    if (locEl) body.location_label = locEl.value.trim() || null;
+  }
   const { ok } = await apiCall(`api/sessions/${id}`, { method: "PUT", headers: jsonHeaders(), body: JSON.stringify(body) }, "Enregistré");
   if (ok) { editingHistoryId = null; loadHistory(); }
+}
+async function deleteSession(id) {
+  if (!confirm("Supprimer cette charge externe ?")) return;
+  const { ok } = await apiCall(`api/sessions/${id}`, { method: "DELETE", headers: authHeaders() }, "Supprimée");
+  if (ok) loadHistory();
+}
+
+/* --- Ajout d'une charge externe (borne tierce) --- */
+async function openExternalChargeModal() {
+  const vehicles = await fetch("api/vehicles", { headers: authHeaders() }).then(r => r.json());
+  const now = new Date();
+  const localIso = new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+  const html = `<div class="modal-head"><h2>Charge externe</h2>
+    <button class="btn btn-icon btn-ghost" onclick="closeModal()"><svg><use href="#i-close"/></svg></button></div>
+    <p class="small muted" style="margin:0 0 .8rem">Enregistrez une charge réalisée sur une borne tierce, pour garder une continuité de suivi du véhicule (coût, kWh, km, %).</p>
+    <div class="cluster">
+      <label class="field" style="flex:1; min-width:160px"><span>Véhicule</span>
+        <select id="ext-veh">${vehicles.map(v => `<option value="${v.id}">${esc(v.name)}</option>`).join("") || `<option value="">(aucun véhicule)</option>`}</select></label>
+      <label class="field"><span>Lieu (optionnel)</span><input id="ext-loc" placeholder="ex. Ionity A6"></label>
+    </div>
+    <div class="cluster" style="margin-top:.6rem">
+      <label class="field"><span>Énergie kWh</span><input id="ext-kwh" type="number" step="0.01" style="width:110px"></label>
+      <label class="field"><span>Coût € (optionnel)</span><input id="ext-cost" type="number" step="0.01" style="width:120px"></label>
+      <label class="field"><span>Date/heure</span><input id="ext-when" type="datetime-local" value="${localIso}"></label>
+    </div>
+    <div class="cluster" style="margin-top:.6rem">
+      <label class="field"><span>km (optionnel)</span><input id="ext-km" type="number" style="width:110px"></label>
+      <label class="field"><span>% init.</span><input id="ext-pmin" type="number" min="0" max="100" style="width:80px"></label>
+      <label class="field"><span>% fin</span><input id="ext-pmax" type="number" min="0" max="100" style="width:80px"></label>
+    </div>
+    <div class="cluster" style="margin-top:1rem; justify-content:flex-end">
+      <button class="btn" onclick="closeModal()">Annuler</button>
+      <button class="btn btn-primary" onclick="createExternalCharge()">Enregistrer</button>
+    </div>`;
+  openModal(html);
+}
+async function createExternalCharge() {
+  const n = id => { const v = document.getElementById(id).value; return v !== "" ? parseFloat(v) : null; };
+  const vid = document.getElementById("ext-veh").value;
+  if (!vid) { toast("Véhicule requis", "err"); return; }
+  const kwh = n("ext-kwh");
+  if (kwh == null) { toast("Énergie requise", "err"); return; }
+  const when = document.getElementById("ext-when").value;
+  const body = {
+    vehicle_id: parseInt(vid, 10), energy_kwh: kwh, cost: n("ext-cost"),
+    location_label: document.getElementById("ext-loc").value.trim() || null,
+    start_time: when || null, stop_time: when || null,
+    odometer_km: n("ext-km"), battery_percent_start: n("ext-pmin"), battery_percent_end: n("ext-pmax"),
+  };
+  const { ok } = await apiCall("api/external-charges", { method: "POST", headers: jsonHeaders(), body: JSON.stringify(body) }, "Charge externe ajoutée");
+  if (ok) { closeModal(); if (currentView === "history") loadHistory(); }
 }
 
 /* ---------- PWA ---------- */

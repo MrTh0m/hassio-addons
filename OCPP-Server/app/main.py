@@ -17,6 +17,7 @@ from .api import router as api_router
 from .ws_adapter import StarletteWebSocketAdapter
 from .csms_local import LocalChargePoint, CONNECTED_CHARGERS
 from .relay import run_relay
+from .scheduler import run_scheduler
 from . import mqtt_bridge
 
 logging.basicConfig(level=logging.INFO)
@@ -133,9 +134,10 @@ async def on_startup():
     init_db()
     _reconcile_stale_transactions()
     asyncio.create_task(mqtt_bridge.run_mqtt_bridge())
+    asyncio.create_task(run_scheduler())
 
 
-APP_VERSION = "0.15.1"
+APP_VERSION = "0.16.0"
 
 
 @app.get("/healthz")
@@ -198,6 +200,11 @@ async def ocpp_endpoint(websocket: WebSocket, charge_point_id: str):
             # en mode local par défaut, modifiable ensuite via l'API.
             charger = Charger(id=charge_point_id, mode=ChargerMode.local)
             db.add(charger)
+            db.commit()
+        elif charger.deleted_at is not None:
+            # Une borne précédemment retirée du CSMS se reconnecte : on la
+            # restaure (son historique n'avait pas été supprimé).
+            charger.deleted_at = None
             db.commit()
         mode = charger.mode
         relay_url = charger.relay_url

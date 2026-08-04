@@ -5,7 +5,7 @@ from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.orm import sessionmaker
 
 from .models import Base, User, UserRole
-from .auth import hash_password
+from .auth import hash_password, verify_password
 
 logger = logging.getLogger("db")
 
@@ -41,10 +41,36 @@ def _migrate_schema():
                 conn.execute(text(f'ALTER TABLE "{table.name}" ADD COLUMN "{column.name}" {col_type}'))
 
 
+def _sync_admin_password(db):
+    """Aligne le mot de passe du compte admin sur la valeur configurée dans
+    l'add-on (option `admin_password` -> OCPP_ADMIN_PASSWORD).
+
+    Sans ça, le mot de passe n'était pris en compte qu'à la toute première
+    création du compte : le modifier ensuite depuis la page de configuration
+    Home Assistant n'avait aucun effet (le compte existait déjà), d'où le
+    fait que seul le mot de passe par défaut restait accepté.
+
+    On ne réécrit le hash que si le mot de passe configuré ne correspond plus
+    à celui en base, pour ne pas invalider inutilement les sessions à chaque
+    démarrage. Un jeton sentinelle (`__keep__`) permet de ne PAS toucher au
+    mot de passe (utile si l'utilisateur l'a changé par un autre moyen)."""
+    configured = os.environ.get("OCPP_ADMIN_PASSWORD")
+    if not configured or configured == "__keep__":
+        return
+    admin = db.query(User).filter(User.username == "admin").first()
+    if not admin:
+        return
+    if not verify_password(configured, admin.password_hash):
+        admin.password_hash = hash_password(configured)
+        db.commit()
+        logger.info("Mot de passe du compte admin mis à jour depuis la configuration de l'add-on")
+
+
 def init_db():
     Base.metadata.create_all(engine)
     _migrate_schema()
-    # Crée un compte admin par défaut si aucun utilisateur n'existe encore
+    # Crée un compte admin par défaut si aucun utilisateur n'existe encore,
+    # puis aligne son mot de passe sur la configuration de l'add-on.
     db = SessionLocal()
     try:
         if db.query(User).count() == 0:
@@ -56,6 +82,8 @@ def init_db():
             )
             db.add(admin)
             db.commit()
+        else:
+            _sync_admin_password(db)
     finally:
         db.close()
 

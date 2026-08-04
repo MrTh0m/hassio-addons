@@ -45,20 +45,29 @@ class Charger(Base):
     tariff_plan_id = Column(Integer, ForeignKey("tariff_plans.id"), nullable=True)
     last_seen = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
+    # Suppression logique : une borne retirée du CSMS (remplacement, panne...)
+    # n'est plus listée ni pilotée, mais ses transactions restent en base pour
+    # ne pas perdre l'historique de charge déjà accumulé. NULL = active.
+    deleted_at = Column(DateTime, nullable=True)
 
     transactions = relationship("Transaction", back_populates="charger")
     meter_values = relationship("MeterValue", back_populates="charger")
     config_keys = relationship("ConfigurationKey", back_populates="charger")
     connector_statuses = relationship("ConnectorStatus", back_populates="charger")
     tariff_plan = relationship("TariffPlan", back_populates="chargers")
+    charge_conditions = relationship(
+        "ChargeCondition", back_populates="charger", cascade="all, delete-orphan",
+    )
 
 
 class Transaction(Base):
     __tablename__ = "transactions"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    charger_id = Column(String, ForeignKey("chargers.id"), nullable=False)
-    connector_id = Column(Integer, nullable=False)
+    # NULL pour une charge "externe" saisie à la main (réalisée sur une borne
+    # tierce, hors de ce CSMS), pour garder une continuité de suivi du véhicule.
+    charger_id = Column(String, ForeignKey("chargers.id"), nullable=True)
+    connector_id = Column(Integer, nullable=True)
     id_tag = Column(String, nullable=True)
     vehicle_id = Column(Integer, ForeignKey("vehicles.id"), nullable=True)
     meter_start = Column(Float, nullable=True)
@@ -66,6 +75,11 @@ class Transaction(Base):
     start_time = Column(DateTime, default=datetime.utcnow)
     stop_time = Column(DateTime, nullable=True)
     status = Column(String, default="active")  # active | completed
+
+    # Charge saisie manuellement (borne tierce). L'énergie et le coût sont
+    # renseignés directement par l'utilisateur, pas issus de MeterValues OCPP.
+    is_external = Column(Boolean, default=False)
+    location_label = Column(String, nullable=True)  # ex. "Ionity A6", libellé libre
 
     # Figés au moment de la clôture (StopTransaction), pour qu'une modification
     # ultérieure des tarifs (prix, suppression d'une période...) n'altère
@@ -132,8 +146,11 @@ class Vehicle(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     name = Column(String, nullable=False)
     id_tag = Column(String, nullable=True, unique=True)  # badge associé à ce véhicule
-    battery_capacity_kwh = Column(Float, nullable=True)
+    battery_capacity_kwh = Column(Float, nullable=True)  # capacité de la batterie
     created_at = Column(DateTime, default=datetime.utcnow)
+    # Suppression logique : mêmes raisons que pour Charger (on conserve les
+    # transactions rattachées pour ne pas fausser l'historique). NULL = actif.
+    deleted_at = Column(DateTime, nullable=True)
 
     transactions = relationship("Transaction", back_populates="vehicle")
 
@@ -171,6 +188,43 @@ class TariffPeriod(Base):
     end_time = Column(String, nullable=False)  # "HH:MM" ; si < start_time, chevauche minuit
 
     plan = relationship("TariffPlan", back_populates="periods")
+
+
+class ChargeConditionType(str, enum.Enum):
+    """Nature d'une condition de charge programée sur une borne.
+
+    - off_peak     : ne charger que pendant les heures creuses du tarif actif
+                     de la borne (plages nommées du TariffPlan). Dès qu'on sort
+                     d'une plage, la charge est suspendue ; elle reprend à la
+                     plage suivante.
+    - start_after  : différer le début de charge jusqu'à une heure donnée.
+    - ready_by     : viser une fin de charge à une heure donnée. Sans estimation
+                     fiable de durée, on démarre immédiatement mais on garde la
+                     borne autorisée ; sert surtout de repère / déclencheur
+                     futur (SmartCharging).
+    """
+    off_peak = "off_peak"
+    start_after = "start_after"
+    ready_by = "ready_by"
+
+
+class ChargeCondition(Base):
+    """Contrainte de programmation appliquée à une borne (mode local). Le
+    planificateur (scheduler.py) l'évalue périodiquement et pilote la charge
+    en conséquence : SetChargingProfile si la borne supporte SmartCharging,
+    sinon RemoteStart/RemoteStop."""
+    __tablename__ = "charge_conditions"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    charger_id = Column(String, ForeignKey("chargers.id"), nullable=False)
+    connector_id = Column(Integer, nullable=True)  # NULL = tous les connecteurs
+    type = Column(Enum(ChargeConditionType), nullable=False)
+    # Heure "HH:MM" pour start_after / ready_by. Ignoré pour off_peak.
+    time_value = Column(String, nullable=True)
+    enabled = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    charger = relationship("Charger", back_populates="charge_conditions")
 
 
 class UserRole(str, enum.Enum):

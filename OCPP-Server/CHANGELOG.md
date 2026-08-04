@@ -1,5 +1,45 @@
 # Changelog
 
+## 0.16.0
+
+Grosse mise à jour fonctionnelle : programmation de la charge, suivi enrichi, fiches statistiques et correctif du mot de passe.
+
+### Corrections
+
+- **Fix : le changement de mot de passe depuis la configuration de l'add-on ne prenait pas effet.** Le hash de l'admin n'était écrit qu'à la toute première création du compte ; modifier `admin_password` dans les options HA ensuite n'avait aucun effet. Désormais, à chaque démarrage, le mot de passe de l'admin est resynchronisé avec la valeur des options (sentinelle `__keep__` pour ne pas toucher un mot de passe déjà changé en base si on laisse le champ à sa valeur par défaut).
+
+### Programmation de la charge (nouveau)
+
+- **Conditions de charge par borne** : heures creuses uniquement, départ différé après une heure, ou charge terminée pour une heure. Plusieurs conditions se cumulent (ET logique) et ne s'appliquent qu'à un connecteur branché. Un planificateur tourne en tâche de fond (tick 60 s).
+- **Pilotage « les deux »** : le serveur utilise **SmartCharging** (`SetChargingProfile` / `ClearChargingProfile`) quand la borne le supporte, et bascule automatiquement sur démarrage/arrêt (`RemoteStart`/`RemoteStop`) sinon. Le support SmartCharging est détecté et mémorisé par borne.
+- Nouveaux endpoints : `GET/POST /api/chargers/{id}/conditions`, `PUT/DELETE /api/chargers/{id}/conditions/{cid}`.
+- À propos du délestage OCPP 1.6 côté CSMS : une borne délestée passe le connecteur en `SuspendedEVSE` (ou `SuspendedEV` si c'est le véhicule qui limite) **sans clore la transaction**. L'appli reconnaît ces états et les affiche comme « suspendu / délestage » (puce orangée) plutôt que comme une fin de charge ; la logique de clôture auto (qui ne se déclenche que sur `Available`) n'est donc pas triggerée à tort.
+
+### Suivi et historique enrichis
+
+- **Nouvelles colonnes dans l'historique** : puissance max de la charge, km parcourus depuis la charge précédente du même véhicule, et kWh/100km.
+- **Taux de recharge de la batterie** : calculé à partir de la capacité du véhicule et de l'énergie délivrée, avec une **estimation du % final** à partir du « % init. ». Affiché dans l'historique et dans « Charge en cours ».
+- **Renommage** : « % min » / « % max » deviennent « % init. » / « % fin » (plus clair : état au branchement / à la fin).
+- **Charges externes** : possibilité d'enregistrer une charge faite sur une borne tierce (énergie, coût, lieu, date, km, %), pour garder une continuité de suivi par véhicule. Éditable et supprimable dans l'historique. Nouvel endpoint `POST /api/external-charges` ; `DELETE /api/sessions/{id}`.
+
+### Fiches et indicateurs
+
+- **Fiche statistiques par véhicule** : nombre de charges (dont externes), kWh et coût cumulés, distance, kWh/100km moyen, odomètre, et historique détaillé des charges.
+- **Fiche statistiques par borne** : nombre de charges, kWh et coût cumulés, puissance max, et historique.
+- **Occupation de l'alimentation** (Accueil) : par abonnement électrique, jauge de la puissance délivrée à l'instant T rapportée à la puissance souscrite (kVA), avec code couleur (orange ≥ 70 %, rouge ≥ 90 %). Nouvel endpoint `GET /api/occupancy`.
+
+### Gestion et suppressions
+
+- **Suppression d'une borne du CSMS** (suppression douce) : la borne disparaît de la liste mais **son historique de charges est conservé** ; si elle se reconnecte, elle réapparaît automatiquement.
+- **Suppression d'un véhicule** (suppression douce) : ses charges passées restent dans l'historique, et son idTag est libéré.
+- **Renommage de la page « Abonnements » en « Abo. électrique »** (« Abo. » sur mobile), et le champ « Batterie » du véhicule devient « Capacité de la batterie ».
+
+### Interface
+
+- **Bornes disponibles (Accueil)** : le bouton « Démarrer » n'apparaît que lorsqu'un véhicule est effectivement branché (état *Preparing*) ; un connecteur *Available* n'affiche plus qu'une puce de statut.
+- **Détail d'un connecteur (onglet Bornes)** : la section démarrer/arrêter a été retirée (le détail devient lecture seule et renvoie vers l'Accueil pour agir), avec ajout d'une colonne « P. max » sur les sessions.
+- Éléments regroupés sur une même ligne et boutons d'action (fiche / suppression) placés directement sur chaque carte de borne.
+
 ## 0.15.1
 
 - **Démarrage automatique effectif au branchement (mode « sans autorisation »)** : en 0.15.0, une borne en mode `free` passait bien en *Preparing* quand on branchait un véhicule, mais rien ne lançait la charge (le simulateur — comme une borne sans free-vend configuré — n'émet pas de `StartTransaction` de lui-même). Le serveur envoie désormais un `RemoteStartTransaction` dès qu'un connecteur passe en *Preparing* en mode `free`, une seule fois par branchement (nouveau garde-fou `AUTO_START_ATTEMPTED`, réarmé au débranchement). Un arrêt manuel « véhicule encore branché » ne relance donc pas la charge.

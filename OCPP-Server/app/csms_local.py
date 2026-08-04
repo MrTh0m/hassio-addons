@@ -6,6 +6,8 @@ from ocpp.v16 import ChargePoint as ChargePoint16
 from ocpp.v16 import call, call_result
 from ocpp.v16.enums import (
     Action, RegistrationStatus, AuthorizationStatus, ConfigurationStatus,
+    ChargingProfilePurposeType, ChargingProfileKindType, ChargingRateUnitType,
+    ClearChargingProfileStatus,
 )
 
 from .db import SessionLocal
@@ -31,7 +33,12 @@ AUTO_START_ATTEMPTED: set[tuple[str, int]] = set()
 
 # idTags "système" toujours acceptés : ils ne proviennent que de nos propres
 # actions authentifiées (bouton de l'appli, commande MQTT, démarrage distant).
-RESERVED_TAGS = {"WEBADMIN", "MQTT"}
+RESERVED_TAGS = {"WEBADMIN", "MQTT", "SCHED"}
+
+# Support de SmartCharging par borne, tel que détecté via ChargeProfile.
+# True/False une fois testé, absent tant qu'inconnu. Sert au planificateur
+# pour choisir entre SetChargingProfile et un simple RemoteStart/Stop.
+SMART_CHARGING_SUPPORT: dict[str, bool] = {}
 
 
 def _auth_mode_value(charger) -> str:
@@ -362,3 +369,44 @@ class LocalChargePoint(ChargePoint16):
             finally:
                 db.close()
         return response.status
+
+    # --- SmartCharging (délestage / limitation pilotée par le CSMS) ---
+
+    async def set_charging_limit(self, connector_id: int, limit_w: float | None):
+        """Impose (ou libère) une limite de puissance sur un connecteur via un
+        profil TxDefault. limit_w=0 revient à suspendre la charge sans clore la
+        transaction (la borne passera en SuspendedEVSE). limit_w=None efface le
+        profil (retour à la pleine puissance). Retourne True si la borne a
+        accepté (et mémorise au passage qu'elle supporte SmartCharging)."""
+        try:
+            if limit_w is None:
+                resp = await self.call(call.ClearChargingProfile(
+                    connector_id=connector_id,
+                    charging_profile_purpose=ChargingProfilePurposeType.tx_default_profile,
+                ))
+                ok = getattr(resp, "status", None) in (
+                    ClearChargingProfileStatus.accepted, ClearChargingProfileStatus.unknown,
+                )
+            else:
+                profile = {
+                    "charging_profile_id": 1,
+                    "stack_level": 0,
+                    "charging_profile_purpose": ChargingProfilePurposeType.tx_default_profile,
+                    "charging_profile_kind": ChargingProfileKindType.absolute,
+                    "charging_schedule": {
+                        "charging_rate_unit": ChargingRateUnitType.watts,
+                        "charging_schedule_period": [
+                            {"start_period": 0, "limit": float(limit_w)},
+                        ],
+                    },
+                }
+                resp = await self.call(call.SetChargingProfile(
+                    connector_id=connector_id, cs_charging_profiles=profile,
+                ))
+                ok = getattr(resp, "status", None) == "Accepted"
+            SMART_CHARGING_SUPPORT[self.id] = bool(ok)
+            return bool(ok)
+        except Exception:
+            # La borne ne connaît pas ces messages : SmartCharging non supporté.
+            SMART_CHARGING_SUPPORT[self.id] = False
+            return False
