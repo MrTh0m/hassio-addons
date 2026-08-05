@@ -9,13 +9,13 @@ from sqlalchemy.orm import Session
 from .db import get_db
 from .models import (
     Charger, ChargerMode, AuthMode, Transaction, MeterValue, User, ConnectorStatus,
-    Vehicle, TariffPlan, TariffPeriod, ChargeCondition, ChargeConditionType,
+    Vehicle, TariffPlan, TariffPeriod, ChargeCondition, ChargeConditionType, ConfigurationKey,
 )
 from .pricing import (
     compute_session_cost, resolve_plan_for_charger, freeze_transaction_cost, price_at,
 )
 from .auth import verify_password, create_access_token, get_current_user, require_admin
-from .csms_local import CONNECTED_CHARGERS, PENDING_REMOTE_STARTS
+from .csms_local import CONNECTED_CHARGERS, PENDING_REMOTE_STARTS, SMART_CHARGING_SUPPORT
 
 router = APIRouter(prefix="/api")
 
@@ -48,6 +48,7 @@ def list_chargers(db: Session = Depends(get_db), user=Depends(get_current_user))
             "ocpp_version": c.ocpp_version, "mode": c.mode.value,
             "auth_mode": c.auth_mode.value if c.auth_mode else "free",
             "status": c.status, "connected": c.id in CONNECTED_CHARGERS,
+            "smart_charging": SMART_CHARGING_SUPPORT.get(c.id),
         }
         for c in chargers
     ]
@@ -85,6 +86,7 @@ def get_charger(charger_id: str, db: Session = Depends(get_db), user=Depends(get
         "auth_mode": charger.auth_mode.value if charger.auth_mode else "free",
         "status": charger.status, "connected": charger.id in CONNECTED_CHARGERS,
         "tariff_plan_id": charger.tariff_plan_id,
+        "smart_charging": SMART_CHARGING_SUPPORT.get(charger.id),
     }
 
 
@@ -338,7 +340,30 @@ def _serialize_sessions_with_km(sessions, db: Session) -> list[dict]:
         [s for s in sessions if s.start_time],
         key=lambda s: s.start_time,
     )
+    # Amorçage : pour chaque véhicule présent dans la fenêtre, on récupère en
+    # base l'odomètre de la DERNIÈRE charge ANTÉRIEURE à la plus ancienne charge
+    # affichée. Sans cela, la première charge de la fenêtre n'aurait jamais de
+    # "km parcourus" (sa précédente étant hors limite d'affichage).
     last_odo: dict[int, float] = {}
+    seen_first: set[int] = set()
+    for s in ordered:
+        if not s.vehicle_id or s.vehicle_id in seen_first:
+            continue
+        seen_first.add(s.vehicle_id)
+        prior = (
+            db.query(Transaction)
+            .filter(
+                Transaction.vehicle_id == s.vehicle_id,
+                Transaction.odometer_km.isnot(None),
+                Transaction.start_time.isnot(None),
+                Transaction.start_time < s.start_time,
+            )
+            .order_by(Transaction.start_time.desc())
+            .first()
+        )
+        if prior and prior.odometer_km is not None:
+            last_odo[s.vehicle_id] = prior.odometer_km
+
     prev_by_id: dict[int, Optional[float]] = {}
     for s in ordered:
         prev = last_odo.get(s.vehicle_id) if s.vehicle_id else None
@@ -916,6 +941,15 @@ def create_condition(
     ).first()
     if not charger:
         raise HTTPException(status_code=404, detail="Borne inconnue")
+    # La programmation repose sur SmartCharging (limitation à 0 W pour tenir la
+    # charge en pause sans clore la transaction). Si la borne a explicitement
+    # déclaré ne pas le supporter, on refuse : un repli par RemoteStop/Start
+    # serait trop brutal et peu fiable pour un simple report d'horaire.
+    if SMART_CHARGING_SUPPORT.get(charger_id) is False:
+        raise HTTPException(
+            status_code=409,
+            detail="Cette borne ne supporte pas SmartCharging : la programmation de charge n'est pas disponible.",
+        )
     if body.type in (ChargeConditionType.start_after, ChargeConditionType.ready_by) and not body.time_value:
         raise HTTPException(status_code=400, detail="Une heure est requise pour ce type de condition")
     cond = ChargeCondition(
@@ -958,4 +992,158 @@ def delete_condition(
         raise HTTPException(status_code=404, detail="Condition inconnue")
     db.delete(cond)
     db.commit()
+    return {"status": "ok"}
+
+
+# ============================ EXPORT / IMPORT ============================
+# Sauvegarde et restauration complètes des données et de la configuration.
+# Sérialisation générique par introspection des colonnes SQLAlchemy : pas de
+# liste de champs à maintenir, l'export suit automatiquement le schéma.
+
+import datetime as _dt
+import enum as _enum
+
+# Ordre d'insertion respectant les clés étrangères (parents avant enfants).
+_EXPORT_ORDER = [
+    TariffPlan, TariffPeriod, Vehicle, Charger, ChargeCondition,
+    Transaction, MeterValue, ConfigurationKey, ConnectorStatus,
+]
+_TABLE_BY_NAME = {m.__tablename__: m for m in _EXPORT_ORDER}
+
+
+def _serialize_row(obj) -> dict:
+    out = {}
+    for col in obj.__table__.columns:
+        v = getattr(obj, col.name)
+        if isinstance(v, _dt.datetime):
+            v = {"__dt__": v.isoformat()}
+        elif isinstance(v, _enum.Enum):
+            v = v.value  # Enum (y compris héritant de str) -> valeur brute
+        out[col.name] = v
+    return out
+
+
+def _deserialize_value(col, raw):
+    if isinstance(raw, dict) and "__dt__" in raw:
+        return _parse_iso(raw["__dt__"])
+    return raw
+
+
+@router.get("/export")
+def export_data(db: Session = Depends(get_db), user=Depends(require_admin)):
+    """Exporte l'intégralité des données et de la configuration au format JSON
+    (un tableau de lignes par table). Réimportable via POST /import. Le mot de
+    passe admin (table users) n'est volontairement pas inclus."""
+    from . import main as _main  # pour APP_VERSION, sans import circulaire au chargement
+    payload = {"tables": {}}
+    for model in _EXPORT_ORDER:
+        rows = db.query(model).all()
+        payload["tables"][model.__tablename__] = [_serialize_row(r) for r in rows]
+    payload["meta"] = {
+        "version": getattr(_main, "APP_VERSION", None),
+        "exported_at": _dt.datetime.utcnow().isoformat(),
+    }
+    return payload
+
+
+class ImportBody(BaseModel):
+    mode: str = "merge"  # "replace" (écrase tout) ou "merge" (complète / met à jour)
+    tables: dict
+
+
+@router.post("/import")
+def import_data(body: ImportBody, db: Session = Depends(get_db), user=Depends(require_admin)):
+    """Réimporte des données exportées. Deux modes :
+
+    - replace : vide d'abord toutes les tables concernées, puis réinsère à
+      l'identique (mêmes identifiants). Restauration fidèle d'une sauvegarde.
+    - merge   : insère ou met à jour ligne par ligne (par clé primaire) sans
+      rien supprimer de ce qui n'est pas dans le fichier.
+
+    La table des utilisateurs n'est jamais touchée (le mot de passe reste
+    celui en place). Opération transactionnelle : tout ou rien.
+    """
+    mode = (body.mode or "merge").lower()
+    if mode not in ("replace", "merge"):
+        raise HTTPException(status_code=400, detail="Mode invalide (replace|merge)")
+    tables = body.tables or {}
+
+    try:
+        if mode == "replace":
+            # Suppression enfants -> parents (ordre inverse de l'insertion).
+            for model in reversed(_EXPORT_ORDER):
+                if model.__tablename__ in tables:
+                    db.query(model).delete()
+            db.flush()
+
+        for model in _EXPORT_ORDER:
+            rows = tables.get(model.__tablename__)
+            if not rows:
+                continue
+            cols = {c.name: c for c in model.__table__.columns}
+            pk_names = [c.name for c in model.__table__.primary_key.columns]
+            for raw in rows:
+                data = {k: _deserialize_value(cols[k], v) for k, v in raw.items() if k in cols}
+                obj = None
+                if mode == "merge" and len(pk_names) == 1:
+                    pk = data.get(pk_names[0])
+                    if pk is not None:
+                        obj = db.get(model, pk)
+                if obj is None:
+                    db.add(model(**data))
+                else:
+                    for k, v in data.items():
+                        if k not in pk_names:
+                            setattr(obj, k, v)
+            db.flush()
+        db.commit()
+    except Exception as exc:
+        db.rollback()
+        raise HTTPException(status_code=400, detail=f"Import échoué : {exc}")
+
+    return {"status": "ok", "mode": mode}
+
+
+# ============================ JOURNAL OCPP (live) ============================
+# Flux de diagnostic en mémoire : voir en direct les messages OCPP échangés
+# avec les bornes (local et relais, les deux sens). Non persisté.
+
+from . import ocpp_logs
+
+
+@router.get("/logs")
+def get_logs(
+    charger_id: Optional[str] = None, action: Optional[str] = None,
+    direction: Optional[str] = None, since_id: int = 0, limit: int = 500,
+    user=Depends(get_current_user),
+):
+    return {
+        "capture_high_volume": ocpp_logs.is_capturing_high_volume(),
+        "entries": ocpp_logs.get_entries(
+            charger_id=charger_id, action=action, direction=direction,
+            since_id=since_id, limit=limit,
+        ),
+    }
+
+
+@router.get("/logs/chargers")
+def get_logs_chargers(user=Depends(get_current_user)):
+    """Bornes ayant produit au moins une entrée (pour alimenter le filtre)."""
+    return ocpp_logs.known_chargers()
+
+
+class LogSettings(BaseModel):
+    capture_high_volume: bool
+
+
+@router.put("/logs/settings")
+def set_logs_settings(body: LogSettings, user=Depends(require_admin)):
+    """Active/désactive la capture des messages à fort volume (MeterValues)."""
+    ocpp_logs.set_capture_high_volume(body.capture_high_volume)
+    return {"capture_high_volume": ocpp_logs.is_capturing_high_volume()}
+
+
+@router.delete("/logs")
+def clear_logs(user=Depends(require_admin)):
+    ocpp_logs.clear()
     return {"status": "ok"}

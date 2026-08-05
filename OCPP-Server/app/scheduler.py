@@ -87,6 +87,41 @@ def should_charge_now(condition_type, time_value, plan, now: datetime,
     return True
 
 
+def connector_should_charge_now(db, charger, connector_id: int, now: datetime | None = None) -> bool:
+    """Décision partagée (même logique ET que le planificateur) pour savoir si
+    un connecteur donné a le droit de charger à l'instant présent, compte tenu
+    des conditions de programmation définies sur la borne.
+
+    Renvoie True s'il n'y a aucune condition applicable (comportement par
+    défaut : la charge est autorisée). Utilisé aussi par le handler local pour
+    suspendre IMMÉDIATEMENT au StartTransaction, sans attendre le prochain tick.
+    """
+    if now is None:
+        now = datetime.utcnow()
+    conds = (
+        db.query(ChargeCondition)
+        .filter(
+            ChargeCondition.charger_id == charger.id,
+            ChargeCondition.enabled.is_(True),
+        )
+        .all()
+    )
+    # On ne garde que les conditions visant ce connecteur (ou toutes : NULL).
+    applicable = [c for c in conds if c.connector_id in (None, connector_id)]
+    if not applicable:
+        return True
+    plan = resolve_plan_for_charger(db, charger)
+    has_active = db.query(Transaction).filter(
+        Transaction.charger_id == charger.id,
+        Transaction.connector_id == connector_id,
+        Transaction.status == "active",
+    ).first() is not None
+    return all(
+        should_charge_now(c.type, c.time_value, plan, now, has_active)
+        for c in applicable
+    )
+
+
 async def _apply(cp, charger_id: str, connector_id: int, should_charge: bool,
                  has_active_txn: bool):
     """Applique l'intention sur un connecteur, en choisissant la stratégie

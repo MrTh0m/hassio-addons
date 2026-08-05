@@ -137,7 +137,7 @@ async def on_startup():
     asyncio.create_task(run_scheduler())
 
 
-APP_VERSION = "0.16.0"
+APP_VERSION = "0.17.0"
 
 
 @app.get("/healthz")
@@ -219,7 +219,8 @@ async def ocpp_endpoint(websocket: WebSocket, charge_point_id: str):
                 logger.error("Borne %s en mode relais sans relay_url configurée", charge_point_id)
                 await websocket.close()
                 return
-            await run_relay(charge_point_id, relay_url, websocket, subprotocol)
+            await run_relay(charge_point_id, relay_url, websocket, subprotocol,
+                            incoming_headers=websocket.headers)
         else:
             connection = StarletteWebSocketAdapter(websocket)
             cp = LocalChargePoint(charge_point_id, connection)

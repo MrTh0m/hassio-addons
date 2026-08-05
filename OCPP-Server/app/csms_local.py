@@ -1,4 +1,5 @@
 import asyncio
+import logging
 from datetime import datetime
 
 from ocpp.routing import on
@@ -14,9 +15,12 @@ from .db import SessionLocal
 from .models import Charger, ChargerMode, Transaction, MeterValue, ConfigurationKey, ConnectorStatus, Vehicle
 from .pricing import freeze_transaction_cost
 from . import mqtt_bridge
+from . import ocpp_logs
 
 # Registre des bornes actuellement connectées en mode local, pour que l'API
 # puisse leur envoyer des commandes (RemoteStart, ChangeConfiguration, ...).
+logger = logging.getLogger("csms_local")
+
 CONNECTED_CHARGERS: dict[str, "LocalChargePoint"] = {}
 
 # Démarrages distants en attente : quand l'appli lance une charge pour un
@@ -81,6 +85,9 @@ class LocalChargePoint(ChargePoint16):
 
     @on(Action.boot_notification)
     async def on_boot_notification(self, charge_point_vendor, charge_point_model, **kwargs):
+        ocpp_logs.record(self.id, "in", "BootNotification",
+                         summary=f"{charge_point_vendor} {charge_point_model}",
+                         payload={"vendor": charge_point_vendor, "model": charge_point_model, **kwargs})
         db = self._db()
         try:
             charger = self._get_or_create_charger(db)
@@ -93,18 +100,45 @@ class LocalChargePoint(ChargePoint16):
         finally:
             db.close()
 
+        # Détection proactive du support SmartCharging : on lit la clé
+        # standard SupportedFeatureProfiles. Fait en tâche de fond pour ne pas
+        # retarder la réponse Boot (et parce que call() ne peut pas être appelé
+        # de façon synchrone depuis un handler).
+        asyncio.create_task(self._detect_smart_charging())
+
         return call_result.BootNotification(
             current_time=now_iso(),
             interval=300,
             status=RegistrationStatus.accepted,
         )
 
+    async def _detect_smart_charging(self):
+        """Interroge la borne sur ses profils de fonctionnalités supportés et
+        mémorise si SmartCharging en fait partie. Best-effort : en cas d'échec,
+        on laisse l'état 'inconnu', le premier SetChargingProfile tranchera."""
+        try:
+            ocpp_logs.record(self.id, "out", "GetConfiguration",
+                             summary="SupportedFeatureProfiles", payload={"key": ["SupportedFeatureProfiles"]})
+            resp = await self.call(call.GetConfiguration(key=["SupportedFeatureProfiles"]))
+            for item in getattr(resp, "configuration_key", None) or []:
+                if item.get("key") == "SupportedFeatureProfiles":
+                    val = (item.get("value") or "").lower()
+                    SMART_CHARGING_SUPPORT[self.id] = "smartcharging" in val
+                    logger.info("Borne %s : SmartCharging %s", self.id,
+                                "supporté" if SMART_CHARGING_SUPPORT[self.id] else "non supporté")
+                    return
+        except Exception:
+            logger.debug("Détection SmartCharging impossible pour %s", self.id, exc_info=True)
+
     @on(Action.heartbeat)
     async def on_heartbeat(self, **kwargs):
+        ocpp_logs.record(self.id, "in", "Heartbeat")
         return call_result.Heartbeat(current_time=now_iso())
 
     @on(Action.authorize)
     async def on_authorize(self, id_tag, **kwargs):
+        ocpp_logs.record(self.id, "in", "Authorize", summary=f"idTag={id_tag}",
+                         payload={"idTag": id_tag})
         # En mode 'authorized', on refuse un badge inconnu ; en mode 'free',
         # tout est accepté (voir _tag_is_authorized).
         db = self._db()
@@ -118,6 +152,10 @@ class LocalChargePoint(ChargePoint16):
 
     @on(Action.status_notification)
     async def on_status_notification(self, connector_id, status, **kwargs):
+        ocpp_logs.record(self.id, "in", "StatusNotification",
+                         summary=f"conn {connector_id} -> {status}",
+                         payload={"connectorId": connector_id, "status": status, **kwargs},
+                         connector_id=connector_id)
         db = self._db()
         closed_duration_min = None
         do_auto_start = False
@@ -182,7 +220,14 @@ class LocalChargePoint(ChargePoint16):
                         Transaction.connector_id == connector_id,
                         Transaction.status == "active",
                     ).first() is not None
-                    if not has_active:
+                    # Départ différé : si la programmation interdit la charge
+                    # maintenant, on ne déclenche PAS l'auto-start. On laisse le
+                    # connecteur en Preparing ; le planificateur lancera la
+                    # charge à l'heure prévue. (On ne lève pas le drapeau
+                    # AUTO_START_ATTEMPTED, pour réévaluer au prochain Preparing.)
+                    from .scheduler import connector_should_charge_now
+                    allowed_now = connector_should_charge_now(db, charger, connector_id)
+                    if not has_active and allowed_now:
                         AUTO_START_ATTEMPTED.add((self.id, connector_id))
                         do_auto_start = True
 
@@ -207,6 +252,10 @@ class LocalChargePoint(ChargePoint16):
 
     @on(Action.start_transaction)
     async def on_start_transaction(self, connector_id, id_tag, meter_start, **kwargs):
+        ocpp_logs.record(self.id, "in", "StartTransaction",
+                         summary=f"conn {connector_id}, idTag={id_tag}",
+                         payload={"connectorId": connector_id, "idTag": id_tag, "meterStart": meter_start, **kwargs},
+                         connector_id=connector_id)
         db = self._db()
         try:
             charger = db.query(Charger).filter(Charger.id == self.id).first()
@@ -239,18 +288,45 @@ class LocalChargePoint(ChargePoint16):
             db.commit()
             db.refresh(txn)
             txn_id = txn.id
+
+            # Départ différé : si une condition de programmation interdit la
+            # charge à cet instant, on accepte quand même la transaction (le
+            # câble reste verrouillé, la session vit) mais on demande aussitôt
+            # une limite 0 W pour maintenir la borne en SuspendedEVSE, sans
+            # attendre le prochain tick du planificateur. Le planificateur
+            # lèvera la limite à l'heure prévue.
+            suspend_now = False
+            if charger and charger.mode == ChargerMode.local:
+                from .scheduler import connector_should_charge_now
+                suspend_now = not connector_should_charge_now(db, charger, connector_id)
         finally:
             db.close()
 
         await mqtt_bridge.publish_charge_control_state(self.id, connector_id, True)
+
+        if suspend_now:
+            asyncio.create_task(self._suspend_for_schedule(connector_id))
 
         return call_result.StartTransaction(
             transaction_id=txn_id,
             id_tag_info={"status": AuthorizationStatus.accepted},
         )
 
+    async def _suspend_for_schedule(self, connector_id: int):
+        """Pose une limite 0 W (SuspendedEVSE) pour faire respecter un départ
+        différé dès le démarrage de la transaction. Sans effet si la borne ne
+        supporte pas SmartCharging (le repli RemoteStop du planificateur
+        prendra alors le relais au tick suivant)."""
+        try:
+            await self.set_charging_limit(connector_id, 0)
+        except Exception:
+            logger.debug("Suspension programmée échouée sur %s/%s", self.id, connector_id, exc_info=True)
+
     @on(Action.stop_transaction)
     async def on_stop_transaction(self, transaction_id, meter_stop, **kwargs):
+        ocpp_logs.record(self.id, "in", "StopTransaction",
+                         summary=f"txn {transaction_id}",
+                         payload={"transactionId": transaction_id, "meterStop": meter_stop, **kwargs})
         db = self._db()
         duration_min = None
         connector_id = None
@@ -280,6 +356,10 @@ class LocalChargePoint(ChargePoint16):
 
     @on(Action.meter_values)
     async def on_meter_values(self, connector_id, meter_value, transaction_id=None, **kwargs):
+        ocpp_logs.record(self.id, "in", "MeterValues",
+                         summary=f"conn {connector_id}",
+                         payload={"connectorId": connector_id, "transactionId": transaction_id, "meterValue": meter_value},
+                         connector_id=connector_id)
         db = self._db()
         mqtt_updates = {}
         try:
@@ -321,6 +401,10 @@ class LocalChargePoint(ChargePoint16):
     # --- Actions déclenchées depuis l'API (backoffice -> borne) ---
 
     async def trigger_remote_start(self, connector_id: int, id_tag: str):
+        ocpp_logs.record(self.id, "out", "RemoteStartTransaction",
+                         summary=f"conn {connector_id}, idTag={id_tag}",
+                         payload={"connectorId": connector_id, "idTag": id_tag},
+                         connector_id=connector_id)
         return await self.call(call.RemoteStartTransaction(
             connector_id=connector_id, id_tag=id_tag
         ))
@@ -335,6 +419,8 @@ class LocalChargePoint(ChargePoint16):
             AUTO_START_ATTEMPTED.discard((self.id, connector_id))
 
     async def trigger_remote_stop(self, transaction_id: int):
+        ocpp_logs.record(self.id, "out", "RemoteStopTransaction",
+                         summary=f"txn {transaction_id}", payload={"transactionId": transaction_id})
         return await self.call(call.RemoteStopTransaction(transaction_id=transaction_id))
 
     async def fetch_configuration(self):
@@ -355,6 +441,8 @@ class LocalChargePoint(ChargePoint16):
         return response.configuration_key
 
     async def push_configuration(self, key: str, value: str):
+        ocpp_logs.record(self.id, "out", "ChangeConfiguration",
+                         summary=f"{key} = {value}", payload={"key": key, "value": value})
         response = await self.call(call.ChangeConfiguration(key=key, value=value))
         if response.status == ConfigurationStatus.accepted:
             db = self._db()
@@ -380,6 +468,9 @@ class LocalChargePoint(ChargePoint16):
         accepté (et mémorise au passage qu'elle supporte SmartCharging)."""
         try:
             if limit_w is None:
+                ocpp_logs.record(self.id, "out", "ClearChargingProfile",
+                                 summary=f"conn {connector_id}", payload={"connectorId": connector_id},
+                                 connector_id=connector_id)
                 resp = await self.call(call.ClearChargingProfile(
                     connector_id=connector_id,
                     charging_profile_purpose=ChargingProfilePurposeType.tx_default_profile,
@@ -400,6 +491,10 @@ class LocalChargePoint(ChargePoint16):
                         ],
                     },
                 }
+                ocpp_logs.record(self.id, "out", "SetChargingProfile",
+                                 summary=f"conn {connector_id}, limite {limit_w} W",
+                                 payload={"connectorId": connector_id, "limitW": limit_w},
+                                 connector_id=connector_id)
                 resp = await self.call(call.SetChargingProfile(
                     connector_id=connector_id, cs_charging_profiles=profile,
                 ))

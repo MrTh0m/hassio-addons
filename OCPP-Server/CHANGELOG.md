@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.17.0
+
+Respect effectif de la programmation de charge, édition des charges revue, et sauvegarde/restauration des données.
+
+### Corrections
+
+- **Départ différé désormais respecté** même quand la charge est lancée depuis la borne : dès le démarrage de la transaction (et dès le branchement), le serveur impose une limite 0 W (SuspendedEVSE) si une condition de programmation l'exige, sans attendre le prochain cycle du planificateur. Le câble reste branché et verrouillé ; la charge démarre à l'heure prévue.
+- **Édition des anciennes charges** : la modification (affecter un véhicule, corriger le kilométrage, les niveaux de batterie) se fait maintenant dans une fenêtre dédiée, lisible et utilisable sur mobile, au lieu de l'édition en ligne d'un tableau à 17 colonnes.
+- **« Dernière charge »** : le formulaire de modification s'affiche désormais immédiatement au clic (il fallait auparavant changer de focus pour le voir apparaître).
+- **« km parcourus »** : le calcul de la distance depuis la charge précédente fonctionne même lorsque cette charge précédente est en dehors de la fenêtre d'historique affichée (recherche en base de l'odomètre antérieur).
+
+### Améliorations
+
+- **Détection du support SmartCharging** dès la connexion de la borne (lecture de `SupportedFeatureProfiles`). Si la borne ne le supporte pas, la programmation de charge est désactivée et clairement signalée (elle repose sur la limitation de puissance).
+- **Configuration d'une borne** : un seul bouton « Enregistrer les modifications » applique désormais le mode, l'autorisation et le tarif en une fois.
+- **Programmation** : le connecteur se choisit dans une liste déroulante (« Tous » ou un connecteur détecté) au lieu d'une saisie numérique.
+- **Sauvegarde et restauration** : export de l'intégralité des données et de la configuration au format JSON, et réimportation au choix en mode « Fusionner » (complète sans supprimer) ou « Remplacer » (restauration fidèle). Le mot de passe administrateur n'est pas inclus dans l'export.
+- **Vue « Logs »** : nouveau journal de diagnostic en direct des messages OCPP échangés avec les bornes, tous modes confondus (local et relais, les deux sens borne↔serveur). Filtrable par borne, type de message et sens ; chaque ligne dévoile la trame brute au clic. Les MeterValues, très fréquents, sont masqués par défaut et activables par un interrupteur. Journal en mémoire (non conservé au redémarrage), sans impact sur la base de données.
+- **Mode relais** : propagation des en-têtes d'authentification du handshake (par ex. HTTP Basic / clé OCPP `AuthorizationKey`) vers le serveur officiel, nécessaire pour les CSMS qui l'exigent (dont EcoStruxure). Journalisation des `DataTransfer` et des mesurandes propriétaires observés, pour diagnostiquer ce que la borne expose réellement.
+- **Identifiant de borne (chargePointId)** affiché explicitement sur les cartes de l'onglet Bornes et dans la fiche, avec en mode relais l'URL complète relayée vers le serveur officiel.
+
 ## 0.16.1
 
 Affinages de l'interface d'administration (aucun changement backend, l'API REST est inchangée).
