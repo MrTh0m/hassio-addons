@@ -323,6 +323,7 @@
   .stat .sl { font-size: .72rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: .04em; }
   .clickable { cursor: pointer; }
   .clickable:hover { background: var(--surface-2); }
+  code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: .85em; background: var(--surface-3); padding: .05rem .35rem; border-radius: 5px; }
 </style>
 </head>
 <body>
@@ -352,6 +353,9 @@
     <symbol id="i-info" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/></symbol>
     <symbol id="i-cog" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z"/></symbol>
     <symbol id="i-ext" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></symbol>
+    <symbol id="i-download" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></symbol>
+    <symbol id="i-upload" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21V9"/><path d="m7 14 5-5 5 5"/><path d="M5 3h14"/></symbol>
+    <symbol id="i-logs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 6h11M8 12h11M8 18h11"/><path d="M4 6h.01M4 12h.01M4 18h.01"/></symbol>
   </defs>
 </svg>
 
@@ -393,6 +397,7 @@
     <button class="navitem" data-nav="vehicles" onclick="switchView('vehicles')"><svg><use href="#i-car"/></svg><span class="navlabel">Véhicules</span><span class="navlabel-mobile">Autos</span></button>
     <button class="navitem" data-nav="tariffs" onclick="switchView('tariffs')"><svg><use href="#i-tariff"/></svg><span class="navlabel">Abo. électrique</span><span class="navlabel-mobile">Abo.</span></button>
     <button class="navitem" data-nav="history" onclick="switchView('history')"><svg><use href="#i-history"/></svg><span class="navlabel">Historique</span><span class="navlabel-mobile">Histo.</span></button>
+    <button class="navitem" data-nav="logs" onclick="switchView('logs')"><svg><use href="#i-logs"/></svg><span class="navlabel">Logs</span><span class="navlabel-mobile">Logs</span></button>
     <div class="nav-spacer"></div>
     <button class="navitem logout" onclick="logout()"><svg><use href="#i-logout"/></svg><span class="navlabel">Déconnexion</span></button>
   </aside>
@@ -495,6 +500,49 @@
             </tr></thead>
             <tbody></tbody>
           </table></div>
+        </div>
+
+        <div class="section-title">Données (sauvegarde)</div>
+        <div class="card form-card">
+          <p class="small muted" style="margin:.1rem 0 .8rem">Exportez l'intégralité des données et de la configuration (bornes, véhicules, abonnements, programmations, historique) dans un fichier JSON, ou réimportez une sauvegarde. Le mot de passe administrateur n'est pas inclus dans l'export.</p>
+          <div class="cluster">
+            <button class="btn btn-sm" onclick="exportData()"><svg><use href="#i-download"/></svg>Exporter (JSON)</button>
+            <button class="btn btn-sm" onclick="document.getElementById('import-file').click()"><svg><use href="#i-upload"/></svg>Importer…</button>
+            <input id="import-file" type="file" accept="application/json,.json" style="display:none" onchange="onImportFileChosen(event)">
+          </div>
+        </div>
+      </section>
+
+      <!-- LOGS -->
+      <section class="view" id="view-logs">
+        <div class="card">
+          <div class="cluster center" style="justify-content:space-between">
+            <div class="cluster center" style="gap:.6rem">
+              <label class="field"><span>Borne</span>
+                <select id="log-charger-filter" onchange="loadLogs(true)"><option value="">Toutes</option></select></label>
+              <label class="field"><span>Message</span>
+                <select id="log-action-filter" onchange="loadLogs(true)"><option value="">Tous</option></select></label>
+              <label class="field"><span>Sens</span>
+                <select id="log-direction-filter" onchange="loadLogs(true)">
+                  <option value="">Les deux</option>
+                  <option value="in">Borne → CSMS</option>
+                  <option value="out">CSMS → Borne</option>
+                </select></label>
+            </div>
+            <div class="cluster center" style="gap:.8rem">
+              <label class="cluster center" style="gap:.4rem; font-size:.85rem; cursor:pointer">
+                <input type="checkbox" id="log-live" checked onchange="onLiveToggle()"> En direct
+              </label>
+              <label class="cluster center" style="gap:.4rem; font-size:.85rem; cursor:pointer" title="Les MeterValues sont très fréquents ; désactivés par défaut">
+                <input type="checkbox" id="log-metervalues" onchange="onMeterValuesToggle()"> MeterValues
+              </label>
+              <button class="btn btn-sm" onclick="clearLogs()"><svg><use href="#i-trash"/></svg>Vider</button>
+            </div>
+          </div>
+        </div>
+        <div class="card" style="margin-top:.8rem">
+          <div class="tiny muted" style="margin-bottom:.5rem">Flux de diagnostic en mémoire (non conservé au redémarrage). Cliquez une ligne pour voir la trame brute.</div>
+          <div id="logs-list"><div class="empty">Aucun message pour l'instant.</div></div>
         </div>
       </section>
 
@@ -636,7 +684,7 @@ function pollTick() {
 
 /* ---------- Navigation ---------- */
 let currentView = "home";
-const viewTitles = { home: "Accueil", chargers: "Bornes", vehicles: "Véhicules", tariffs: "Abo. électrique", history: "Historique" };
+const viewTitles = { home: "Accueil", chargers: "Bornes", vehicles: "Véhicules", tariffs: "Abo. électrique", history: "Historique", logs: "Logs" };
 const viewLoaded = {};
 function switchView(name) {
   currentView = name;
@@ -645,12 +693,16 @@ function switchView(name) {
   document.querySelectorAll(".navitem[data-nav]").forEach(b => b.classList.toggle("active", b.dataset.nav === name));
   document.getElementById("view-title").textContent = viewTitles[name];
   const td = document.getElementById("view-title-desktop"); if (td) td.textContent = viewTitles[name];
-  const loaders = { home: loadHome, chargers: loadChargers, vehicles: loadVehicles, tariffs: loadTariffs, history: () => { populateVehicleFilter(); loadHistory(); } };
+  // La vue Logs gère son propre rafraîchissement « live » ; on l'arrête dès
+  // qu'on la quitte pour ne pas interroger l'API inutilement.
+  if (name !== "logs") stopLogsPolling();
+  const loaders = { home: loadHome, chargers: loadChargers, vehicles: loadVehicles, tariffs: loadTariffs, history: () => { populateVehicleFilter(); loadHistory(); }, logs: initLogsView };
   if (name === "home" || name === "chargers") loaders[name]();
+  else if (name === "logs") loaders[name]();
   else if (!viewLoaded[name]) { loaders[name](); viewLoaded[name] = true; }
 }
 function refreshCurrentView() {
-  const loaders = { home: loadHome, chargers: loadChargers, vehicles: loadVehicles, tariffs: loadTariffs, history: loadHistory };
+  const loaders = { home: loadHome, chargers: loadChargers, vehicles: loadVehicles, tariffs: loadTariffs, history: loadHistory, logs: () => loadLogs(true) };
   (loaders[currentView] || (() => {}))();
   toast("Rafraîchi", "ok");
 }
@@ -674,7 +726,7 @@ async function loadHome() {
   if (!isFocusWithin("home-occupancy")) renderOccupancy(occupancy);
   if (!isFocusWithin("home-current")) await renderHomeCurrent(active, chargers, condByCharger);
   if (!isFocusWithin("home-available")) await renderHomeAvailable(chargers, active, condByCharger);
-  if (!isFocusWithin("home-last")) renderHomeLast(lastCompleted);
+  if (!editingLast && !isFocusWithin("home-last")) renderHomeLast(lastCompleted);
 }
 
 /* Résume les conditions de programmation applicables à un connecteur donné
@@ -831,7 +883,16 @@ async function saveCurrentVehicle(sessionId) {
 
 /* Dernière charge — lecture seule + bouton Modifier */
 let editingLast = false;
+let lastCompletedCache = null;   // dernière charge terminée, pour re-render direct
+// Bascule l'édition et re-render IMMÉDIATEMENT le bloc, sans repasser par
+// loadHome() (dont le rendu de home-last est court-circuité quand le focus est
+// à l'intérieur, ce qui empêchait le formulaire d'apparaître au clic).
+function toggleLastEdit(editing) {
+  editingLast = editing;
+  renderHomeLast(lastCompletedCache);
+}
 function renderHomeLast(s) {
+  lastCompletedCache = s;
   const el = document.getElementById("home-last");
   if (!s) { el.innerHTML = `<div class="card"><div class="empty">Aucune charge terminée pour l'instant.</div></div>`; editingLast = false; return; }
 
@@ -849,7 +910,7 @@ function renderHomeLast(s) {
           ${s.tariff_plan_name ? `<span>${esc(s.tariff_plan_name)}</span>` : ""}
         </div>
       </div>
-      ${editingLast ? "" : `<button class="btn btn-sm" onclick="editingLast=true; loadHome();"><svg><use href="#i-edit"/></svg>Modifier</button>`}
+      ${editingLast ? "" : `<button class="btn btn-sm" onclick="toggleLastEdit(true)"><svg><use href="#i-edit"/></svg>Modifier</button>`}
     </div>`;
 
   if (!editingLast) {
@@ -871,7 +932,7 @@ function renderHomeLast(s) {
       <label class="field"><span>% fin</span><input id="home-last-pmax" type="number" min="0" max="100" value="${s.battery_percent_end ?? ""}" style="width:80px"></label>
       <div class="cluster" style="gap:.4rem">
         <button class="btn btn-primary btn-sm" onclick="saveHomeLast(${s.id})">Enregistrer</button>
-        <button class="btn btn-sm" onclick="editingLast=false; loadHome();">Annuler</button>
+        <button class="btn btn-sm" onclick="toggleLastEdit(false)">Annuler</button>
       </div>
     </div></div>`;
   fetch("api/vehicles", { headers: authHeaders() }).then(r => r.json()).then(vehicles => {
@@ -888,7 +949,7 @@ async function saveHomeLast(id) {
     battery_percent_end: n(document.getElementById("home-last-pmax").value),
   };
   const { ok } = await apiCall(`api/sessions/${id}`, { method: "PUT", headers: jsonHeaders(), body: JSON.stringify(body) }, "Enregistré");
-  if (ok) { editingLast = false; loadHome(); }
+  if (ok) { editingLast = false; loadHome(); toggleLastEdit(false); }
 }
 
 /* ========================= BORNES ========================= */
@@ -907,6 +968,7 @@ async function loadChargers() {
             <span class="badge ${c.connected ? "ok" : "off"}"><span class="dot"></span>${c.connected ? "connectée" : "hors ligne"}</span>
           </div>
           <div class="small muted" style="margin-top:.3rem">${esc(c.vendor || "")} ${esc(c.model || "")} ${c.ocpp_version ? "· OCPP " + esc(c.ocpp_version) : ""} · ${statusLabel(c.status)}</div>
+          <div class="tiny muted" style="margin-top:.2rem">ID borne (chargePointId) : <code>${esc(c.id)}</code></div>
         </div>
         <div class="cluster center" style="gap:.3rem">
           <button class="btn btn-icon btn-ghost" title="Fiche & statistiques" onclick="openChargerStatsModal('${esc(c.id)}')"><svg><use href="#i-info"/></svg></button>
@@ -928,24 +990,42 @@ const CONDITION_LABELS = { off_peak: "Heures creuses uniquement", start_after: "
 async function openChargerConfigModal(id) {
   openModalConnector = null;
   openModal(`<div class="empty">Chargement…</div>`);
-  const [charger, tariffs, conditions] = await Promise.all([
+  const [charger, tariffs, conditions, connectors] = await Promise.all([
     fetch(`api/chargers/${id}`, { headers: authHeaders() }).then(r => r.json()),
     fetch(`api/tariffs`, { headers: authHeaders() }).then(r => r.json()),
     fetch(`api/chargers/${id}/conditions`, { headers: authHeaders() }).then(r => r.json()),
+    fetch(`api/chargers/${id}/connectors`, { headers: authHeaders() }).then(r => r.json()).then(a => a.filter(c => c.connector_id !== 0)).catch(() => []),
   ]);
   const isLocal = charger.mode === "local";
   const authMode = charger.auth_mode || "free";
+  // Support SmartCharging : true / false / null (inconnu tant que non testé).
+  const smart = charger.smart_charging;
+  const scheduleBlocked = isLocal && smart === false;
+  // Connecteurs mémorisés pour la modale de condition (liste déroulante).
+  configConnectors = connectors.map(c => c.connector_id);
 
   const condRows = conditions.length ? conditions.map(cd => `
     <div class="card" style="margin:.35rem 0; padding:.55rem .75rem">
       <div class="spread">
         <div class="cluster center" style="gap:.5rem">
           <span class="badge ${cd.enabled ? "ok" : "off"}"><span class="dot"></span>${cd.enabled ? "active" : "inactive"}</span>
-          <span>${CONDITION_LABELS[cd.type]}${cd.time_value ? ` <b>${esc(cd.time_value)}</b>` : ""}${cd.connector_id != null ? ` · conn. ${cd.connector_id}` : ""}</span>
+          <span>${CONDITION_LABELS[cd.type]}${cd.time_value ? ` <b>${esc(cd.time_value)}</b>` : ""}${cd.connector_id != null ? ` · conn. ${cd.connector_id}` : " · tous"}</span>
         </div>
         <button class="linkbtn danger" onclick="deleteCondition('${id}', ${cd.id})">Suppr.</button>
       </div>
     </div>`).join("") : `<div class="empty">Aucune condition : la charge n'est pas programmée sur cette borne.</div>`;
+
+  let scheduleSection;
+  if (!isLocal) {
+    scheduleSection = `<div class="empty">Indisponible en mode relais (la borne est pilotée par son serveur officiel).</div>`;
+  } else if (scheduleBlocked) {
+    scheduleSection = `<div class="card" style="border-left:3px solid var(--warn); background:var(--warn-soft)">
+      <div class="small"><b>SmartCharging non supporté par cette borne.</b> La programmation de charge (heures creuses, départ différé, prête pour une heure) repose sur la limitation de puissance et n'est donc pas disponible ici.</div>
+    </div>`;
+  } else {
+    const warn = smart == null ? `<p class="tiny muted" style="margin:.1rem 0 .5rem">Le support SmartCharging de cette borne n'a pas encore été confirmé ; la programmation sera appliquée s'il est disponible.</p>` : "";
+    scheduleSection = warn + condRows;
+  }
 
   const html = `<div class="modal-head"><h2><svg style="width:1.1em;height:1.1em;vertical-align:-.15em"><use href="#i-cog"/></svg> ${esc(id)}</h2>
     <button class="btn btn-icon btn-ghost" onclick="closeModal()"><svg><use href="#i-close"/></svg></button></div>
@@ -962,7 +1042,6 @@ async function openChargerConfigModal(id) {
           <label class="field"><span>URL du serveur officiel</span>
             <input id="relayurl-${id}" placeholder="wss://serveur/..." value="${esc(charger.relay_url || "")}"></label>
         </div>
-        <button class="btn btn-sm btn-primary" style="margin-top:.5rem" onclick="saveMode('${id}')">Enregistrer le mode</button>
       </div>
       <div>
         <label class="field"><span>Autorisation de charge</span>
@@ -974,23 +1053,23 @@ async function openChargerConfigModal(id) {
           <b>Sans autorisation</b> : la charge démarre seule au branchement.<br>
           <b>Avec autorisation</b> : badge connu ou bouton « Démarrer » requis.
         </p>
-        <button class="btn btn-sm btn-primary" style="margin-top:.5rem" onclick="saveAuthMode('${id}')" ${isLocal ? "" : "disabled"}>Enregistrer l'autorisation</button>
       </div>
     </div>
 
-    <div class="cluster" style="margin-top:.9rem; align-items:flex-end">
-      <label class="field" style="max-width:320px; flex:1"><span>Abonnement / tarif appliqué</span>
-        <select id="tariff-select-${id}">
-          <option value="">(abonnement actif par défaut)</option>
-          ${tariffs.map(t => `<option value="${t.id}" ${charger.tariff_plan_id === t.id ? "selected" : ""}>${esc(t.name)}</option>`).join("")}
-        </select></label>
-      <button class="btn btn-sm" onclick="saveTariff('${id}')">Enregistrer le tarif</button>
+    <label class="field" style="max-width:340px; margin-top:.9rem"><span>Abonnement / tarif appliqué</span>
+      <select id="tariff-select-${id}">
+        <option value="">(abonnement actif par défaut)</option>
+        ${tariffs.map(t => `<option value="${t.id}" ${charger.tariff_plan_id === t.id ? "selected" : ""}>${esc(t.name)}</option>`).join("")}
+      </select></label>
+
+    <div class="cluster" style="margin-top:1rem; justify-content:flex-end">
+      <button class="btn btn-primary" onclick="saveChargerConfig('${id}')">Enregistrer les modifications</button>
     </div>
 
     <div class="section-title">Programmation de la charge
-      ${isLocal ? `<button class="btn btn-sm st-action" onclick="openConditionModal('${id}')"><svg><use href="#i-plus"/></svg>Ajouter</button>` : ""}
+      ${isLocal && !scheduleBlocked ? `<button class="btn btn-sm st-action" onclick="openConditionModal('${id}')"><svg><use href="#i-plus"/></svg>Ajouter</button>` : ""}
     </div>
-    ${isLocal ? condRows : `<div class="empty">Indisponible en mode relais (la borne est pilotée par son serveur officiel).</div>`}`;
+    ${scheduleSection}`;
   openModal(html);
 }
 function onModeChange(id) {
@@ -998,27 +1077,37 @@ function onModeChange(id) {
   document.getElementById("relaywrap-" + id).style.display = relay ? "block" : "none";
   const am = document.getElementById("authmode-" + id); if (am) am.disabled = relay;
 }
-async function saveMode(id) {
+// Enregistre en une fois mode + autorisation + tarif. On envoie le mode en
+// premier (il conditionne la validité des deux autres côté serveur), puis
+// l'autorisation et le tarif si la borne est en local.
+async function saveChargerConfig(id) {
   const mode = document.getElementById("mode-" + id).value;
-  const body = { mode };
-  if (mode === "relay") body.relay_url = document.getElementById("relayurl-" + id).value;
-  const { ok } = await apiCall(`api/chargers/${id}/mode`, { method: "PUT", headers: jsonHeaders(), body: JSON.stringify(body) }, "Mode enregistré");
-  if (ok) { loadChargers(); openChargerConfigModal(id); }
-}
-async function saveAuthMode(id) {
-  const auth_mode = document.getElementById("authmode-" + id).value;
-  await apiCall(`api/chargers/${id}/auth-mode`, { method: "PUT", headers: jsonHeaders(), body: JSON.stringify({ auth_mode }) }, "Autorisation enregistrée");
-}
-async function saveTariff(id) {
-  const val = document.getElementById("tariff-select-" + id).value;
-  await apiCall(`api/chargers/${id}/tariff`, { method: "PUT", headers: jsonHeaders(), body: JSON.stringify({ tariff_plan_id: val ? parseInt(val, 10) : null }) }, "Tarif enregistré");
+  const modeBody = { mode };
+  if (mode === "relay") modeBody.relay_url = document.getElementById("relayurl-" + id).value;
+  let allOk = true;
+  const r1 = await apiCall(`api/chargers/${id}/mode`, { method: "PUT", headers: jsonHeaders(), body: JSON.stringify(modeBody) });
+  allOk = allOk && r1.ok;
+  if (mode === "local") {
+    const auth_mode = document.getElementById("authmode-" + id).value;
+    const r2 = await apiCall(`api/chargers/${id}/auth-mode`, { method: "PUT", headers: jsonHeaders(), body: JSON.stringify({ auth_mode }) });
+    allOk = allOk && r2.ok;
+  }
+  const tv = document.getElementById("tariff-select-" + id).value;
+  const r3 = await apiCall(`api/chargers/${id}/tariff`, { method: "PUT", headers: jsonHeaders(), body: JSON.stringify({ tariff_plan_id: tv ? parseInt(tv, 10) : null }) });
+  allOk = allOk && r3.ok;
+  if (allOk) toast("Modifications enregistrées", "ok");
+  loadChargers();
+  openChargerConfigModal(id);
 }
 
 /* --- Conditions de charge --- */
+let configConnectors = [];   // connecteurs détectés, pour la liste déroulante
 function openConditionModal(chargerId) {
+  const connOptions = `<option value="">Tous les connecteurs</option>` +
+    configConnectors.map(cid => `<option value="${cid}">Connecteur ${cid}</option>`).join("");
   const html = `<div class="modal-head"><h2>Nouvelle condition</h2>
     <button class="btn btn-icon btn-ghost" onclick="closeModal()"><svg><use href="#i-close"/></svg></button></div>
-    <p class="small muted" style="margin:0 0 .8rem">Plusieurs conditions se cumulent : la charge n'a lieu que si <b>toutes</b> sont satisfaites. Le serveur pilote via SmartCharging si la borne le supporte, sinon par démarrage/arrêt.</p>
+    <p class="small muted" style="margin:0 0 .8rem">Plusieurs conditions se cumulent : la charge n'a lieu que si <b>toutes</b> sont satisfaites. Le serveur pilote via SmartCharging (limitation de puissance) sans clore la transaction : le câble reste branché et verrouillé jusqu'à l'heure prévue.</p>
     <div class="cluster">
       <label class="field" style="flex:1; min-width:200px"><span>Type de condition</span>
         <select id="cond-type" onchange="onCondTypeChange()">
@@ -1027,7 +1116,8 @@ function openConditionModal(chargerId) {
           <option value="ready_by">Terminée pour une heure</option>
         </select></label>
       <label class="field" id="cond-time-wrap" style="display:none"><span>Heure</span><input id="cond-time" type="time" value="23:00"></label>
-      <label class="field"><span>Connecteur</span><input id="cond-conn" type="number" min="1" placeholder="tous" style="width:90px"></label>
+      <label class="field"><span>Connecteur</span>
+        <select id="cond-conn">${connOptions}</select></label>
     </div>
     <div class="cluster" style="margin-top:1rem; justify-content:flex-end">
       <button class="btn" onclick="openChargerConfigModal('${chargerId}')">Annuler</button>
@@ -1100,7 +1190,9 @@ async function openChargerStatsModal(chargerId) {
       <span class="badge ${esc(charger.status)}">${statusLabel(charger.status)}</span>
       <button class="btn btn-sm btn-ghost" style="margin-left:auto" onclick="openChargerConfigModal('${esc(data.id)}')"><svg><use href="#i-cog"/></svg>Configurer</button>
     </div>
-    ${meta ? `<div class="small muted" style="margin:0 0 .8rem">${esc(meta)}</div>` : ""}
+    ${meta ? `<div class="small muted" style="margin:0 0 .3rem">${esc(meta)}</div>` : ""}
+    <div class="tiny muted" style="margin:0 0 .8rem">ID borne (chargePointId) : <code>${esc(data.id)}</code>${charger.mode === "relay" && charger.relay_url ? ` · relayé vers <code>${esc((charger.relay_url || "").replace(/\/+$/, "") + "/" + data.id)}</code>` : ""}</div>
+    ${charger.mode === "relay" ? `<div class="card" style="border-left:3px solid var(--accent); background:var(--accent-soft); margin:0 0 .8rem"><div class="tiny">En mode relais, ce CSMS est <b>passif</b> : il observe et facture les charges mais ne pilote pas la borne. Le pilotage (démarrage/arrêt, délestage, programmation) reste assuré par le serveur officiel.</div></div>` : ""}
     <div class="stat-grid">
       <div class="stat"><div class="sv">${st.charge_count}</div><div class="sl">Charges</div></div>
       <div class="stat"><div class="sv">${st.total_energy_kwh}</div><div class="sl">kWh cumulés</div></div>
@@ -1330,7 +1422,7 @@ async function savePeriodEdit(planId, periodId) {
 async function deletePeriod(planId, periodId) { await fetch(`api/tariffs/${planId}/periods/${periodId}`, { method: "DELETE", headers: authHeaders() }); loadTariffs(); }
 
 /* ========================= HISTORIQUE ========================= */
-let cachedHistoryVehicles = [], cachedHistory = [], editingHistoryId = null;
+let cachedHistoryVehicles = [], cachedHistory = [];
 async function populateVehicleFilter() {
   cachedHistoryVehicles = await fetch("api/vehicles", { headers: authHeaders() }).then(r => r.json());
   const sel = document.getElementById("hist-vehicle-filter");
@@ -1351,26 +1443,6 @@ function renderHistory() {
     const bornCell = s.is_external
       ? `${esc(s.location_label || "Externe")} <span class="badge ext" style="padding:.05rem .35rem">ext</span>`
       : esc(s.charger_id || "–");
-    if (editingHistoryId === s.id) {
-      const extraExt = s.is_external ? `
-        <td data-label="Lieu"><input id="he-loc-${s.id}" value="${esc(s.location_label || "")}" style="width:110px"></td>` : `<td></td>`;
-      return `<tr>
-        <td data-label="Borne">${bornCell}</td><td data-label="Conn.">${s.connector_id ?? "–"}</td>
-        <td data-label="Véhicule"><select id="he-veh-${s.id}"><option value="">(aucun)</option>${cachedHistoryVehicles.map(v => `<option value="${v.id}" ${s.vehicle_id === v.id ? "selected" : ""}>${esc(v.name)}</option>`).join("")}</select></td>
-        <td data-label="Début">${formatDateTime(s.start_time)}</td><td data-label="Fin">${formatDateTime(s.stop_time)}</td><td data-label="Durée">${dur}</td>
-        <td data-label="kWh">${s.is_external ? `<input id="he-kwh-${s.id}" type="number" step="0.01" value="${(s.energy_wh/1000).toFixed(2)}" style="width:80px">` : kWh(s.energy_wh)}</td>
-        <td data-label="P. max">${kW(s.power_max_w)}</td>
-        <td data-label="Coût">${s.is_external ? `<input id="he-cost-${s.id}" type="number" step="0.01" value="${s.cost ?? ""}" style="width:80px">` : eur(s.cost)}</td>
-        <td data-label="Tarif">${esc(s.tariff_plan_name || "–")}</td>
-        <td data-label="km"><input id="he-km-${s.id}" type="number" value="${s.odometer_km ?? ""}" style="width:80px"></td>
-        <td data-label="km parc.">${num(s.km_since_last)}</td>
-        <td data-label="kWh/100">${s.kwh_per_100km != null ? s.kwh_per_100km : "–"}</td>
-        <td data-label="% init."><input id="he-pmin-${s.id}" type="number" min="0" max="100" value="${s.battery_percent_start ?? ""}" style="width:65px"></td>
-        <td data-label="% fin"><input id="he-pmax-${s.id}" type="number" min="0" max="100" value="${s.battery_percent_end ?? ""}" style="width:65px"></td>
-        <td data-label="Recharge">${s.battery_recharge_percent != null ? s.battery_recharge_percent + " %" : "–"}</td>
-        <td><span class="cell-actions"><button class="linkbtn" onclick="saveHistoryEdit(${s.id}, ${s.is_external})">Enregistrer</button><button class="linkbtn" onclick="editingHistoryId=null; renderHistory()">Annuler</button></span></td>
-      </tr>`;
-    }
     const est = s.battery_percent_end_est != null && s.battery_percent_end == null ? ` <span class="tiny muted">(~${s.battery_percent_end_est})</span>` : "";
     return `<tr>
       <td data-label="Borne">${bornCell}</td><td data-label="Conn.">${s.connector_id ?? "–"}</td><td data-label="Véhicule">${esc(s.vehicle_name || "–")}</td>
@@ -1379,26 +1451,76 @@ function renderHistory() {
       <td data-label="km">${num(s.odometer_km)}</td><td data-label="km parc.">${num(s.km_since_last)}</td><td data-label="kWh/100">${s.kwh_per_100km != null ? s.kwh_per_100km : "–"}</td>
       <td data-label="% init.">${num(s.battery_percent_start)}</td><td data-label="% fin">${num(s.battery_percent_end)}${est}</td>
       <td data-label="Recharge">${s.battery_recharge_percent != null ? s.battery_recharge_percent + " %" : "–"}</td>
-      <td><span class="cell-actions"><button class="linkbtn" onclick="editingHistoryId=${s.id}; renderHistory()">Modifier</button>${s.is_external ? `<button class="linkbtn danger" onclick="deleteSession(${s.id})">Suppr.</button>` : ""}</span></td>
+      <td><span class="cell-actions"><button class="linkbtn" onclick="openSessionEditModal(${s.id})">Modifier</button>${s.is_external ? `<button class="linkbtn danger" onclick="deleteSession(${s.id})">Suppr.</button>` : ""}</span></td>
     </tr>`;
   }).join("");
 }
-async function saveHistoryEdit(id, isExternal) {
-  const n = v => v !== "" && v != null ? parseFloat(v) : null;
+// Édition d'une charge en modale (lisible et utilisable sur mobile, contrairement
+// à l'édition en ligne d'un tableau à 17 colonnes). Gère aussi bien une charge
+// OCPP (véhicule, km, % batterie) qu'une charge externe saisie à la main
+// (énergie, coût, lieu, dates en plus).
+async function openSessionEditModal(sessionId) {
+  const s = cachedHistory.find(x => x.id === sessionId);
+  if (!s) return;
+  if (!cachedHistoryVehicles.length) await populateVehicleFilter();
+  const vehOpts = `<option value="">(aucun)</option>` +
+    cachedHistoryVehicles.map(v => `<option value="${v.id}" ${s.vehicle_id === v.id ? "selected" : ""}>${esc(v.name)}</option>`).join("");
+  const toLocal = iso => {
+    if (!iso) return "";
+    const hasTz = /Z|[+-]\d{2}:\d{2}$/.test(iso);
+    const d = new Date(hasTz ? iso : iso + "Z");
+    if (isNaN(d.getTime())) return "";
+    return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+  };
+  const title = s.is_external ? "Charge externe" : `${esc(s.charger_id || "Borne")}${s.connector_id != null ? " · Conn. " + s.connector_id : ""}`;
+  const extBlock = s.is_external ? `
+    <div class="cluster" style="margin-top:.6rem">
+      <label class="field"><span>Lieu</span><input id="se-loc" value="${esc(s.location_label || "")}" style="width:160px"></label>
+      <label class="field"><span>Énergie kWh</span><input id="se-kwh" type="number" step="0.01" value="${(s.energy_wh/1000).toFixed(2)}" style="width:110px"></label>
+      <label class="field"><span>Coût €</span><input id="se-cost" type="number" step="0.01" value="${s.cost ?? ""}" style="width:110px"></label>
+    </div>
+    <div class="cluster" style="margin-top:.6rem">
+      <label class="field"><span>Début</span><input id="se-start" type="datetime-local" value="${toLocal(s.start_time)}"></label>
+      <label class="field"><span>Fin</span><input id="se-stop" type="datetime-local" value="${toLocal(s.stop_time)}"></label>
+    </div>` : "";
+  const html = `<div class="modal-head"><h2>${title}</h2>
+    <button class="btn btn-icon btn-ghost" onclick="closeModal()"><svg><use href="#i-close"/></svg></button></div>
+    <div class="small muted" style="margin:-.3rem 0 .6rem">${formatDateTime(s.start_time)} → ${formatDateTime(s.stop_time)} · <b>${kWh(s.energy_wh)}</b> kWh · <b>${eur(s.cost)}</b></div>
+    <div class="cluster">
+      <label class="field" style="flex:1; min-width:160px"><span>Véhicule</span><select id="se-veh">${vehOpts}</select></label>
+      <label class="field"><span>km (odomètre)</span><input id="se-km" type="number" value="${s.odometer_km ?? ""}" style="width:120px"></label>
+    </div>
+    <div class="cluster" style="margin-top:.6rem">
+      <label class="field"><span>% init.</span><input id="se-pmin" type="number" min="0" max="100" value="${s.battery_percent_start ?? ""}" style="width:90px"></label>
+      <label class="field"><span>% fin</span><input id="se-pmax" type="number" min="0" max="100" value="${s.battery_percent_end ?? ""}" style="width:90px"></label>
+    </div>
+    ${extBlock}
+    <div class="cluster" style="margin-top:1rem; justify-content:flex-end">
+      <button class="btn" onclick="closeModal()">Annuler</button>
+      <button class="btn btn-primary" onclick="saveSessionEdit(${s.id}, ${s.is_external})">Enregistrer</button>
+    </div>`;
+  openModal(html);
+}
+async function saveSessionEdit(id, isExternal) {
+  const n = elId => { const el = document.getElementById(elId); if (!el) return null; const v = el.value; return v !== "" ? parseFloat(v) : null; };
+  const vehEl = document.getElementById("se-veh");
   const body = {
-    vehicle_id: document.getElementById(`he-veh-${id}`).value ? parseInt(document.getElementById(`he-veh-${id}`).value, 10) : null,
-    odometer_km: n(document.getElementById(`he-km-${id}`).value),
-    battery_percent_start: n(document.getElementById(`he-pmin-${id}`).value),
-    battery_percent_end: n(document.getElementById(`he-pmax-${id}`).value),
+    vehicle_id: vehEl && vehEl.value ? parseInt(vehEl.value, 10) : null,
+    odometer_km: n("se-km"),
+    battery_percent_start: n("se-pmin"),
+    battery_percent_end: n("se-pmax"),
   };
   if (isExternal) {
-    const kwhEl = document.getElementById(`he-kwh-${id}`), costEl = document.getElementById(`he-cost-${id}`), locEl = document.getElementById(`he-loc-${id}`);
-    if (kwhEl) body.energy_kwh = n(kwhEl.value);
-    if (costEl) body.cost = n(costEl.value);
-    if (locEl) body.location_label = locEl.value.trim() || null;
+    body.energy_kwh = n("se-kwh");
+    body.cost = n("se-cost");
+    const loc = document.getElementById("se-loc");
+    if (loc) body.location_label = loc.value.trim() || null;
+    const start = document.getElementById("se-start"), stop = document.getElementById("se-stop");
+    if (start && start.value) body.start_time = start.value;
+    if (stop && stop.value) body.stop_time = stop.value;
   }
   const { ok } = await apiCall(`api/sessions/${id}`, { method: "PUT", headers: jsonHeaders(), body: JSON.stringify(body) }, "Enregistré");
-  if (ok) { editingHistoryId = null; loadHistory(); }
+  if (ok) { closeModal(); loadHistory(); }
 }
 async function deleteSession(id) {
   if (!confirm("Supprimer cette charge externe ?")) return;
@@ -1450,6 +1572,186 @@ async function createExternalCharge() {
   };
   const { ok } = await apiCall("api/external-charges", { method: "POST", headers: jsonHeaders(), body: JSON.stringify(body) }, "Charge externe ajoutée");
   if (ok) { closeModal(); if (currentView === "history") loadHistory(); else if (currentView === "home") loadHome(); }
+}
+
+/* ---------- Export / Import des données ---------- */
+async function exportData() {
+  try {
+    const resp = await fetch("api/export", { headers: authHeaders() });
+    if (!resp.ok) { toast("Export impossible", "err"); return; }
+    const data = await resp.json();
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    const stamp = new Date().toISOString().slice(0, 10);
+    a.href = url; a.download = `ocpp-server-export-${stamp}.json`;
+    document.body.appendChild(a); a.click(); a.remove();
+    URL.revokeObjectURL(url);
+    toast("Export téléchargé", "ok");
+  } catch (e) { toast("Export impossible", "err"); }
+}
+let pendingImport = null;   // contenu parsé du fichier en attente de confirmation
+function onImportFileChosen(event) {
+  const file = event.target.files && event.target.files[0];
+  event.target.value = "";   // permet de réimporter le même fichier ensuite
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    let parsed;
+    try { parsed = JSON.parse(reader.result); }
+    catch (e) { toast("Fichier JSON invalide", "err"); return; }
+    if (!parsed || !parsed.tables) { toast("Fichier d'export non reconnu", "err"); return; }
+    pendingImport = parsed;
+    openImportModal(parsed);
+  };
+  reader.onerror = () => toast("Lecture du fichier impossible", "err");
+  reader.readAsText(file);
+}
+function openImportModal(parsed) {
+  const counts = Object.entries(parsed.tables || {})
+    .map(([t, rows]) => `${t} : ${Array.isArray(rows) ? rows.length : 0}`).join(" · ");
+  const meta = parsed.meta && parsed.meta.version ? `Export v${esc(parsed.meta.version)}${parsed.meta.exported_at ? " du " + formatDateTime(parsed.meta.exported_at) : ""}` : "";
+  const html = `<div class="modal-head"><h2>Importer des données</h2>
+    <button class="btn btn-icon btn-ghost" onclick="closeModal()"><svg><use href="#i-close"/></svg></button></div>
+    ${meta ? `<div class="small muted" style="margin:-.3rem 0 .5rem">${meta}</div>` : ""}
+    <div class="tiny muted" style="margin-bottom:.8rem">${esc(counts)}</div>
+    <p class="small" style="margin:0 0 .8rem">Choisissez comment appliquer ce fichier :</p>
+    <div class="grid-cards two">
+      <div class="card" style="border-left:3px solid var(--accent)">
+        <b>Fusionner</b>
+        <p class="tiny muted" style="margin:.3rem 0 .6rem">Complète et met à jour les entrées existantes (par identifiant), sans rien supprimer.</p>
+        <button class="btn btn-sm btn-primary" onclick="runImport('merge')">Fusionner</button>
+      </div>
+      <div class="card" style="border-left:3px solid var(--danger)">
+        <b>Remplacer</b>
+        <p class="tiny muted" style="margin:.3rem 0 .6rem">Vide d'abord les tables présentes dans le fichier, puis réinsère. Restauration fidèle d'une sauvegarde.</p>
+        <button class="btn btn-sm btn-danger" onclick="confirmReplaceImport()">Remplacer tout</button>
+      </div>
+    </div>`;
+  openModal(html);
+}
+function confirmReplaceImport() {
+  if (!confirm("Remplacer écrase les données actuelles des tables présentes dans le fichier. Continuer ?")) return;
+  runImport("replace");
+}
+async function runImport(mode) {
+  if (!pendingImport) { toast("Aucun fichier à importer", "err"); return; }
+  const { ok } = await apiCall("api/import", {
+    method: "POST", headers: jsonHeaders(),
+    body: JSON.stringify({ mode, tables: pendingImport.tables }),
+  }, mode === "replace" ? "Données remplacées" : "Données fusionnées");
+  if (ok) {
+    pendingImport = null;
+    closeModal();
+    // Recharge la vue courante pour refléter les données importées.
+    refreshCurrentView();
+  }
+}
+
+/* ========================= LOGS (journal OCPP live) ========================= */
+const LOG_ACTIONS = ["BootNotification","StatusNotification","StartTransaction","StopTransaction",
+  "Authorize","Heartbeat","MeterValues","DataTransfer","GetConfiguration","ChangeConfiguration",
+  "RemoteStartTransaction","RemoteStopTransaction","SetChargingProfile","ClearChargingProfile"];
+let logEntries = [];          // entrées affichées (plus récentes en tête)
+let logMaxId = 0;             // dernier id reçu, pour le rafraîchissement incrémental
+let logsPollTimer = null;
+const LOG_DIR_LABEL = { in: "Borne → CSMS", out: "CSMS → Borne" };
+
+async function initLogsView() {
+  // Peupler le filtre des messages une seule fois.
+  const af = document.getElementById("log-action-filter");
+  if (af && af.children.length <= 1) {
+    af.innerHTML = `<option value="">Tous</option>` + LOG_ACTIONS.map(a => `<option value="${a}">${a}</option>`).join("");
+  }
+  await refreshLogChargerFilter();
+  await loadLogs(true);
+  startLogsPolling();
+}
+async function refreshLogChargerFilter() {
+  try {
+    const chargers = await fetch("api/logs/chargers", { headers: authHeaders() }).then(r => r.json());
+    const sel = document.getElementById("log-charger-filter");
+    const cur = sel.value;
+    sel.innerHTML = `<option value="">Toutes</option>` + chargers.map(c => `<option value="${esc(c)}">${esc(c)}</option>`).join("");
+    if (chargers.includes(cur)) sel.value = cur;
+  } catch (e) {}
+}
+function logFilters() {
+  return {
+    charger_id: document.getElementById("log-charger-filter").value,
+    action: document.getElementById("log-action-filter").value,
+    direction: document.getElementById("log-direction-filter").value,
+  };
+}
+async function loadLogs(reset) {
+  if (reset) { logEntries = []; logMaxId = 0; }
+  const f = logFilters();
+  const params = new URLSearchParams();
+  if (f.charger_id) params.set("charger_id", f.charger_id);
+  if (f.action) params.set("action", f.action);
+  if (f.direction) params.set("direction", f.direction);
+  params.set("since_id", reset ? 0 : logMaxId);
+  params.set("limit", "500");
+  let data;
+  try { data = await fetch("api/logs?" + params.toString(), { headers: authHeaders() }).then(r => r.json()); }
+  catch (e) { return; }
+  // Refléter l'état réel de l'interrupteur MeterValues (partagé serveur).
+  const mv = document.getElementById("log-metervalues");
+  if (mv) mv.checked = !!data.capture_high_volume;
+  const fresh = data.entries || [];
+  if (fresh.length) {
+    logMaxId = Math.max(logMaxId, ...fresh.map(e => e.id));
+    // fresh est du plus récent au plus ancien ; on prépend en gardant l'ordre.
+    logEntries = fresh.concat(logEntries).slice(0, 1000);
+  }
+  renderLogs();
+}
+function renderLogs() {
+  const el = document.getElementById("logs-list");
+  if (!logEntries.length) { el.innerHTML = `<div class="empty">Aucun message pour l'instant.</div>`; return; }
+  el.innerHTML = logEntries.map(e => {
+    const t = formatLogTime(e.ts);
+    const dirCls = e.direction === "in" ? "accent" : "warn";
+    const dir = e.direction === "in" ? "→" : "←";
+    return `<div class="logrow" onclick="toggleLogDetail(${e.id})" style="cursor:pointer; padding:.4rem .2rem; border-bottom:1px solid var(--border)">
+      <div class="cluster center" style="gap:.5rem; flex-wrap:nowrap">
+        <span class="tiny muted" style="white-space:nowrap; font-family:ui-monospace,monospace">${t}</span>
+        <span class="badge ${dirCls}" title="${LOG_DIR_LABEL[e.direction] || ""}" style="white-space:nowrap">${dir} ${esc(e.charger_id)}</span>
+        <b style="white-space:nowrap">${esc(e.action)}</b>
+        ${e.connector_id != null ? `<span class="tiny muted">conn ${e.connector_id}</span>` : ""}
+        <span class="tiny muted" style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap">${esc(e.summary || "")}</span>
+      </div>
+      <pre id="logdetail-${e.id}" style="display:none; margin:.4rem 0 .2rem; padding:.5rem .6rem; background:var(--surface-2); border-radius:var(--r-sm); overflow-x:auto; font-size:.8rem">${esc(JSON.stringify(e.payload, null, 2))}</pre>
+    </div>`;
+  }).join("");
+}
+function toggleLogDetail(id) {
+  const el = document.getElementById("logdetail-" + id);
+  if (el) el.style.display = el.style.display === "none" ? "block" : "none";
+}
+function formatLogTime(iso) {
+  const hasTz = /Z|[+-]\d{2}:\d{2}$/.test(iso);
+  const d = new Date(hasTz ? iso : iso + "Z");
+  if (isNaN(d.getTime())) return iso;
+  const p = n => String(n).padStart(2, "0");
+  return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+}
+function startLogsPolling() {
+  stopLogsPolling();
+  if (!document.getElementById("log-live").checked) return;
+  logsPollTimer = setInterval(() => { loadLogs(false); refreshLogChargerFilter(); }, 3000);
+}
+function stopLogsPolling() { if (logsPollTimer) { clearInterval(logsPollTimer); logsPollTimer = null; } }
+function onLiveToggle() { document.getElementById("log-live").checked ? startLogsPolling() : stopLogsPolling(); }
+async function onMeterValuesToggle() {
+  const on = document.getElementById("log-metervalues").checked;
+  await apiCall("api/logs/settings", { method: "PUT", headers: jsonHeaders(), body: JSON.stringify({ capture_high_volume: on }) },
+    on ? "Capture des MeterValues activée" : "Capture des MeterValues désactivée");
+}
+async function clearLogs() {
+  if (!confirm("Vider le journal en mémoire ?")) return;
+  await fetch("api/logs", { method: "DELETE", headers: authHeaders() });
+  loadLogs(true);
 }
 
 /* ---------- PWA ---------- */
