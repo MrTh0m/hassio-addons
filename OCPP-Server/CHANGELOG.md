@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.16.1
+
+Affinages de l'interface d'administration (aucun changement backend, l'API REST est inchangée).
+
+### Améliorations
+
+- **Accueil** : un badge de programmation apparaît désormais sur chaque connecteur concerné (dans « Charge en cours » comme dans « Bornes disponibles ») quand une condition est active : « Heures creuses », « Départ différé après HH:MM » ou « Prête pour HH:MM ».
+- **Charge en cours** : le sélecteur de véhicule est remonté dans l'en-tête de la carte et enregistre automatiquement au changement (plus de bouton « Assigner »).
+- **Fiche borne** (icône « i ») repensée : identité, statut/mode/connexion, statistiques de la borne, liste des connecteurs avec accès au détail, puis un historique propre à la borne (sans les notions de véhicule que sont les km et les kWh/100 km). Un bouton « Configurer » y renvoie vers la configuration.
+- **Configuration d'une borne** déplacée dans une modale dédiée (icône engrenage) : plus de déroulé sous la carte. Chaque borne expose trois actions : fiche/statistiques, configuration, suppression.
+- **Charge externe** : le bouton d'ajout est aussi accessible depuis l'Accueil (en plus de l'Historique).
+
 ## 0.16.0
 
 Grosse mise à jour fonctionnelle : programmation de la charge, suivi enrichi, fiches statistiques et correctif du mot de passe.
