@@ -175,6 +175,12 @@
 
   /* --- Tables responsives --- */
   .table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  @media (min-width: 721px) {
+    /* Un tableau très large défile horizontalement au lieu d'écraser ses
+       colonnes (sinon les dernières deviennent illisibles). */
+    table.wide { min-width: 1180px; }
+    table.wide th, table.wide td { white-space: nowrap; }
+  }
   table { width: 100%; border-collapse: collapse; }
   th, td { text-align: left; padding: .45rem .55rem; border-bottom: 1px solid var(--border); vertical-align: middle; }
   th { font-size: .76rem; text-transform: uppercase; letter-spacing: .04em; color: var(--text-muted); font-weight: 650; }
@@ -406,10 +412,11 @@
     <div class="topbar">
       <div class="brand-mobile"><img src="icon.svg" alt=""><h1 id="view-title">Accueil</h1></div>
       <h1 id="view-title-desktop" style="display:none">Accueil</h1>
-      <div class="cluster center" style="gap:.4rem">
+      <div class="cluster center" style="gap:.4rem; margin-left:auto">
         <button class="btn btn-icon btn-ghost" id="refresh-btn" title="Rafraîchir" onclick="refreshCurrentView()"><svg><use href="#i-refresh"/></svg></button>
         <button class="btn btn-icon btn-ghost" id="theme-toggle" title="Thème clair/sombre" onclick="toggleTheme()"><svg><use href="#i-moon"/></svg></button>
-        <button class="btn btn-icon btn-ghost" title="Déconnexion" onclick="logout()" id="logout-mobile"><svg><use href="#i-logout"/></svg></button>
+        <button class="btn btn-icon btn-ghost" id="settings-btn" title="Réglages" onclick="openSettingsModal()"><svg><use href="#i-cog"/></svg></button>
+        <button class="btn btn-icon btn-ghost" style="margin-left:.3rem" title="Déconnexion" onclick="logout()" id="logout-mobile"><svg><use href="#i-logout"/></svg></button>
       </div>
     </div>
 
@@ -492,7 +499,7 @@
           </div>
         </div>
         <div class="card" style="margin-top:.8rem">
-          <div class="table-wrap"><table class="responsive" id="history-table">
+          <div class="table-wrap"><table class="responsive wide" id="history-table">
             <thead><tr>
               <th>Borne</th><th>Conn.</th><th>Véhicule</th><th>Début</th><th>Fin</th><th>Durée</th>
               <th>kWh</th><th>P. max</th><th>Coût</th><th>Tarif</th><th>km</th><th>km parc.</th>
@@ -500,16 +507,6 @@
             </tr></thead>
             <tbody></tbody>
           </table></div>
-        </div>
-
-        <div class="section-title">Données (sauvegarde)</div>
-        <div class="card form-card">
-          <p class="small muted" style="margin:.1rem 0 .8rem">Exportez l'intégralité des données et de la configuration (bornes, véhicules, abonnements, programmations, historique) dans un fichier JSON, ou réimportez une sauvegarde. Le mot de passe administrateur n'est pas inclus dans l'export.</p>
-          <div class="cluster">
-            <button class="btn btn-sm" onclick="exportData()"><svg><use href="#i-download"/></svg>Exporter (JSON)</button>
-            <button class="btn btn-sm" onclick="document.getElementById('import-file').click()"><svg><use href="#i-upload"/></svg>Importer…</button>
-            <input id="import-file" type="file" accept="application/json,.json" style="display:none" onchange="onImportFileChosen(event)">
-          </div>
         </div>
       </section>
 
@@ -557,6 +554,7 @@
 </div>
 </div>
 
+<input id="import-file" type="file" accept="application/json,.json" style="display:none" onchange="onImportFileChosen(event)">
 <div id="modal-overlay" onclick="if(event.target===this) closeModal()"><div id="modal-box"></div></div>
 <div id="toast-root"></div>
 
@@ -833,26 +831,28 @@ async function renderHomeAvailable(chargers, active, condByCharger) {
       // Available = connecteur libre : rien à démarrer, on n'affiche pas de bouton.
       const preparing = conn.status === "Preparing";
       const condBadge = conditionBadge(conds, conn.connector_id);
-      let cta;
-      if (isFree) {
-        cta = `<span class="badge ok" title="Aucune autorisation requise : la charge démarre automatiquement au branchement."><svg style="width:.85em;height:.85em" fill="currentColor"><use href="#i-bolt"/></svg> Démarrage auto</span>`;
-      } else if (preparing) {
+      // Statut du connecteur : une seule puce, à gauche. En Preparing on précise
+      // « Véhicule branché · prêt » ; sinon le libellé de statut normal.
+      const statusBadge = preparing
+        ? `<span class="badge Preparing">Véhicule branché · prêt</span>`
+        : `<span class="badge ${esc(conn.status)}">${statusLabel(conn.status)}</span>`;
+      // Action à droite (jamais un badge de statut, pour ne pas doublonner) :
+      // bouton Démarrer si un véhicule est branché, puce « Démarrage auto » en
+      // mode libre, sinon rien.
+      let cta = "";
+      if (preparing && !isFree) {
         cta = `<div class="cluster center" style="gap:.4rem">
           <select id="home-veh-${c.id}-${conn.connector_id}" style="min-width:130px">${vehOptions}</select>
           <button class="btn btn-primary btn-sm" onclick="startChargeFromHome('${esc(c.id)}', ${conn.connector_id})"><svg><use href="#i-play"/></svg>Démarrer</button>
         </div>`;
-      } else {
-        // Available (ou autre) sans véhicule branché : pas de bouton Démarrer.
-        cta = `<span class="badge ${esc(conn.status)}">${statusLabel(conn.status)}</span>`;
+      } else if (isFree) {
+        cta = `<span class="badge ok" title="Aucune autorisation requise : la charge démarre automatiquement au branchement."><svg style="width:.85em;height:.85em" fill="currentColor"><use href="#i-bolt"/></svg> Démarrage auto</span>`;
       }
-      const hint = preparing
-        ? `<span class="badge Preparing">Véhicule branché · prêt</span>`
-        : `<span class="badge ${esc(conn.status)}">${statusLabel(conn.status)}</span>`;
       cards += `<div class="card" ${preparing ? 'style="border-color:var(--warn)"' : ""}>
         <div class="spread">
-          <div>
+          <div class="cluster center" style="gap:.5rem; flex-wrap:wrap">
             <b>${esc(c.id)} · Conn. ${conn.connector_id}</b>
-            <div class="cluster center" style="gap:.4rem; margin-top:.35rem">${hint}${condBadge}</div>
+            ${statusBadge}${condBadge}
           </div>
           ${cta}
         </div>
@@ -958,7 +958,29 @@ async function loadChargers() {
   const chargers = await fetch("api/chargers", { headers: authHeaders() }).then(r => r.json());
   const el = document.getElementById("chargers-list");
   if (!chargers.length) { el.innerHTML = `<div class="card"><div class="empty">Aucune borne connue. Elle apparaîtra dès sa première connexion.</div></div>`; return; }
-  el.innerHTML = chargers.map(c => `
+  // Pour chaque borne : statut réel de ses connecteurs, et présence d'une
+  // programmation (conditions actives). Récupéré en parallèle.
+  const extra = {};
+  await Promise.all(chargers.map(async c => {
+    const [connectors, conditions] = await Promise.all([
+      fetch(`api/chargers/${c.id}/connectors`, { headers: authHeaders() }).then(r => r.json()).then(a => a.filter(x => x.connector_id !== 0)).catch(() => []),
+      c.mode === "local"
+        ? fetch(`api/chargers/${c.id}/conditions`, { headers: authHeaders() }).then(r => r.json()).then(a => a.filter(cd => cd.enabled)).catch(() => [])
+        : Promise.resolve([]),
+    ]);
+    extra[c.id] = { connectors, conditions };
+  }));
+  el.innerHTML = chargers.map(c => {
+    const { connectors, conditions } = extra[c.id] || { connectors: [], conditions: [] };
+    // Une puce de statut par connecteur.
+    const connBadges = connectors.length
+      ? connectors.map(cc => `<span class="badge ${esc(cc.status)}" title="Connecteur ${cc.connector_id}">Conn. ${cc.connector_id} · ${statusLabel(cc.status)}</span>`).join("")
+      : `<span class="tiny muted">Connecteurs non encore signalés</span>`;
+    // Badge de programmation si au moins une condition active.
+    const schedBadge = conditions.length
+      ? `<span class="badge warn" title="${conditions.length} condition(s) de charge active(s)"><svg style="width:.85em;height:.85em"><use href="#i-clock"/></svg> Programmée${conditions.length > 1 ? " (" + conditions.length + ")" : ""}</span>`
+      : "";
+    return `
     <div class="card">
       <div class="spread">
         <div class="clickable" style="flex:1; margin:-.8rem -.4rem -.8rem -.95rem; padding:.8rem .4rem .8rem .95rem; border-radius:var(--r)" onclick="openChargerStatsModal('${esc(c.id)}')">
@@ -966,8 +988,10 @@ async function loadChargers() {
             <b>${esc(c.id)}</b>
             <span class="badge ${c.mode}">${c.mode}</span>
             <span class="badge ${c.connected ? "ok" : "off"}"><span class="dot"></span>${c.connected ? "connectée" : "hors ligne"}</span>
+            ${schedBadge}
           </div>
-          <div class="small muted" style="margin-top:.3rem">${esc(c.vendor || "")} ${esc(c.model || "")} ${c.ocpp_version ? "· OCPP " + esc(c.ocpp_version) : ""} · ${statusLabel(c.status)}</div>
+          <div class="cluster center" style="gap:.35rem; margin-top:.45rem">${connBadges}</div>
+          <div class="small muted" style="margin-top:.35rem">${esc(c.vendor || "")} ${esc(c.model || "")} ${c.ocpp_version ? "· OCPP " + esc(c.ocpp_version) : ""}</div>
           <div class="tiny muted" style="margin-top:.2rem">ID borne (chargePointId) : <code>${esc(c.id)}</code></div>
         </div>
         <div class="cluster center" style="gap:.3rem">
@@ -976,7 +1000,8 @@ async function loadChargers() {
           <button class="btn btn-icon btn-ghost" title="Supprimer du CSMS" onclick="deleteCharger('${esc(c.id)}')"><svg style="color:var(--danger)"><use href="#i-trash"/></svg></button>
         </div>
       </div>
-    </div>`).join("");
+    </div>`;
+  }).join("");
 }
 async function deleteCharger(id) {
   if (!confirm(`Retirer la borne « ${id} » du CSMS ?\n\nSon historique de charges est conservé. Si elle se reconnecte, elle réapparaîtra.`)) return;
@@ -1572,6 +1597,30 @@ async function createExternalCharge() {
   };
   const { ok } = await apiCall("api/external-charges", { method: "POST", headers: jsonHeaders(), body: JSON.stringify(body) }, "Charge externe ajoutée");
   if (ok) { closeModal(); if (currentView === "history") loadHistory(); else if (currentView === "home") loadHome(); }
+}
+
+/* ---------- Réglages (modale depuis le bandeau) ---------- */
+// Regroupe les réglages transverses de l'application. Pour l'instant :
+// sauvegarde (export) et restauration (import) des données. Prévu pour
+// accueillir la future gestion des profils utilisateurs (attribution de
+// véhicules à un profil, permissions par geste).
+function openSettingsModal() {
+  openModalConnector = null;
+  const html = `<div class="modal-head"><h2><svg style="width:1.1em;height:1.1em;vertical-align:-.15em"><use href="#i-cog"/></svg> Réglages</h2>
+    <button class="btn btn-icon btn-ghost" onclick="closeModal()"><svg><use href="#i-close"/></svg></button></div>
+
+    <div class="section-title" style="margin-top:0">Données (sauvegarde)</div>
+    <p class="small muted" style="margin:.1rem 0 .8rem">Exportez l'intégralité des données et de la configuration (bornes, véhicules, abonnements, programmations, historique) dans un fichier JSON, ou réimportez une sauvegarde. Le mot de passe administrateur n'est pas inclus dans l'export.</p>
+    <div class="cluster">
+      <button class="btn btn-sm" onclick="exportData()"><svg><use href="#i-download"/></svg>Exporter (JSON)</button>
+      <button class="btn btn-sm" onclick="document.getElementById('import-file').click()"><svg><use href="#i-upload"/></svg>Importer…</button>
+    </div>
+
+    <div class="section-title">Profils utilisateurs</div>
+    <div class="card" style="background:var(--surface-2)">
+      <div class="small muted">Bientôt : créer des profils, leur affecter un ou plusieurs véhicules, et définir les actions autorisées (démarrer/arrêter une charge, modifier la programmation, gérer les abonnements…).</div>
+    </div>`;
+  openModal(html);
 }
 
 /* ---------- Export / Import des données ---------- */

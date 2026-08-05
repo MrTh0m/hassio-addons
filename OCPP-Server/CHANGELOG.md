@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.18.0
+
+Raffinages de l'interface et regroupement des réglages dans le bandeau.
+
+### Corrections
+
+- **Accueil, « Bornes disponibles »** : le statut « Disponible » apparaissait en double sur un connecteur libre. Chaque connecteur tient désormais sur une seule ligne : identité et statut à gauche, action (bouton « Démarrer » ou puce « Démarrage auto ») à droite.
+- **Historique** : le tableau, très large, écrasait ses dernières colonnes (dont « kWh/100 »). Il défile maintenant horizontalement en gardant chaque colonne lisible. (Rappel : « km parcourus » et « kWh/100km » ne se calculent qu'à partir de deux charges du même véhicule dont l'odomètre est renseigné.)
+
+### Améliorations
+
+- **Bornes** : chaque carte affiche désormais le statut de chacun de ses connecteurs, et un badge « Programmée » quand une ou plusieurs conditions de charge sont actives sur la borne.
+- **Réglages** : nouveau bouton engrenage dans le bandeau du haut ouvrant une fenêtre « Réglages ». La sauvegarde/restauration des données (export/import JSON), auparavant en bas de l'Historique, y est déplacée. La fenêtre annonce la future gestion des profils utilisateurs (affectation de véhicules et permissions par action).
+- **Bandeau** : le bouton « Déconnexion » est aligné tout à droite.
+
 ## 0.17.0
 
 Respect effectif de la programmation de charge, édition des charges revue, et sauvegarde/restauration des données.
