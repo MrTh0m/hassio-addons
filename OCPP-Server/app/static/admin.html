@@ -1005,7 +1005,7 @@ function renderHomeLast(s) {
     ? `<span>Recharge <b>${s.battery_recharge_percent}%</b>${s.battery_percent_end_est != null ? ` → ~<b>${s.battery_percent_end_est}%</b>` : ""}</span>` : "";
   const head = `<div class="spread">
       <div>
-        <b>${esc(s.charger_id || s.location_label || "Externe")}${s.connector_id != null ? ` · Conn. ${s.connector_id}` : ""}</b>${s.vehicle_name ? ` <span class="badge accent">${esc(s.vehicle_name)}</span>` : ""}${s.is_external ? ` <span class="badge ext"><svg style="width:.85em;height:.85em"><use href="#i-ext"/></svg> externe</span>` : ""}
+        <b>${esc(s.charger_display_name || s.charger_id || s.location_label || "Externe")}${s.connector_id != null ? ` · Conn. ${s.connector_id}` : ""}</b>${s.vehicle_name ? ` <span class="badge accent">${esc(s.vehicle_name)}</span>` : ""}${s.is_external ? ` <span class="badge ext"><svg style="width:.85em;height:.85em"><use href="#i-ext"/></svg> externe</span>` : ""}
         <div class="metrics">
           <span>${formatDateTime(s.start_time)} → ${formatDateTime(s.stop_time)}</span>
           <span><b>${formatDuration(s.duration_min)}</b></span>
@@ -1377,7 +1377,7 @@ function renderChargerSessionsTable(sessions) {
 function renderSessionsTable(sessions, withVehicle) {
   const rows = sessions.map(s => `<tr>
     <td>${formatDateTime(s.start_time)}</td>
-    ${withVehicle ? `<td>${esc(s.charger_id || s.location_label || "Externe")}${s.is_external ? ' <span class="badge ext" style="padding:.05rem .35rem">ext</span>' : ""}</td>` : ""}
+    ${withVehicle ? `<td>${esc(s.charger_display_name || s.charger_id || s.location_label || "Externe")}${s.is_external ? ' <span class="badge ext" style="padding:.05rem .35rem">ext</span>' : ""}</td>` : ""}
     <td>${kWh(s.energy_wh)}</td>
     <td>${eur(s.cost)}</td>
     <td>${num(s.km_since_last, " km")}</td>
@@ -1584,7 +1584,7 @@ function renderHistory() {
     const dur = formatDuration(s.duration_min);
     const bornCell = s.is_external
       ? `${esc(s.location_label || "Externe")} <span class="badge ext" style="padding:.05rem .35rem">ext</span>`
-      : esc(s.charger_id || "–");
+      : esc(s.charger_display_name || s.charger_id || "–");
     const est = s.battery_percent_end_est != null && s.battery_percent_end == null ? ` <span class="tiny muted">(~${s.battery_percent_end_est})</span>` : "";
       // Un user peut modifier les sessions de ses voitures ; l'admin peut tout modifier
       const canEditSession = isAdmin() || (currentUser.vehicle_ids && s.vehicle_id && currentUser.vehicle_ids.includes(s.vehicle_id));
@@ -1616,7 +1616,7 @@ async function openSessionEditModal(sessionId) {
     if (isNaN(d.getTime())) return "";
     return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
   };
-  const title = s.is_external ? "Charge externe" : `${esc(s.charger_id || "Borne")}${s.connector_id != null ? " · Conn. " + s.connector_id : ""}`;
+  const title = s.is_external ? "Charge externe" : `${esc(s.charger_display_name || s.charger_id || "Borne")}${s.connector_id != null ? " · Conn. " + s.connector_id : ""}`;
   const extBlock = s.is_external ? `
     <div class="cluster" style="margin-top:.6rem">
       <label class="field"><span>Lieu</span><input id="se-loc" value="${esc(s.location_label || "")}" style="width:160px"></label>
