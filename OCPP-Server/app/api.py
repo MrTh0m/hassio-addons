@@ -125,7 +125,8 @@ def list_chargers(db: Session = Depends(get_db), user=Depends(get_current_user))
         chargers = [c for c in chargers if c.id in allowed_ids]
     return [
         {
-            "id": c.id, "vendor": c.vendor, "model": c.model,
+            "id": c.id, "display_name": c.display_name,
+            "vendor": c.vendor, "model": c.model,
             "ocpp_version": c.ocpp_version, "mode": c.mode.value,
             "auth_mode": c.auth_mode.value if c.auth_mode else "free",
             "status": c.status, "connected": c.id in CONNECTED_CHARGERS,
@@ -139,10 +140,18 @@ def list_chargers(db: Session = Depends(get_db), user=Depends(get_current_user))
 
 @router.delete("/chargers/{charger_id}")
 def delete_charger(charger_id: str, db: Session = Depends(get_db), user=Depends(require_admin)):
+    """Retire une borne du CSMS (remplacement, panne...) sans perdre son
+    historique : suppression LOGIQUE (deleted_at). Les transactions déjà
+    enregistrées restent en base et continuent d'alimenter l'historique et les
+    statistiques des véhicules ; la borne disparaît simplement des listes et
+    n'est plus pilotée. Si elle se reconnecte, elle sera redécouverte comme
+    une nouvelle borne (ou tu peux la restaurer via l'API)."""
     charger = db.query(Charger).filter(Charger.id == charger_id).first()
     if not charger:
         raise HTTPException(status_code=404, detail="Borne inconnue")
     charger.deleted_at = datetime.utcnow()
+    # On coupe aussi ses conditions de charge et son statut de connecteurs
+    # pour qu'elle ne soit plus pilotée ni affichée comme disponible.
     db.query(ChargeCondition).filter(ChargeCondition.charger_id == charger_id).delete()
     db.commit()
     CONNECTED_CHARGERS.pop(charger_id, None)
@@ -155,7 +164,8 @@ def get_charger(charger_id: str, db: Session = Depends(get_db), user=Depends(get
     if not charger:
         raise HTTPException(status_code=404, detail="Borne inconnue")
     return {
-        "id": charger.id, "vendor": charger.vendor, "model": charger.model,
+        "id": charger.id, "display_name": charger.display_name,
+        "vendor": charger.vendor, "model": charger.model,
         "serial": charger.serial, "ocpp_version": charger.ocpp_version,
         "mode": charger.mode.value, "relay_url": charger.relay_url,
         "auth_mode": charger.auth_mode.value if charger.auth_mode else "free",
@@ -191,10 +201,32 @@ def set_charger_auth_mode(
     charger_id: str, update: AuthModeUpdate,
     db: Session = Depends(get_db), user=Depends(require_admin),
 ):
+    """Définit la politique de déclenchement de la charge pour cette borne :
+    'free' (sans autorisation, démarrage automatique au branchement) ou
+    'authorized' (badge connu ou bouton requis). N'a de sens qu'en mode local."""
     charger = db.query(Charger).filter(Charger.id == charger_id).first()
     if not charger:
         raise HTTPException(status_code=404, detail="Borne inconnue")
     charger.auth_mode = update.auth_mode
+    db.commit()
+    return {"status": "ok"}
+
+
+class DisplayNameUpdate(BaseModel):
+    display_name: Optional[str] = None
+
+
+@router.put("/chargers/{charger_id}/display-name")
+def set_charger_display_name(
+    charger_id: str, body: DisplayNameUpdate,
+    db: Session = Depends(get_db), user=Depends(require_admin),
+):
+    """Définit un nom d'affichage lisible pour la borne (ex. 'Garage').
+    N'affecte pas le chargePointId OCPP, utilisé uniquement dans l'interface."""
+    charger = db.query(Charger).filter(Charger.id == charger_id).first()
+    if not charger:
+        raise HTTPException(status_code=404, detail="Borne inconnue")
+    charger.display_name = body.display_name or None
     db.commit()
     return {"status": "ok"}
 
@@ -231,6 +263,7 @@ async def start_charge(
     charger_id: str, connector_id: int, body: StartChargeRequest,
     db: Session = Depends(get_db), user=Depends(get_current_user),
 ):
+    # Contrôle d'accès : la borne ET le véhicule doivent être associés au user
     allowed_chargers = _user_charger_ids(db, user)
     if allowed_chargers is not None and charger_id not in allowed_chargers:
         raise HTTPException(status_code=403, detail="Borne non associée à votre compte")
@@ -263,9 +296,11 @@ async def stop_charge(
     charger_id: str, connector_id: int, body: StopChargeRequest,
     db: Session = Depends(get_db), user=Depends(get_current_user),
 ):
+    # Contrôle d'accès : la borne ET la voiture en cours doivent être associées
     allowed_chargers = _user_charger_ids(db, user)
     if allowed_chargers is not None and charger_id not in allowed_chargers:
         raise HTTPException(status_code=403, detail="Borne non associée à votre compte")
+    # Vérifier que la voiture de la transaction active est bien associée au user
     allowed_vehicles = _user_vehicle_ids(db, user)
     if allowed_vehicles is not None:
         txn = db.query(Transaction).filter(
@@ -328,9 +363,12 @@ def list_connector_statuses(charger_id: str, db: Session = Depends(get_db), user
     ]
 
 
-# --- Métriques et historique ---
+# --- Métriques et historique (disponibles quel que soit le mode) ---
 
 def _session_power_max_w(db: Session, s: Transaction) -> Optional[float]:
+    """Puissance maximale relevée pendant la session (Power.Active.Import),
+    ou None si aucun relevé de puissance n'est disponible (ex. charge externe,
+    ou borne qui ne remonte que l'énergie)."""
     if s.id is None:
         return None
     rows = db.query(MeterValue.value).filter(
@@ -343,13 +381,19 @@ def _session_power_max_w(db: Session, s: Transaction) -> Optional[float]:
 
 def _serialize_session(s: Transaction, db: Session, prev_odometer: Optional[float] = None) -> dict:
     if s.is_external:
+        # Charge externe : énergie et coût saisis à la main, jamais recalculés.
         cost, energy_wh, tariff_plan_name = s.cost, s.energy_wh or 0.0, s.tariff_plan_name
     elif s.status == "completed":
         if s.cost is None and s.energy_wh is None:
+            # Ancienne session (créée avant l'introduction du gel de coût) :
+            # on la fige maintenant, une seule fois, pour ne plus jamais la
+            # recalculer à partir d'un tarif qui aura pu changer depuis.
             freeze_transaction_cost(db, s)
             db.commit()
         cost, energy_wh, tariff_plan_name = s.cost, s.energy_wh or 0.0, s.tariff_plan_name
     else:
+        # Session encore active : calcul en direct, forcément amené à changer
+        # au fil de la charge, donc jamais figé.
         charger = db.query(Charger).filter(Charger.id == s.charger_id).first()
         plan = resolve_plan_for_charger(db, charger)
         meter_values = db.query(MeterValue).filter(MeterValue.transaction_id == s.id).all()
@@ -366,6 +410,8 @@ def _serialize_session(s: Transaction, db: Session, prev_odometer: Optional[floa
 
     power_max_w = None if s.is_external else _session_power_max_w(db, s)
 
+    # --- Indicateurs dérivés ------------------------------------------------
+    # % de recharge : énergie injectée rapportée à la capacité batterie.
     battery_recharge_percent = None
     battery_percent_end_est = None
     if vehicle and vehicle.battery_capacity_kwh:
@@ -374,6 +420,7 @@ def _serialize_session(s: Transaction, db: Session, prev_odometer: Optional[floa
             est = s.battery_percent_start + battery_recharge_percent
             battery_percent_end_est = round(min(est, 100.0), 1)
 
+    # km depuis la charge précédente (même véhicule) et kWh/100km.
     km_since_last = None
     kwh_per_100km = None
     if s.odometer_km is not None and prev_odometer is not None:
@@ -383,8 +430,11 @@ def _serialize_session(s: Transaction, db: Session, prev_odometer: Optional[floa
             if energy_wh:
                 kwh_per_100km = round((energy_wh / 1000.0) / delta * 100, 2)
 
+    charger_obj = db.query(Charger).filter(Charger.id == s.charger_id).first() if s.charger_id else None
     return {
-        "id": s.id, "charger_id": s.charger_id, "connector_id": s.connector_id, "id_tag": s.id_tag,
+        "id": s.id, "charger_id": s.charger_id,
+        "charger_display_name": charger_obj.display_name if charger_obj else None,
+        "connector_id": s.connector_id, "id_tag": s.id_tag,
         "vehicle_id": s.vehicle_id, "vehicle_name": vehicle.name if vehicle else None,
         "meter_start": s.meter_start, "meter_stop": s.meter_stop,
         "start_time": s.start_time.isoformat() if s.start_time else None,
@@ -402,15 +452,26 @@ def _serialize_session(s: Transaction, db: Session, prev_odometer: Optional[floa
         "battery_percent_end_est": battery_percent_end_est,
         "km_since_last": km_since_last,
         "kwh_per_100km": kwh_per_100km,
+        # Charge intentionnellement suspendue en attente d'une programmation :
+        # la transaction est ouverte (câble verrouillé) mais aucun kWh ne transite.
         "deferred_until": getattr(s, "deferred_until", None),
     }
 
 
 def _serialize_sessions_with_km(sessions, db: Session) -> list[dict]:
+    """Sérialise une liste de sessions en calculant, par véhicule, les km
+    parcourus depuis la charge précédente (nécessite de connaître l'odomètre
+    de la charge antérieure du même véhicule, dans l'ordre chronologique)."""
+    # Odomètre précédent connu par véhicule, en parcourant du plus ancien au
+    # plus récent, puis on rétablit l'ordre d'entrée.
     ordered = sorted(
         [s for s in sessions if s.start_time],
         key=lambda s: s.start_time,
     )
+    # Amorçage : pour chaque véhicule présent dans la fenêtre, on récupère en
+    # base l'odomètre de la DERNIÈRE charge ANTÉRIEURE à la plus ancienne charge
+    # affichée. Sans cela, la première charge de la fenêtre n'aurait jamais de
+    # "km parcourus" (sa précédente étant hors limite d'affichage).
     last_odo: dict[int, float] = {}
     seen_first: set[int] = set()
     for s in ordered:
@@ -445,6 +506,7 @@ class SessionUpdate(BaseModel):
     odometer_km: Optional[float] = None
     battery_percent_start: Optional[float] = None
     battery_percent_end: Optional[float] = None
+    # Champs éditables uniquement pour une charge externe saisie à la main.
     energy_kwh: Optional[float] = None
     cost: Optional[float] = None
     location_label: Optional[str] = None
@@ -453,6 +515,8 @@ class SessionUpdate(BaseModel):
 
 
 class ExternalChargeCreate(BaseModel):
+    """Charge réalisée ailleurs (borne tierce), saisie manuellement pour garder
+    une continuité de suivi du véhicule (coût total, kWh, km, %)."""
     vehicle_id: int
     energy_kwh: float
     cost: Optional[float] = None
@@ -478,6 +542,10 @@ def create_external_charge(
     body: ExternalChargeCreate,
     db: Session = Depends(get_db), user=Depends(get_current_user),
 ):
+    """Enregistre une charge effectuée sur une borne tierce (hors CSMS). Elle
+    apparaît dans l'historique et les statistiques du véhicule au même titre
+    qu'une charge locale, mais marquée « externe » (énergie et coût figés tels
+    que saisis, aucune borne associée)."""
     vehicle = db.query(Vehicle).filter(Vehicle.id == body.vehicle_id).first()
     if not vehicle:
         raise HTTPException(status_code=404, detail="Véhicule inconnu")
@@ -502,6 +570,9 @@ def create_external_charge(
 
 @router.delete("/sessions/{session_id}")
 def delete_session(session_id: int, db: Session = Depends(get_db), user=Depends(require_admin)):
+    """Supprime une session (utile surtout pour corriger une charge externe
+    saisie par erreur). Une session OCPP réelle peut aussi être supprimée, mais
+    ses MeterValues associées sont alors détachées (transaction_id remis à NULL)."""
     s = db.query(Transaction).filter(Transaction.id == session_id).first()
     if not s:
         raise HTTPException(status_code=404, detail="Session inconnue")
@@ -523,6 +594,7 @@ def update_session(
     s = db.query(Transaction).filter(Transaction.id == session_id).first()
     if not s:
         raise HTTPException(status_code=404, detail="Session inconnue")
+    # Un user ne peut modifier que les sessions de ses véhicules associés
     allowed_vehicles = _user_vehicle_ids(db, user)
     if allowed_vehicles is not None and s.vehicle_id not in allowed_vehicles:
         raise HTTPException(status_code=403, detail="Session non accessible à votre compte")
@@ -540,6 +612,9 @@ def update_session(
         s.battery_percent_start = data["battery_percent_start"]
     if "battery_percent_end" in data:
         s.battery_percent_end = data["battery_percent_end"]
+    # Champs réservés aux charges externes (énergie/coût saisis à la main).
+    # Sur une vraie session OCPP, l'énergie et le coût sont issus des
+    # MeterValues / du gel de tarif : on ne les laisse pas réécrire.
     if s.is_external:
         if "energy_kwh" in data and data["energy_kwh"] is not None:
             s.energy_wh = data["energy_kwh"] * 1000.0
@@ -575,6 +650,7 @@ def list_history(
     db: Session = Depends(get_db), user=Depends(get_current_user),
 ):
     query = db.query(Transaction)
+    # Filtrage par droits : un user ne voit que les sessions de ses véhicules
     allowed_vehicle_ids = _user_vehicle_ids(db, user)
     if allowed_vehicle_ids is not None:
         query = query.filter(Transaction.vehicle_id.in_(allowed_vehicle_ids))
@@ -631,6 +707,9 @@ def list_vehicles(db: Session = Depends(get_db), user=Depends(get_current_user))
 
 @router.get("/vehicles/{vehicle_id}/stats")
 def vehicle_stats(vehicle_id: int, db: Session = Depends(get_db), user=Depends(get_current_user)):
+    """Fiche synthétique d'un véhicule : nombre de charges, énergie et coût
+    cumulés, km parcourus, conso moyenne, et historique complet de ses charges
+    (locales comme externes)."""
     vehicle = db.query(Vehicle).filter(Vehicle.id == vehicle_id).first()
     if not vehicle:
         raise HTTPException(status_code=404, detail="Véhicule inconnu")
@@ -663,6 +742,7 @@ def vehicle_stats(vehicle_id: int, db: Session = Depends(get_db), user=Depends(g
 
 
 def _require_vehicle_permission(user: dict, db: Session):
+    """Vérifie que l'user a le droit de gérer les véhicules."""
     if is_admin(user):
         return
     uid = get_user_id(user)
@@ -684,6 +764,7 @@ def create_vehicle(body: VehicleCreate, db: Session = Depends(get_db), user=Depe
     vehicle = Vehicle(name=body.name, id_tag=body.id_tag or None, battery_capacity_kwh=body.battery_capacity_kwh)
     db.add(vehicle)
     db.flush()
+    # Le créateur (admin ou user) est automatiquement associé à la voiture.
     uid = get_user_id(user)
     if uid:
         db.add(UserVehicle(user_id=uid, vehicle_id=vehicle.id))
@@ -701,6 +782,7 @@ def update_vehicle(
     vehicle = db.query(Vehicle).filter(Vehicle.id == vehicle_id).first()
     if not vehicle:
         raise HTTPException(status_code=404, detail="Véhicule inconnu")
+    # Un user ne peut modifier que ses propres véhicules
     allowed_ids = _user_vehicle_ids(db, user)
     if allowed_ids is not None and vehicle_id not in allowed_ids:
         raise HTTPException(status_code=403, detail="Véhicule non associé à votre compte")
@@ -719,6 +801,7 @@ def update_vehicle(
 
 @router.delete("/vehicles/{vehicle_id}")
 def delete_vehicle(vehicle_id: int, db: Session = Depends(get_db), user=Depends(get_current_user)):
+    """Retire un véhicule (suppression LOGIQUE)."""
     _require_vehicle_permission(user, db)
     vehicle = db.query(Vehicle).filter(Vehicle.id == vehicle_id).first()
     if not vehicle:
@@ -804,6 +887,8 @@ def update_tariff(
 
 @router.post("/tariffs/{plan_id}/set-default")
 def set_default_tariff(plan_id: int, db: Session = Depends(get_db), user=Depends(require_admin)):
+    """Marque cet abonnement comme celui utilisé par défaut (pour les bornes
+    sans tarif explicitement assigné), sans avoir à renvoyer tous ses champs."""
     plan = db.query(TariffPlan).filter(TariffPlan.id == plan_id).first()
     if not plan:
         raise HTTPException(status_code=404, detail="Tarif inconnu")
@@ -865,6 +950,9 @@ def delete_period(
     plan_id: int, period_id: int,
     db: Session = Depends(get_db), user=Depends(require_admin),
 ):
+    # Les sessions déjà terminées ont leur coût figé indépendamment des
+    # périodes (voir freeze_transaction_cost) : supprimer une période ne
+    # modifie jamais rétroactivement un coût déjà calculé.
     period = db.query(TariffPeriod).filter(
         TariffPeriod.id == period_id, TariffPeriod.tariff_plan_id == plan_id
     ).first()
@@ -892,8 +980,12 @@ def set_charger_tariff(
     return {"status": "ok"}
 
 
+# --- Fiche borne (statistiques) ---
+
 @router.get("/chargers/{charger_id}/stats")
 def charger_stats(charger_id: str, db: Session = Depends(get_db), user=Depends(get_current_user)):
+    """Fiche synthétique d'une borne : nombre de charges délivrées, énergie et
+    coût cumulés, puissance max observée, et son historique de charges."""
     charger = db.query(Charger).filter(Charger.id == charger_id).first()
     if not charger:
         raise HTTPException(status_code=404, detail="Borne inconnue")
@@ -917,9 +1009,21 @@ def charger_stats(charger_id: str, db: Session = Depends(get_db), user=Depends(g
     }
 
 
+# --- Taux d'occupation de l'alimentation électrique ---
+
 @router.get("/occupancy")
 def power_occupancy(db: Session = Depends(get_db), user=Depends(get_current_user)):
+    """Taux d'occupation de l'abonnement électrique à l'instant T : puissance
+    délivrée cumulée (somme des Power.Active.Import les plus récents de chaque
+    charge en cours) rapportée à la puissance souscrite de l'abonnement.
+
+    La puissance souscrite est en kVA ; on l'assimile à des kW (facteur de
+    puissance ≈ 1 sur une recharge VE), c'est une approximation raisonnable
+    pour un indicateur de charge.
+    """
+    # Charges actuellement actives.
     active = db.query(Transaction).filter(Transaction.status == "active").all()
+
     per_plan: dict[int, dict] = {}
 
     def _bucket(plan):
@@ -937,6 +1041,7 @@ def power_occupancy(db: Session = Depends(get_db), user=Depends(get_current_user
     for s in active:
         charger = db.query(Charger).filter(Charger.id == s.charger_id).first() if s.charger_id else None
         plan = resolve_plan_for_charger(db, charger) if charger else None
+        # Dernier relevé de puissance de cette session.
         last_power = db.query(MeterValue).filter(
             MeterValue.transaction_id == s.id,
             MeterValue.measurand == "Power.Active.Import",
@@ -958,7 +1063,7 @@ def power_occupancy(db: Session = Depends(get_db), user=Depends(get_current_user
     return result
 
 
-# --- Conditions de charge ---
+# --- Conditions de charge (programmation) ---
 
 class ChargeConditionCreate(BaseModel):
     connector_id: Optional[int] = None
@@ -987,11 +1092,18 @@ def create_condition(
     charger_id: str, body: ChargeConditionCreate,
     db: Session = Depends(get_db), user=Depends(require_admin),
 ):
+    """Ajoute une condition de charge à une borne. Plusieurs conditions se
+    combinent en ET (toutes doivent autoriser). Voir scheduler.py pour leur
+    évaluation. Ces conditions n'ont de sens qu'en mode local."""
     charger = db.query(Charger).filter(
         Charger.id == charger_id, Charger.deleted_at.is_(None)
     ).first()
     if not charger:
         raise HTTPException(status_code=404, detail="Borne inconnue")
+    # La programmation repose sur SmartCharging (limitation à 0 W pour tenir la
+    # charge en pause sans clore la transaction). Si la borne a explicitement
+    # déclaré ne pas le supporter, on refuse : un repli par RemoteStop/Start
+    # serait trop brutal et peu fiable pour un simple report d'horaire.
     if SMART_CHARGING_SUPPORT.get(charger_id) is False:
         raise HTTPException(
             status_code=409,
@@ -1043,10 +1155,14 @@ def delete_condition(
 
 
 # ============================ EXPORT / IMPORT ============================
+# Sauvegarde et restauration complètes des données et de la configuration.
+# Sérialisation générique par introspection des colonnes SQLAlchemy : pas de
+# liste de champs à maintenir, l'export suit automatiquement le schéma.
 
 import datetime as _dt
 import enum as _enum
 
+# Ordre d'insertion respectant les clés étrangères (parents avant enfants).
 _EXPORT_ORDER = [
     TariffPlan, TariffPeriod, Vehicle, Charger, ChargeCondition,
     Transaction, MeterValue, ConfigurationKey, ConnectorStatus,
@@ -1061,7 +1177,7 @@ def _serialize_row(obj) -> dict:
         if isinstance(v, _dt.datetime):
             v = {"__dt__": v.isoformat()}
         elif isinstance(v, _enum.Enum):
-            v = v.value
+            v = v.value  # Enum (y compris héritant de str) -> valeur brute
         out[col.name] = v
     return out
 
@@ -1074,7 +1190,10 @@ def _deserialize_value(col, raw):
 
 @router.get("/export")
 def export_data(db: Session = Depends(get_db), user=Depends(require_admin)):
-    from . import main as _main
+    """Exporte l'intégralité des données et de la configuration au format JSON
+    (un tableau de lignes par table). Réimportable via POST /import. Le mot de
+    passe admin (table users) n'est volontairement pas inclus."""
+    from . import main as _main  # pour APP_VERSION, sans import circulaire au chargement
     payload = {"tables": {}}
     for model in _EXPORT_ORDER:
         rows = db.query(model).all()
@@ -1087,12 +1206,22 @@ def export_data(db: Session = Depends(get_db), user=Depends(require_admin)):
 
 
 class ImportBody(BaseModel):
-    mode: str = "merge"
+    mode: str = "merge"  # "replace" (écrase tout) ou "merge" (complète / met à jour)
     tables: dict
 
 
 @router.post("/import")
 def import_data(body: ImportBody, db: Session = Depends(get_db), user=Depends(require_admin)):
+    """Réimporte des données exportées. Deux modes :
+
+    - replace : vide d'abord toutes les tables concernées, puis réinsère à
+      l'identique (mêmes identifiants). Restauration fidèle d'une sauvegarde.
+    - merge   : insère ou met à jour ligne par ligne (par clé primaire) sans
+      rien supprimer de ce qui n'est pas dans le fichier.
+
+    La table des utilisateurs n'est jamais touchée (le mot de passe reste
+    celui en place). Opération transactionnelle : tout ou rien.
+    """
     mode = (body.mode or "merge").lower()
     if mode not in ("replace", "merge"):
         raise HTTPException(status_code=400, detail="Mode invalide (replace|merge)")
@@ -1100,6 +1229,7 @@ def import_data(body: ImportBody, db: Session = Depends(get_db), user=Depends(re
 
     try:
         if mode == "replace":
+            # Suppression enfants -> parents (ordre inverse de l'insertion).
             for model in reversed(_EXPORT_ORDER):
                 if model.__tablename__ in tables:
                     db.query(model).delete()
@@ -1134,6 +1264,8 @@ def import_data(body: ImportBody, db: Session = Depends(get_db), user=Depends(re
 
 
 # ============================ JOURNAL OCPP (live) ============================
+# Flux de diagnostic en mémoire : voir en direct les messages OCPP échangés
+# avec les bornes (local et relais, les deux sens). Non persisté.
 
 from . import ocpp_logs
 
@@ -1155,6 +1287,7 @@ def get_logs(
 
 @router.get("/logs/chargers")
 def get_logs_chargers(user=Depends(get_current_user)):
+    """Bornes ayant produit au moins une entrée (pour alimenter le filtre)."""
     return ocpp_logs.known_chargers()
 
 
@@ -1164,6 +1297,7 @@ class LogSettings(BaseModel):
 
 @router.put("/logs/settings")
 def set_logs_settings(body: LogSettings, user=Depends(require_admin)):
+    """Active/désactive la capture des messages à fort volume (MeterValues)."""
     ocpp_logs.set_capture_high_volume(body.capture_high_volume)
     return {"capture_high_volume": ocpp_logs.is_capturing_high_volume()}
 
@@ -1178,7 +1312,8 @@ def clear_logs(user=Depends(require_admin)):
 
 @router.delete("/history/all")
 def delete_all_history(db: Session = Depends(get_db), user=Depends(require_admin)):
-    """Supprime DEFINITVEMENT toutes les transactions. Action irréversible."""
+    """Supprime DÉFINITIVEMENT toutes les transactions (y compris externes).
+    Action irréversible, réservée à l'admin."""
     count = db.query(Transaction).delete()
     db.commit()
     return {"status": "ok", "deleted": count}
@@ -1251,6 +1386,7 @@ def create_user(body: UserCreate, db: Session = Depends(get_db), user=Depends(re
     u = User(username=body.username, password_hash=hash_password(body.password), role=role)
     db.add(u)
     db.flush()
+    # Permissions
     pdata = body.permissions or {}
     db.add(UserPermission(
         user_id=u.id,
@@ -1260,8 +1396,10 @@ def create_user(body: UserCreate, db: Session = Depends(get_db), user=Depends(re
         can_view_logs=bool(pdata.get("can_view_logs")),
         can_export_import=bool(pdata.get("can_export_import")),
     ))
+    # Associations véhicules
     for vid in body.vehicle_ids:
         db.add(UserVehicle(user_id=u.id, vehicle_id=vid))
+    # Associations bornes
     for cid in body.charger_ids:
         db.add(UserCharger(user_id=u.id, charger_id=cid))
     db.commit()
@@ -1298,6 +1436,7 @@ def update_user_associations(
     u = db.query(User).filter(User.id == user_id, User.deleted_at.is_(None)).first()
     if not u:
         raise HTTPException(status_code=404, detail="Utilisateur introuvable")
+    # Remplace les associations (supprime tout puis réinsère)
     db.query(UserVehicle).filter(UserVehicle.user_id == user_id).delete()
     db.query(UserCharger).filter(UserCharger.user_id == user_id).delete()
     for vid in body.vehicle_ids:
@@ -1314,6 +1453,7 @@ def admin_reset_password(
     user_id: int, body: AdminPasswordReset,
     db: Session = Depends(get_db), user=Depends(require_admin),
 ):
+    """L'admin peut réinitialiser le mot de passe de n'importe quel user."""
     u = db.query(User).filter(User.id == user_id, User.deleted_at.is_(None)).first()
     if not u:
         raise HTTPException(status_code=404, detail="Utilisateur introuvable")

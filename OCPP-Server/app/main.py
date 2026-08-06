@@ -3,7 +3,7 @@ import logging
 import os
 from datetime import datetime
 
-from fastapi import FastAPI, WebSocket, Depends
+from fastapi import FastAPI, WebSocket
 from fastapi.responses import FileResponse, Response, StreamingResponse
 from starlette.websockets import WebSocketDisconnect
 from sqlalchemy.orm import Session
@@ -20,7 +20,8 @@ from .relay import run_relay
 from .scheduler import run_scheduler
 from . import mqtt_bridge
 from .sse import sse_stream
-from .auth import get_current_user
+from .auth import get_current_user, oauth2_scheme
+from fastapi import Depends
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("ocpp-server")
@@ -93,12 +94,16 @@ def pwa_icon_512_maskable():
 async def events_stream(token: str = ""):
     """Flux Server-Sent Events. Authentification via query param ?token=...
     (EventSource du navigateur ne supporte pas les headers Authorization)."""
+    from fastapi import Query
     if not token:
-        return Response(status_code=401, content="Token manquant")
+        from fastapi.responses import Response as _Resp
+        return _Resp(status_code=401, content="Token manquant")
+    # Valide le token avant d'ouvrir le flux
     try:
         get_current_user(token)
     except Exception:
-        return Response(status_code=401, content="Token invalide")
+        from fastapi.responses import Response as _Resp
+        return _Resp(status_code=401, content="Token invalide")
     return StreamingResponse(
         sse_stream(),
         media_type="text/event-stream",
@@ -142,7 +147,7 @@ async def on_startup():
     asyncio.create_task(run_scheduler())
 
 
-APP_VERSION = "0.19.0"
+APP_VERSION = "0.19.1"
 
 
 @app.get("/healthz")

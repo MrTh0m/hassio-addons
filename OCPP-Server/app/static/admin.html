@@ -679,6 +679,9 @@ function statusLabel(status) {
   return map[status] || status;
 }
 
+/* Nom d'affichage d'une borne : display_name si défini, sinon l'id technique. */
+function chargerLabel(c) { return c.display_name || c.id; }
+
 let toastTimer = null;
 function toast(msg, kind) {
   const root = document.getElementById("toast-root");
@@ -868,7 +871,7 @@ async function renderHomeCurrent(active, chargers, condByCharger) {
           <div style="min-width:0">
             <div class="cluster center" style="gap:.5rem">
               <span class="charging-dot" style="background:var(--warn)"></span>
-              <b>${esc(s.charger_id)} · Conn. ${s.connector_id}</b>
+              <b>${esc(s.charger_display_name || s.charger_id)} · Conn. ${s.connector_id}</b>
               ${vehSelect}
               <span class="badge warn"><svg style="width:.85em;height:.85em"><use href="#i-clock"/></svg> En attente</span>
             </div>
@@ -885,7 +888,7 @@ async function renderHomeCurrent(active, chargers, condByCharger) {
         <div style="min-width:0">
           <div class="cluster center" style="gap:.5rem">
             <span class="charging-dot" ${suspended ? 'style="background:var(--warn)"' : ""}></span>
-            <b>${esc(s.charger_id)} · Conn. ${s.connector_id}</b>
+            <b>${esc(s.charger_display_name || s.charger_id)} · Conn. ${s.connector_id}</b>
             ${vehSelect}
             ${suspended ? `<span class="badge ${esc(st)}">${statusLabel(st)}</span>` : ""}
             ${condBadge}
@@ -953,7 +956,7 @@ async function renderHomeAvailable(chargers, active, condByCharger) {
       cards += `<div class="card" ${preparing ? 'style="border-color:var(--warn)"' : ""}>
         <div class="spread">
           <div class="cluster center" style="gap:.5rem; flex-wrap:wrap">
-            <b>${esc(c.id)} · Conn. ${conn.connector_id}</b>
+            <b>${esc(chargerLabel(c))} · Conn. ${conn.connector_id}</b>
             ${statusBadge}${condBadge}
           </div>
           ${cta}
@@ -1087,7 +1090,7 @@ async function loadChargers() {
       <div class="spread">
         <div class="clickable" style="flex:1; margin:-.8rem -.4rem -.8rem -.95rem; padding:.8rem .4rem .8rem .95rem; border-radius:var(--r)" onclick="openChargerStatsModal('${esc(c.id)}')">
           <div class="cluster center" style="gap:.5rem">
-            <b>${esc(c.id)}</b>
+            <b>${esc(chargerLabel(c))}</b>
             <span class="badge ${c.mode}">${c.mode}</span>
             <span class="badge ${c.connected ? "ok" : "off"}"><span class="dot"></span>${c.connected ? "connectée" : "hors ligne"}</span>
             ${schedBadge}
@@ -1154,10 +1157,13 @@ async function openChargerConfigModal(id) {
     scheduleSection = warn + condRows;
   }
 
-  const html = `<div class="modal-head"><h2><svg style="width:1.1em;height:1.1em;vertical-align:-.15em"><use href="#i-cog"/></svg> ${esc(id)}</h2>
+  const html = `<div class="modal-head"><h2><svg style="width:1.1em;height:1.1em;vertical-align:-.15em"><use href="#i-cog"/></svg> ${esc(charger.display_name || id)}</h2>
     <button class="btn btn-icon btn-ghost" onclick="closeModal()"><svg><use href="#i-close"/></svg></button></div>
 
     <div class="section-title" style="margin-top:0">Réglages</div>
+    <label class="field" style="max-width:340px; margin-bottom:.8rem"><span>Nom d'affichage (optionnel)</span>
+      <input id="dispname-${id}" value="${esc(charger.display_name || "")}" placeholder="${esc(id)}">
+    </label>
     <div class="grid-cards two">
       <div>
         <label class="field"><span>Mode de pilotage</span>
@@ -1212,6 +1218,15 @@ async function saveChargerConfig(id) {
   const modeBody = { mode };
   if (mode === "relay") modeBody.relay_url = document.getElementById("relayurl-" + id).value;
   let allOk = true;
+  // Nom d'affichage
+  const dispNameEl = document.getElementById("dispname-" + id);
+  if (dispNameEl) {
+    const r0 = await apiCall(`api/chargers/${id}/display-name`, {
+      method: "PUT", headers: jsonHeaders(),
+      body: JSON.stringify({ display_name: dispNameEl.value.trim() || null }),
+    });
+    allOk = allOk && r0.ok;
+  }
   const r1 = await apiCall(`api/chargers/${id}/mode`, { method: "PUT", headers: jsonHeaders(), body: JSON.stringify(modeBody) });
   allOk = allOk && r1.ok;
   if (mode === "local") {
@@ -1309,7 +1324,7 @@ async function openChargerStatsModal(chargerId) {
   const st = data.stats;
   const meta = [charger.vendor, charger.model].filter(Boolean).join(" ")
     + (charger.ocpp_version ? ` · OCPP ${charger.ocpp_version}` : "");
-  let html = `<div class="modal-head"><h2>${esc(data.id)}</h2>
+  let html = `<div class="modal-head"><h2>${esc(charger.display_name || data.id)}</h2>
     <button class="btn btn-icon btn-ghost" onclick="closeModal()"><svg><use href="#i-close"/></svg></button></div>
     <div class="cluster center" style="gap:.5rem; margin:-.4rem 0 .3rem">
       <span class="badge ${charger.mode}">${charger.mode}</span>

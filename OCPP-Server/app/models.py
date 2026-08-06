@@ -71,10 +71,15 @@ class UserPermission(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     user_id = Column(Integer, ForeignKey("users.id"), unique=True, nullable=False)
+    # Réglages borne (mode, tarif, programmation, auth_mode)
     can_manage_chargers = Column(Boolean, default=False)
+    # Abonnements électriques
     can_manage_tariffs = Column(Boolean, default=False)
+    # Gérer les voitures (créer, modifier ses voitures)
     can_manage_vehicles = Column(Boolean, default=False)
+    # Voir les logs OCPP
     can_view_logs = Column(Boolean, default=False)
+    # Exporter / importer les données
     can_export_import = Column(Boolean, default=False)
 
     user = relationship("User", back_populates="permissions")
@@ -91,7 +96,9 @@ class Charger(Base):
     mode = Column(Enum(ChargerMode), default=ChargerMode.local, nullable=False)
     auth_mode = Column(Enum(AuthMode), default=AuthMode.free, nullable=True)
     relay_url = Column(String, nullable=True)
+    display_name = Column(String, nullable=True)
     status = Column(String, default="Unknown")
+    # true/false/null : support SmartCharging détecté, non supporté, ou inconnu
     smart_charging = Column(Boolean, nullable=True)
     tariff_plan_id = Column(Integer, ForeignKey("tariff_plans.id"), nullable=True)
     last_seen = Column(DateTime, nullable=True)
@@ -121,7 +128,7 @@ class Transaction(Base):
     meter_stop = Column(Float, nullable=True)
     start_time = Column(DateTime, default=datetime.utcnow)
     stop_time = Column(DateTime, nullable=True)
-    status = Column(String, default="active")
+    status = Column(String, default="active")  # active | completed
 
     is_external = Column(Boolean, default=False)
     location_label = Column(String, nullable=True)
@@ -135,9 +142,9 @@ class Transaction(Base):
     battery_percent_end = Column(Float, nullable=True)
 
     # Indique que la charge est intentionnellement suspendue en attente d'une
-    # condition de programmation (start_after, off_peak...). La transaction est
+    # condition de programmation (start_after, off_peak…). La transaction est
     # ouverte (câble verrouillé) mais aucun kWh ne transite encore.
-    deferred_until = Column(String, nullable=True)
+    deferred_until = Column(String, nullable=True)  # "HH:MM" ou description libre
 
     charger = relationship("Charger", back_populates="transactions")
     vehicle = relationship("Vehicle", back_populates="transactions")
