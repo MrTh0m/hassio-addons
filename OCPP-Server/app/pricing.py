@@ -31,19 +31,37 @@ def price_at(plan, dt: datetime):
     return plan.fixed_price
 
 
+def _to_wh(value: float, unit: str | None) -> float:
+    """Normalise une valeur énergétique en Wh.
+
+    OCPP 1.6 spécifie Wh pour meterStart/meterStop et pour les MeterValues
+    de type Energy.Active.Import.Register. Mais certaines bornes (dont
+    certaines Schneider) envoient des kWh. On détecte ça via l'unité
+    renvoyée dans le SampledValue.
+    """
+    if unit and unit.lower() in ("kwh", "kw·h", "kw-h"):
+        return value * 1000.0
+    return value
+
+
 def compute_session_cost(transaction, meter_values, plan) -> dict:
     """Calcule le coût d'une session en découpant son énergie par tranche de
     temps entre relevés successifs, et en appliquant le tarif actif à chaque
     tranche (pas juste énergie totale x un seul prix, pour bien gérer une
-    session qui chevauche plusieurs plages tarifaires)."""
+    session qui chevauche plusieurs plages tarifaires).
+
+    Les valeurs énergétiques sont normalisées en Wh avant tout calcul, quelle
+    que soit l'unité déclarée par la borne (Wh ou kWh).
+    """
+    # meterStart / meterStop sont en Wh par la spec OCPP 1.6
     points = []
     if transaction.meter_start is not None and transaction.start_time:
-        points.append((transaction.start_time, transaction.meter_start))
+        points.append((transaction.start_time, float(transaction.meter_start)))
     for mv in meter_values:
         if mv.measurand == "Energy.Active.Import.Register":
-            points.append((mv.timestamp, mv.value))
+            points.append((mv.timestamp, _to_wh(mv.value, mv.unit)))
     if transaction.meter_stop is not None and transaction.stop_time:
-        points.append((transaction.stop_time, transaction.meter_stop))
+        points.append((transaction.stop_time, float(transaction.meter_stop)))
 
     points.sort(key=lambda p: p[0])
 

@@ -1,3 +1,11 @@
+## 0.19.2
+
+### Correction : calcul d'énergie avec les bornes à index absolu élevé
+
+- **Normalisation des unités MeterValues** : certaines bornes (dont Schneider) envoient l'énergie en kWh au lieu de Wh dans les SampledValues. La valeur est désormais convertie en Wh avant stockage et avant calcul, quelle que soit l'unité déclarée.
+- **Calcul correct sur index absolu** : `meterStart` est l'index cumulé depuis la mise en service de la borne (ex. 96 543 Wh). L'énergie de session est bien calculée comme `index_fin - index_début`, pas comme l'index brut.
+- **Occupation de l'alimentation** : la puissance affichée est désormais cohérente avec l'énergie délivrée réelle.
+
 ## 0.19.1
 
 ### Amélioration

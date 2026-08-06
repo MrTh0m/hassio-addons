@@ -76,6 +76,7 @@ class LocalChargePoint(ChargePoint16):
             db.close()
 
         asyncio.create_task(self._detect_smart_charging())
+        # SSE : la borne vient de (re)connecter
         sse_notify("charger_connected", {"charger_id": self.id})
 
         return call_result.BootNotification(
@@ -94,6 +95,7 @@ class LocalChargePoint(ChargePoint16):
                     val = (item.get("value") or "").lower()
                     supported = "smartcharging" in val
                     SMART_CHARGING_SUPPORT[self.id] = supported
+                    # Mise à jour en base
                     db = self._db()
                     try:
                         charger = db.query(Charger).filter(Charger.id == self.id).first()
@@ -193,6 +195,7 @@ class LocalChargePoint(ChargePoint16):
         finally:
             db.close()
 
+        # SSE : changement de statut d'un connecteur
         sse_notify("connector_status", {
             "charger_id": self.id,
             "connector_id": connector_id,
@@ -235,11 +238,13 @@ class LocalChargePoint(ChargePoint16):
             if vehicle is None and pending_vehicle_id is not None:
                 vehicle = db.query(Vehicle).filter(Vehicle.id == pending_vehicle_id).first()
 
+            # Départ différé : on vérifie si la charge peut commencer maintenant
             suspend_now = False
             if charger and charger.mode == ChargerMode.local:
                 from .scheduler import connector_should_charge_now, _get_active_conditions
                 suspend_now = not connector_should_charge_now(db, charger, connector_id)
                 if suspend_now:
+                    # Trouver le libellé de la condition pour l'affichage UI
                     conds = _get_active_conditions(db, charger, connector_id)
                     for cond in conds:
                         if cond.type.value == "start_after" and cond.time_value:
@@ -272,6 +277,7 @@ class LocalChargePoint(ChargePoint16):
         if suspend_now:
             asyncio.create_task(self._suspend_for_schedule(connector_id))
 
+        # SSE : nouvelle transaction
         sse_notify("transaction_started", {
             "charger_id": self.id,
             "connector_id": connector_id,
@@ -319,6 +325,7 @@ class LocalChargePoint(ChargePoint16):
             if duration_min is not None:
                 await mqtt_bridge.publish_connector_state(self.id, connector_id, session_duration_min=duration_min)
 
+        # SSE : transaction terminée
         sse_notify("transaction_stopped", {
             "charger_id": self.id,
             "connector_id": connector_id,
@@ -329,7 +336,6 @@ class LocalChargePoint(ChargePoint16):
             id_tag_info={"status": AuthorizationStatus.accepted}
         )
 
-    @on(Action.meter_values)
     async def on_meter_values(self, connector_id, meter_value, transaction_id=None, **kwargs):
         ocpp_logs.record(self.id, "in", "MeterValues",
                          summary=f"conn {connector_id}",
@@ -345,18 +351,25 @@ class LocalChargePoint(ChargePoint16):
                     except (TypeError, ValueError):
                         continue
                     measurand = sv.get("measurand", "Energy.Active.Import.Register")
+                    unit = sv.get("unit")
+                    # Normaliser l'énergie en Wh : certaines bornes envoient des kWh
+                    stored_value = value
+                    if measurand == "Energy.Active.Import.Register":
+                        if unit and unit.lower() in ("kwh", "kw·h", "kw-h"):
+                            stored_value = value * 1000.0
+                            unit = "Wh"  # on normalise l'unité stockée
                     db.add(MeterValue(
                         charger_id=self.id,
                         transaction_id=transaction_id,
                         connector_id=connector_id,
                         measurand=measurand,
-                        value=value,
-                        unit=sv.get("unit"),
+                        value=stored_value,
+                        unit=unit,
                     ))
                     if measurand == "Power.Active.Import":
                         mqtt_updates["power_w"] = value
                     elif measurand == "Energy.Active.Import.Register":
-                        mqtt_updates["energy_wh"] = value
+                        mqtt_updates["energy_wh"] = stored_value
 
             if transaction_id is not None:
                 txn = db.query(Transaction).filter(Transaction.id == transaction_id).first()
@@ -372,6 +385,8 @@ class LocalChargePoint(ChargePoint16):
             await mqtt_bridge.publish_connector_state(self.id, connector_id, **mqtt_updates)
 
         return call_result.MeterValues()
+
+    # --- Actions déclenchées depuis l'API ---
 
     async def trigger_remote_start(self, connector_id: int, id_tag: str):
         ocpp_logs.record(self.id, "out", "RemoteStartTransaction",
