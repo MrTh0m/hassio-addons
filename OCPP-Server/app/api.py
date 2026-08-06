@@ -397,7 +397,7 @@ def _serialize_session(s: Transaction, db: Session, prev_odometer: Optional[floa
         charger = db.query(Charger).filter(Charger.id == s.charger_id).first()
         plan = resolve_plan_for_charger(db, charger)
         meter_values = db.query(MeterValue).filter(MeterValue.transaction_id == s.id).all()
-        cost_info = compute_session_cost(s, meter_values, plan)
+        cost_info = compute_session_cost(s, meter_values, plan, ignore_meter_stop=True)
         cost, energy_wh = cost_info["cost"], cost_info["energy_wh"]
         tariff_plan_name = plan.name if plan else None
 
@@ -566,6 +566,35 @@ def create_external_charge(
     db.commit()
     db.refresh(txn)
     return {"id": txn.id}
+
+
+@router.post("/sessions/{session_id}/recalculate")
+def recalculate_session(
+    session_id: int,
+    db: Session = Depends(get_db), user=Depends(require_admin),
+):
+    """Recalcule l'énergie et le coût d'une session terminée depuis meter_start/meter_stop.
+    Utile pour corriger une session corrompue par un bug de calcul antérieur."""
+    s = db.query(Transaction).filter(Transaction.id == session_id).first()
+    if not s:
+        raise HTTPException(status_code=404, detail="Session inconnue")
+    if s.status != "completed":
+        raise HTTPException(status_code=400, detail="Seules les sessions terminées peuvent être recalculées")
+    if s.is_external:
+        raise HTTPException(status_code=400, detail="Les charges externes ne sont pas recalculables")
+    if s.meter_start is None or s.meter_stop is None:
+        raise HTTPException(status_code=400, detail="meter_start ou meter_stop manquant, recalcul impossible")
+    # Forcer le recalcul depuis meter_start/meter_stop uniquement (sans MeterValues)
+    s.energy_wh = None
+    s.cost = None
+    db.flush()
+    result = freeze_transaction_cost(db, s)
+    db.commit()
+    return {
+        "status": "ok",
+        "energy_wh": result["energy_wh"],
+        "cost": result["cost"],
+    }
 
 
 @router.delete("/sessions/{session_id}")

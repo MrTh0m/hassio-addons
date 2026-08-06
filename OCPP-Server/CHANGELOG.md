@@ -1,3 +1,20 @@
+## 0.19.4
+
+### Nouveau : onglet Configuration OCPP dans la modale de borne
+
+- La modale de configuration de chaque borne (bouton engrenage) dispose désormais d'un onglet **Configuration OCPP** qui lit directement les clés de la borne via GetConfiguration.
+- Toutes les clés sont listées, triées par pertinence. Les clés importantes pour le suivi temps réel (MeterValueSampleInterval, MeterValuesSampledData...) apparaissent en premier, mises en valeur.
+- Les clés accessibles en écriture sont modifiables depuis l'UI ; les clés en lecture seule sont affichées mais grisées.
+- Pour activer les données temps réel sur la Schneider : régler MeterValueSampleInterval=60 et MeterValuesSampledData=Energy.Active.Import.Register,Power.Active.Import.
+
+## 0.19.3
+
+### Correction : énergie et coût fantômes sur session active
+
+- **Session active** : le calcul d'énergie ignore désormais meter_stop (qui peut être parasite après un redémarrage ou un reconcile) et ne se base que sur les MeterValues reçus pendant la session.
+- Résultat : une session active sans MeterValues affiche correctement 0.00 kWh au lieu de recycler les données de la session précédente.
+- **Note Schneider** : la borne Schneider EVH5A n'envoie pas de MeterValues par défaut. Configurer MeterValueSampleInterval=60 et MeterValuesSampledData=Energy.Active.Import.Register,Power.Active.Import via l'onglet Config de la borne pour avoir les données en temps réel.
+
 ## 0.19.2
 
 ### Correction : calcul d'énergie avec les bornes à index absolu élevé

@@ -44,7 +44,7 @@ def _to_wh(value: float, unit: str | None) -> float:
     return value
 
 
-def compute_session_cost(transaction, meter_values, plan) -> dict:
+def compute_session_cost(transaction, meter_values, plan, ignore_meter_stop: bool = False) -> dict:
     """Calcule le coût d'une session en découpant son énergie par tranche de
     temps entre relevés successifs, et en appliquant le tarif actif à chaque
     tranche (pas juste énergie totale x un seul prix, pour bien gérer une
@@ -52,6 +52,10 @@ def compute_session_cost(transaction, meter_values, plan) -> dict:
 
     Les valeurs énergétiques sont normalisées en Wh avant tout calcul, quelle
     que soit l'unité déclarée par la borne (Wh ou kWh).
+
+    ignore_meter_stop=True pour les sessions actives : on n'utilise que les
+    MeterValues reçus, pas meter_stop qui peut être parasite (hérité d'un
+    redémarrage ou d'un reconcile incorrect).
     """
     # meterStart / meterStop sont en Wh par la spec OCPP 1.6
     points = []
@@ -60,7 +64,7 @@ def compute_session_cost(transaction, meter_values, plan) -> dict:
     for mv in meter_values:
         if mv.measurand == "Energy.Active.Import.Register":
             points.append((mv.timestamp, _to_wh(mv.value, mv.unit)))
-    if transaction.meter_stop is not None and transaction.stop_time:
+    if not ignore_meter_stop and transaction.meter_stop is not None and transaction.stop_time:
         points.append((transaction.stop_time, float(transaction.meter_stop)))
 
     points.sort(key=lambda p: p[0])

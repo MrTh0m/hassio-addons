@@ -106,6 +106,9 @@
   .btn-icon { padding: .45rem; border-radius: var(--r-sm); }
   .btn[disabled] { opacity: .5; cursor: not-allowed; }
   .linkbtn {
+  .tab-btn { background:none; border:none; padding:.4rem .85rem; cursor:pointer; color:var(--muted); border-bottom:2px solid transparent; font-size:.9rem; margin-bottom:-1px; }
+  .tab-btn.active { color:var(--accent); border-bottom-color:var(--accent); font-weight:600; }
+  .tab-btn:hover:not(.active) { color:var(--fg); }
     background: none; border: none; padding: 0; cursor: pointer; font: inherit;
     color: var(--primary-strong); font-weight: 550;
   }
@@ -1117,7 +1120,8 @@ async function deleteCharger(id) {
 const CONDITION_LABELS = { off_peak: "Heures creuses uniquement", start_after: "Différer le départ après", ready_by: "Terminée pour" };
 
 /* --- Configuration d'une borne (modale dédiée) --- */
-async function openChargerConfigModal(id) {
+async function openChargerConfigModal(id, activeTab) {
+  activeTab = activeTab || "settings";
   openModalConnector = null;
   openModal(`<div class="empty">Chargement…</div>`);
   const [charger, tariffs, conditions, connectors] = await Promise.all([
@@ -1128,10 +1132,8 @@ async function openChargerConfigModal(id) {
   ]);
   const isLocal = charger.mode === "local";
   const authMode = charger.auth_mode || "free";
-  // Support SmartCharging : true / false / null (inconnu tant que non testé).
   const smart = charger.smart_charging;
   const scheduleBlocked = isLocal && smart === false;
-  // Connecteurs mémorisés pour la modale de condition (liste déroulante).
   configConnectors = connectors.map(c => c.connector_id);
 
   const condRows = conditions.length ? conditions.map(cd => `
@@ -1157,53 +1159,146 @@ async function openChargerConfigModal(id) {
     scheduleSection = warn + condRows;
   }
 
+  // Onglet Configuration OCPP : chargé à la demande
+  const ocppTabContent = activeTab === "ocpp"
+    ? await buildOcppConfigTab(id, isLocal)
+    : `<div id="ocpp-tab-body"><div class="empty">Cliquez sur l'onglet pour charger la configuration.</div></div>`;
+
+  const tabBtn = (key, label) =>
+    `<button class="tab-btn${activeTab === key ? " active" : ""}" onclick="openChargerConfigModal('${id}','${key}')">${label}</button>`;
+
   const html = `<div class="modal-head"><h2><svg style="width:1.1em;height:1.1em;vertical-align:-.15em"><use href="#i-cog"/></svg> ${esc(charger.display_name || id)}</h2>
     <button class="btn btn-icon btn-ghost" onclick="closeModal()"><svg><use href="#i-close"/></svg></button></div>
 
-    <div class="section-title" style="margin-top:0">Réglages</div>
-    <label class="field" style="max-width:340px; margin-bottom:.8rem"><span>Nom d'affichage (optionnel)</span>
-      <input id="dispname-${id}" value="${esc(charger.display_name || "")}" placeholder="${esc(id)}">
-    </label>
-    <div class="grid-cards two">
-      <div>
-        <label class="field"><span>Mode de pilotage</span>
-          <select id="mode-${id}" onchange="onModeChange('${id}')">
-            <option value="local" ${isLocal ? "selected" : ""}>Local (piloté ici)</option>
-            <option value="relay" ${!isLocal ? "selected" : ""}>Relais (serveur officiel)</option>
-          </select></label>
-        <div id="relaywrap-${id}" style="margin-top:.5rem; ${isLocal ? "display:none" : ""}">
-          <label class="field"><span>URL du serveur officiel</span>
-            <input id="relayurl-${id}" placeholder="wss://serveur/..." value="${esc(charger.relay_url || "")}"></label>
+    <div class="tab-bar" style="display:flex;gap:.25rem;border-bottom:1px solid var(--border);margin-bottom:1rem">
+      ${tabBtn("settings","Réglages")}
+      ${isLocal ? tabBtn("ocpp","Configuration OCPP") : ""}
+    </div>
+
+    <div style="${activeTab === "settings" ? "" : "display:none"}">
+      <div class="section-title" style="margin-top:0">Réglages</div>
+      <label class="field" style="max-width:340px; margin-bottom:.8rem"><span>Nom d'affichage (optionnel)</span>
+        <input id="dispname-${id}" value="${esc(charger.display_name || "")}" placeholder="${esc(id)}">
+      </label>
+      <div class="grid-cards two">
+        <div>
+          <label class="field"><span>Mode de pilotage</span>
+            <select id="mode-${id}" onchange="onModeChange('${id}')">
+              <option value="local" ${isLocal ? "selected" : ""}>Local (piloté ici)</option>
+              <option value="relay" ${!isLocal ? "selected" : ""}>Relais (serveur officiel)</option>
+            </select></label>
+          <div id="relaywrap-${id}" style="margin-top:.5rem; ${isLocal ? "display:none" : ""}">
+            <label class="field"><span>URL du serveur officiel</span>
+              <input id="relayurl-${id}" placeholder="wss://serveur/..." value="${esc(charger.relay_url || "")}"></label>
+          </div>
+        </div>
+        <div>
+          <label class="field"><span>Autorisation de charge</span>
+            <select id="authmode-${id}" ${isLocal ? "" : "disabled"}>
+              <option value="free" ${authMode === "free" ? "selected" : ""}>Sans autorisation (démarrage auto)</option>
+              <option value="authorized" ${authMode === "authorized" ? "selected" : ""}>Avec autorisation (badge ou bouton)</option>
+            </select></label>
+          <p class="tiny muted" style="margin:.4rem 0 0">
+            <b>Sans autorisation</b> : la charge démarre seule au branchement.<br>
+            <b>Avec autorisation</b> : badge connu ou bouton « Démarrer » requis.
+          </p>
         </div>
       </div>
-      <div>
-        <label class="field"><span>Autorisation de charge</span>
-          <select id="authmode-${id}" ${isLocal ? "" : "disabled"}>
-            <option value="free" ${authMode === "free" ? "selected" : ""}>Sans autorisation (démarrage auto)</option>
-            <option value="authorized" ${authMode === "authorized" ? "selected" : ""}>Avec autorisation (badge ou bouton)</option>
-          </select></label>
-        <p class="tiny muted" style="margin:.4rem 0 0">
-          <b>Sans autorisation</b> : la charge démarre seule au branchement.<br>
-          <b>Avec autorisation</b> : badge connu ou bouton « Démarrer » requis.
-        </p>
+
+      <label class="field" style="max-width:340px; margin-top:.9rem"><span>Abonnement / tarif appliqué</span>
+        <select id="tariff-select-${id}">
+          <option value="">(abonnement actif par défaut)</option>
+          ${tariffs.map(t => `<option value="${t.id}" ${charger.tariff_plan_id === t.id ? "selected" : ""}>${esc(t.name)}</option>`).join("")}
+        </select></label>
+
+      <div class="cluster" style="margin-top:1rem; justify-content:flex-end">
+        <button class="btn btn-primary" onclick="saveChargerConfig('${id}')">Enregistrer les modifications</button>
       </div>
+
+      <div class="section-title">Programmation de la charge
+        ${isLocal && !scheduleBlocked ? `<button class="btn btn-sm st-action" onclick="openConditionModal('${id}')"><svg><use href="#i-plus"/></svg>Ajouter</button>` : ""}
+      </div>
+      ${scheduleSection}
     </div>
 
-    <label class="field" style="max-width:340px; margin-top:.9rem"><span>Abonnement / tarif appliqué</span>
-      <select id="tariff-select-${id}">
-        <option value="">(abonnement actif par défaut)</option>
-        ${tariffs.map(t => `<option value="${t.id}" ${charger.tariff_plan_id === t.id ? "selected" : ""}>${esc(t.name)}</option>`).join("")}
-      </select></label>
-
-    <div class="cluster" style="margin-top:1rem; justify-content:flex-end">
-      <button class="btn btn-primary" onclick="saveChargerConfig('${id}')">Enregistrer les modifications</button>
-    </div>
-
-    <div class="section-title">Programmation de la charge
-      ${isLocal && !scheduleBlocked ? `<button class="btn btn-sm st-action" onclick="openConditionModal('${id}')"><svg><use href="#i-plus"/></svg>Ajouter</button>` : ""}
-    </div>
-    ${scheduleSection}`;
+    <div style="${activeTab === "ocpp" ? "" : "display:none"}">
+      ${ocppTabContent}
+    </div>`;
   openModal(html);
+}
+
+async function buildOcppConfigTab(chargerId, isLocal) {
+  if (!isLocal) {
+    return `<div class="empty">Indisponible en mode relais.</div>`;
+  }
+  let keys = [];
+  try {
+    keys = await fetch(`api/chargers/${chargerId}/config`, { headers: authHeaders() }).then(r => r.json());
+  } catch(e) {
+    return `<div class="empty">Impossible de lire la configuration (borne déconnectée ?).</div>`;
+  }
+  if (!keys || !keys.length) {
+    return `<div class="empty">Aucune clé de configuration disponible (borne peut-être déconnectée).</div>`;
+  }
+
+  // Clés mises en avant pour la recharge EV
+  const HIGHLIGHT = ["MeterValueSampleInterval","MeterValuesSampledData","StopTxnSampledData",
+    "HeartbeatInterval","ConnectionTimeOut","ResetRetries","AuthorizeRemoteTxRequests"];
+
+  const sorted = [...keys].sort((a,b) => {
+    const ia = HIGHLIGHT.indexOf(a.key), ib = HIGHLIGHT.indexOf(b.key);
+    if (ia !== -1 && ib !== -1) return ia - ib;
+    if (ia !== -1) return -1;
+    if (ib !== -1) return 1;
+    return a.key.localeCompare(b.key);
+  });
+
+  const rows = sorted.map(k => {
+    const eid = `ocpp-val-${CSS.escape(k.key)}`;
+    const isReadonly = k.readonly;
+    return `<tr>
+      <td style="font-family:monospace;font-size:.82rem;padding:.45rem .5rem;vertical-align:middle;color:${HIGHLIGHT.includes(k.key) ? "var(--accent)" : "inherit"}">${esc(k.key)}</td>
+      <td style="padding:.45rem .5rem;vertical-align:middle">
+        ${isReadonly
+          ? `<span class="muted small">${esc(k.value ?? "–")}</span>`
+          : `<input id="${eid}" value="${esc(k.value ?? "")}" style="width:100%;font-size:.85rem" onkeydown="if(event.key==='Enter')saveOcppKey('${chargerId}','${esc(k.key)}','${eid}')">`
+        }
+      </td>
+      <td style="padding:.45rem .3rem;white-space:nowrap">
+        ${isReadonly
+          ? `<span class="badge muted" style="font-size:.7rem">lecture seule</span>`
+          : `<button class="btn btn-sm" onclick="saveOcppKey('${chargerId}','${esc(k.key)}','${eid}')">Appliquer</button>`
+        }
+      </td>
+    </tr>`;
+  }).join("");
+
+  return `<div id="ocpp-tab-body">
+    <p class="small muted" style="margin:0 0 .7rem">Clés OCPP lues directement depuis la borne. Les clés <span style="color:var(--accent)">colorées</span> sont importantes pour le suivi de la charge en temps réel.<br>
+    Astuce : régler <b>MeterValueSampleInterval=60</b> et <b>MeterValuesSampledData=Energy.Active.Import.Register,Power.Active.Import</b> pour activer les données temps réel.</p>
+    <div style="overflow-x:auto">
+      <table style="width:100%;border-collapse:collapse">
+        <thead><tr style="border-bottom:1px solid var(--border)">
+          <th style="text-align:left;padding:.4rem .5rem;font-size:.8rem">Clé</th>
+          <th style="text-align:left;padding:.4rem .5rem;font-size:.8rem">Valeur</th>
+          <th></th>
+        </tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
+  </div>`;
+}
+
+async function saveOcppKey(chargerId, key, inputId) {
+  const el = document.getElementById(inputId);
+  if (!el) return;
+  const value = el.value.trim();
+  const { ok } = await apiCall(
+    `api/chargers/${chargerId}/config/${encodeURIComponent(key)}`,
+    { method: "PUT", headers: jsonHeaders(), body: JSON.stringify({ value }) },
+    `${key} mis à jour`
+  );
+  if (ok) el.style.background = "var(--ok-soft)";
 }
 function onModeChange(id) {
   const relay = document.getElementById("mode-" + id).value === "relay";
@@ -1639,7 +1734,9 @@ async function openSessionEditModal(sessionId) {
       <label class="field"><span>% fin</span><input id="se-pmax" type="number" min="0" max="100" value="${s.battery_percent_end ?? ""}" style="width:90px"></label>
     </div>
     ${extBlock}
-    <div class="cluster" style="margin-top:1rem; justify-content:flex-end">
+    <div class="cluster" style="margin-top:1rem; justify-content:flex-end; flex-wrap:wrap; gap:.5rem">
+      ${(!s.is_external && s.status === 'completed' && myRole === 'admin') ? `<button class="btn btn-outline" onclick="recalculateSession(${s.id})" style="margin-right:auto">
+        <svg style="width:1em;height:1em;vertical-align:-.15em"><use href="#i-refresh"/></svg> Recalculer depuis compteur</button>` : ''}
       <button class="btn" onclick="closeModal()">Annuler</button>
       <button class="btn btn-primary" onclick="saveSessionEdit(${s.id}, ${s.is_external})">Enregistrer</button>
     </div>`;
@@ -1665,6 +1762,16 @@ async function saveSessionEdit(id, isExternal) {
   }
   const { ok } = await apiCall(`api/sessions/${id}`, { method: "PUT", headers: jsonHeaders(), body: JSON.stringify(body) }, "Enregistré");
   if (ok) { closeModal(); loadHistory(); }
+}
+async function recalculateSession(id) {
+  if (!confirm("Recalculer l'énergie et le coût depuis meter_start / meter_stop ?\nCela écrase les valeurs actuelles.")) return;
+  const { ok, data } = await apiCall(`api/sessions/${id}/recalculate`, { method: "POST", headers: authHeaders() }, "Recalcul effectué");
+  if (ok) {
+    closeModal();
+    loadHome();
+    loadHistory();
+    showToast(`Énergie : ${kWh(data.energy_wh)} kWh · Coût : ${eur(data.cost)}`);
+  }
 }
 async function deleteSession(id) {
   if (!confirm("Supprimer cette charge externe ?")) return;
