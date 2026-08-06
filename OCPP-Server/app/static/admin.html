@@ -444,7 +444,7 @@
 
       <!-- VÉHICULES -->
       <section class="view" id="view-vehicles">
-        <div class="card form-card">
+        <div class="card form-card" id="veh-add-card">
           <p class="small muted" style="margin:.1rem 0 .8rem">
             Un véhicule peut être associé à un badge (idTag). Une charge démarrée avec ce badge — ou
             démarrée pour ce véhicule depuis l'appli — lui est rattachée automatiquement, pour le suivi des coûts.
@@ -587,6 +587,61 @@ fetch("api/version").then(r => r.json()).then(d => {
   });
 }).catch(() => {});
 
+/* ---------- Profil courant (rôle + droits + associations) ---------- */
+let currentUser = { role: "user", permissions: {}, vehicle_ids: [], charger_ids: [] };
+async function loadCurrentUser() {
+  try {
+    const d = await fetch("api/auth/me", { headers: authHeaders() }).then(r => r.json());
+    currentUser = d;
+    applyRoleUI();
+  } catch (e) {}
+}
+function isAdmin() { return currentUser.role === "admin"; }
+function hasPerm(p) { return isAdmin() || !!(currentUser.permissions && currentUser.permissions[p]); }
+// Affiche/masque les éléments selon le rôle
+function applyRoleUI() {
+  // Onglet Logs
+  const logBtn = document.querySelector(".navitem[data-nav='logs']");
+  if (logBtn) logBtn.style.display = hasPerm("can_view_logs") ? "" : "none";
+  // Onglet Abo. électrique
+  const tariffBtn = document.querySelector(".navitem[data-nav='tariffs']");
+  if (tariffBtn) tariffBtn.style.display = hasPerm("can_manage_tariffs") ? "" : "none";
+  // Formulaire ajout de véhicule
+  const vehAdd = document.getElementById("veh-add-card");
+  if (vehAdd) vehAdd.style.display = hasPerm("can_manage_vehicles") ? "" : "none";
+  // Si la vue actuelle n'est plus accessible, rediriger vers l'accueil
+  if (currentView === "logs" && !hasPerm("can_view_logs")) switchView("home");
+  if (currentView === "tariffs" && !hasPerm("can_manage_tariffs")) switchView("home");
+}
+
+/* ---------- SSE (push temps-réel) ---------- */
+let _sseSource = null;
+function startSSE() {
+  if (_sseSource) { _sseSource.close(); _sseSource = null; }
+  if (!token) return;
+  // On passe le token en paramètre de query car SSE ne supporte pas les headers custom
+  _sseSource = new EventSource(`api/events?token=${encodeURIComponent(token)}`);
+  _sseSource.onmessage = (e) => {
+    try {
+      const evt = JSON.parse(e.data);
+      // Ne rafraîchit que si aucun champ/modale n'est en cours d'édition
+      if (evt.type === "connected") return;
+      if (!isFocusWithin("view-home") && currentView === "home") loadHome();
+      if (!isFocusWithin("view-chargers") && currentView === "chargers") loadChargers();
+      // Si une modale est ouverte et porte sur un connecteur, on la rafraîchit
+      if (openModalConnector && document.getElementById("modal-overlay").classList.contains("on")) {
+        if (!isFocusWithin("modal-box")) openConnectorModal(openModalConnector.chargerId, openModalConnector.connectorId, true);
+      }
+    } catch (e) {}
+  };
+  _sseSource.onerror = () => {
+    // Reconnexion automatique après 10 s en cas d'erreur
+    if (_sseSource) { _sseSource.close(); _sseSource = null; }
+    setTimeout(() => { if (token) startSSE(); }, 10000);
+  };
+}
+function stopSSE() { if (_sseSource) { _sseSource.close(); _sseSource = null; } }
+
 /* ---------- Utilitaires ---------- */
 function authHeaders() { return { "Authorization": "Bearer " + token }; }
 function jsonHeaders() { return { ...authHeaders(), "Content-Type": "application/json" }; }
@@ -658,18 +713,16 @@ async function login() {
   localStorage.setItem("ocpp_token", token);
   showApp();
 }
-function logout() {
-  localStorage.removeItem("ocpp_token"); token = null;
-  document.getElementById("app").classList.remove("on");
-  document.getElementById("login-view").style.display = "grid";
-}
+/* logout définie dans showApp/pollTick ci-dessus */
 function showApp() {
   document.getElementById("login-view").style.display = "none";
   document.getElementById("app").classList.add("on");
-  switchView("home");
+  loadCurrentUser().then(() => switchView("home"));
+  startSSE();
   if (!window._pollStarted) {
     window._pollStarted = true;
-    setInterval(pollTick, 5000);
+    // Polling réduit à 8 s (SSE gère le push), gardé en fallback
+    setInterval(pollTick, 8000);
   }
 }
 function pollTick() {
@@ -679,25 +732,35 @@ function pollTick() {
     if (!isFocusWithin("modal-box")) openConnectorModal(openModalConnector.chargerId, openModalConnector.connectorId, true);
   }
 }
+function logout() {
+  stopSSE();
+  localStorage.removeItem("ocpp_token"); token = null;
+  currentUser = { role: "user", permissions: {}, vehicle_ids: [], charger_ids: [] };
+  document.getElementById("app").classList.remove("on");
+  document.getElementById("login-view").style.display = "grid";
+}
 
 /* ---------- Navigation ---------- */
 let currentView = "home";
 const viewTitles = { home: "Accueil", chargers: "Bornes", vehicles: "Véhicules", tariffs: "Abo. électrique", history: "Historique", logs: "Logs" };
 const viewLoaded = {};
 function switchView(name) {
+  // Garde : on redirige vers l'accueil si la vue est interdite au user
+  if (name === "logs" && !hasPerm("can_view_logs")) name = "home";
+  if (name === "tariffs" && !hasPerm("can_manage_tariffs")) name = "home";
   currentView = name;
   document.querySelectorAll(".view").forEach(v => v.classList.remove("active"));
   document.getElementById("view-" + name).classList.add("active");
   document.querySelectorAll(".navitem[data-nav]").forEach(b => b.classList.toggle("active", b.dataset.nav === name));
   document.getElementById("view-title").textContent = viewTitles[name];
   const td = document.getElementById("view-title-desktop"); if (td) td.textContent = viewTitles[name];
-  // La vue Logs gère son propre rafraîchissement « live » ; on l'arrête dès
-  // qu'on la quitte pour ne pas interroger l'API inutilement.
   if (name !== "logs") stopLogsPolling();
   const loaders = { home: loadHome, chargers: loadChargers, vehicles: loadVehicles, tariffs: loadTariffs, history: () => { populateVehicleFilter(); loadHistory(); }, logs: initLogsView };
   if (name === "home" || name === "chargers") loaders[name]();
   else if (name === "logs") loaders[name]();
   else if (!viewLoaded[name]) { loaders[name](); viewLoaded[name] = true; }
+  // Pour les vues rechargées à chaque visite (sauf home/chargers déjà gérés)
+  else if (name === "history") { populateVehicleFilter(); loadHistory(); }
 }
 function refreshCurrentView() {
   const loaders = { home: loadHome, chargers: loadChargers, vehicles: loadVehicles, tariffs: loadTariffs, history: loadHistory, logs: () => loadLogs(true) };
@@ -782,6 +845,7 @@ async function renderHomeCurrent(active, chargers, condByCharger) {
   el.innerHTML = active.map(s => {
     const st = statusMap[`${s.charger_id}:${s.connector_id}`];
     const suspended = st === "SuspendedEVSE" || st === "SuspendedEV";
+    const deferred = s.deferred_until;  // charge intentionnellement suspendue (programmation)
     const condBadge = conditionBadge((condByCharger || {})[s.charger_id], s.connector_id);
     const recharge = s.battery_recharge_percent != null
       ? `<span>Recharge <b>${s.battery_recharge_percent}%</b>${s.battery_percent_end_est != null ? ` → ~<b>${s.battery_percent_end_est}%</b>` : ""}</span>` : "";
@@ -790,6 +854,32 @@ async function renderHomeCurrent(active, chargers, condByCharger) {
         <option value="">(véhicule ?)</option>
         ${vehicles.map(v => `<option value="${v.id}" ${s.vehicle_id === v.id ? "selected" : ""}>${esc(v.name)}</option>`).join("")}
       </select>`;
+    // Contrôle d'arrêt : user doit avoir la borne ET la voiture associées
+    const canStop = isAdmin() ||
+      ((!currentUser.charger_ids || currentUser.charger_ids.includes(s.charger_id)) &&
+       (!currentUser.vehicle_ids || !s.vehicle_id || currentUser.vehicle_ids.includes(s.vehicle_id)));
+    const stopBtn = canStop
+      ? `<button class="btn btn-danger" onclick="stopChargeFromHome('${esc(s.charger_id)}', ${s.connector_id}, ${s.id})"><svg><use href="#i-stop"/></svg>Arrêter</button>`
+      : "";
+    if (deferred) {
+      // Charge différée : câble verrouillé, kWh à 0, en attente de l'heure
+      return `<div class="card" style="border-left:3px solid var(--warn)">
+        <div class="spread">
+          <div style="min-width:0">
+            <div class="cluster center" style="gap:.5rem">
+              <span class="charging-dot" style="background:var(--warn)"></span>
+              <b>${esc(s.charger_id)} · Conn. ${s.connector_id}</b>
+              ${vehSelect}
+              <span class="badge warn"><svg style="width:.85em;height:.85em"><use href="#i-clock"/></svg> En attente</span>
+            </div>
+            <div class="metrics">
+              <span class="warn" style="color:var(--warn)"><b>${esc(deferred)}</b> · Câble verrouillé, charge non démarrée</span>
+            </div>
+          </div>
+          ${stopBtn}
+        </div>
+      </div>`;
+    }
     return `<div class="card">
       <div class="spread">
         <div style="min-width:0">
@@ -807,7 +897,7 @@ async function renderHomeCurrent(active, chargers, condByCharger) {
             ${recharge}
           </div>
         </div>
-        <button class="btn btn-danger" onclick="stopChargeFromHome('${esc(s.charger_id)}', ${s.connector_id}, ${s.id})"><svg><use href="#i-stop"/></svg>Arrêter</button>
+        ${stopBtn}
       </div>
     </div>`;
   }).join("");
@@ -839,14 +929,26 @@ async function renderHomeAvailable(chargers, active, condByCharger) {
       // Action à droite (jamais un badge de statut, pour ne pas doublonner) :
       // bouton Démarrer si un véhicule est branché, puce « Démarrage auto » en
       // mode libre, sinon rien.
+      // L'user doit avoir la borne ET au moins une voiture associée pour démarrer
+      const canStart = isAdmin() ||
+        (currentUser.charger_ids && currentUser.charger_ids.includes(c.id) &&
+         currentUser.vehicle_ids && currentUser.vehicle_ids.length > 0);
+      // Filtrer les options de voitures aux voitures associées (pour un user)
+      const filteredVehOpts = isAdmin()
+        ? vehOptions
+        : `<option value="">(véhicule ?)</option>` + vehicles
+            .filter(v => currentUser.vehicle_ids && currentUser.vehicle_ids.includes(v.id))
+            .map(v => `<option value="${v.id}">${esc(v.name)}</option>`).join("");
       let cta = "";
-      if (preparing && !isFree) {
+      if (preparing && !isFree && canStart) {
         cta = `<div class="cluster center" style="gap:.4rem">
-          <select id="home-veh-${c.id}-${conn.connector_id}" style="min-width:130px">${vehOptions}</select>
+          <select id="home-veh-${c.id}-${conn.connector_id}" style="min-width:130px">${filteredVehOpts}</select>
           <button class="btn btn-primary btn-sm" onclick="startChargeFromHome('${esc(c.id)}', ${conn.connector_id})"><svg><use href="#i-play"/></svg>Démarrer</button>
         </div>`;
-      } else if (isFree) {
+      } else if (isFree && canStart) {
         cta = `<span class="badge ok" title="Aucune autorisation requise : la charge démarre automatiquement au branchement."><svg style="width:.85em;height:.85em" fill="currentColor"><use href="#i-bolt"/></svg> Démarrage auto</span>`;
+      } else if (preparing && !canStart) {
+        cta = `<span class="tiny muted">Non autorisé</span>`;
       }
       cards += `<div class="card" ${preparing ? 'style="border-color:var(--warn)"' : ""}>
         <div class="spread">
@@ -996,8 +1098,8 @@ async function loadChargers() {
         </div>
         <div class="cluster center" style="gap:.3rem">
           <button class="btn btn-icon btn-ghost" title="Fiche & statistiques" onclick="openChargerStatsModal('${esc(c.id)}')"><svg><use href="#i-info"/></svg></button>
-          <button class="btn btn-icon btn-ghost" title="Configuration" onclick="openChargerConfigModal('${esc(c.id)}')"><svg><use href="#i-cog"/></svg></button>
-          <button class="btn btn-icon btn-ghost" title="Supprimer du CSMS" onclick="deleteCharger('${esc(c.id)}')"><svg style="color:var(--danger)"><use href="#i-trash"/></svg></button>
+          ${hasPerm("can_manage_chargers") ? `<button class="btn btn-icon btn-ghost" title="Configuration" onclick="openChargerConfigModal('${esc(c.id)}')"><svg><use href="#i-cog"/></svg></button>` : ""}
+          ${isAdmin() ? `<button class="btn btn-icon btn-ghost" title="Supprimer du CSMS" onclick="deleteCharger('${esc(c.id)}')"><svg style="color:var(--danger)"><use href="#i-trash"/></svg></button>` : ""}
         </div>
       </div>
     </div>`;
@@ -1291,7 +1393,7 @@ function renderVehicles() {
       <td data-label="idTag">${v.id_tag ? esc(v.id_tag) : "–"}</td>
       <td data-label="Capacité batt.">${v.battery_capacity_kwh != null ? v.battery_capacity_kwh + " kWh" : "–"}</td>
       <td data-label="Charges"><button class="linkbtn" onclick="openVehicleStatsModal(${v.id})">Voir la fiche</button></td>
-      <td><span class="cell-actions"><button class="linkbtn" onclick="editingVehicle=${v.id}; renderVehicles()">Modifier</button><button class="linkbtn danger" onclick="deleteVehicle(${v.id})">Supprimer</button></span></td>
+      <td><span class="cell-actions">${hasPerm("can_manage_vehicles") ? `<button class="linkbtn" onclick="editingVehicle=${v.id}; renderVehicles()">Modifier</button><button class="linkbtn danger" onclick="deleteVehicle(${v.id})">Supprimer</button>` : ""}</span></td>
     </tr>`).join("");
 }
 async function createVehicle() {
@@ -1469,14 +1571,16 @@ function renderHistory() {
       ? `${esc(s.location_label || "Externe")} <span class="badge ext" style="padding:.05rem .35rem">ext</span>`
       : esc(s.charger_id || "–");
     const est = s.battery_percent_end_est != null && s.battery_percent_end == null ? ` <span class="tiny muted">(~${s.battery_percent_end_est})</span>` : "";
-    return `<tr>
+      // Un user peut modifier les sessions de ses voitures ; l'admin peut tout modifier
+      const canEditSession = isAdmin() || (currentUser.vehicle_ids && s.vehicle_id && currentUser.vehicle_ids.includes(s.vehicle_id));
+      return `<tr>
       <td data-label="Borne">${bornCell}</td><td data-label="Conn.">${s.connector_id ?? "–"}</td><td data-label="Véhicule">${esc(s.vehicle_name || "–")}</td>
       <td data-label="Début">${formatDateTime(s.start_time)}</td><td data-label="Fin">${formatDateTime(s.stop_time)}</td><td data-label="Durée">${dur}</td>
       <td data-label="kWh">${kWh(s.energy_wh)}</td><td data-label="P. max">${kW(s.power_max_w)}</td><td data-label="Coût">${eur(s.cost)}</td><td data-label="Tarif">${esc(s.tariff_plan_name || "–")}</td>
       <td data-label="km">${num(s.odometer_km)}</td><td data-label="km parc.">${num(s.km_since_last)}</td><td data-label="kWh/100">${s.kwh_per_100km != null ? s.kwh_per_100km : "–"}</td>
       <td data-label="% init.">${num(s.battery_percent_start)}</td><td data-label="% fin">${num(s.battery_percent_end)}${est}</td>
       <td data-label="Recharge">${s.battery_recharge_percent != null ? s.battery_recharge_percent + " %" : "–"}</td>
-      <td><span class="cell-actions"><button class="linkbtn" onclick="openSessionEditModal(${s.id})">Modifier</button>${s.is_external ? `<button class="linkbtn danger" onclick="deleteSession(${s.id})">Suppr.</button>` : ""}</span></td>
+      <td>${canEditSession ? `<span class="cell-actions"><button class="linkbtn" onclick="openSessionEditModal(${s.id})">Modifier</button>${s.is_external ? `<button class="linkbtn danger" onclick="deleteSession(${s.id})">Suppr.</button>` : ""}</span>` : ""}</td>
     </tr>`;
   }).join("");
 }
@@ -1604,23 +1708,216 @@ async function createExternalCharge() {
 // sauvegarde (export) et restauration (import) des données. Prévu pour
 // accueillir la future gestion des profils utilisateurs (attribution de
 // véhicules à un profil, permissions par geste).
-function openSettingsModal() {
+async function openSettingsModal() {
   openModalConnector = null;
-  const html = `<div class="modal-head"><h2><svg style="width:1.1em;height:1.1em;vertical-align:-.15em"><use href="#i-cog"/></svg> Réglages</h2>
-    <button class="btn btn-icon btn-ghost" onclick="closeModal()"><svg><use href="#i-close"/></svg></button></div>
+  const adminOnly = isAdmin();
 
-    <div class="section-title" style="margin-top:0">Données (sauvegarde)</div>
-    <p class="small muted" style="margin:.1rem 0 .8rem">Exportez l'intégralité des données et de la configuration (bornes, véhicules, abonnements, programmations, historique) dans un fichier JSON, ou réimportez une sauvegarde. Le mot de passe administrateur n'est pas inclus dans l'export.</p>
+  // Sections communes
+  let passwordSection = `
+    <div class="section-title" style="margin-top:0">Mon compte</div>
+    <div class="card form-card">
+      <p class="small muted" style="margin:.1rem 0 .6rem">Modifier votre mot de passe.</p>
+      <div class="cluster">
+        <label class="field"><span>Mot de passe actuel</span><input id="set-pw-cur" type="password" style="width:160px"></label>
+        <label class="field"><span>Nouveau (≥ 6 car.)</span><input id="set-pw-new" type="password" style="width:160px"></label>
+        <button class="btn btn-sm btn-primary" onclick="changeMyPassword()">Modifier</button>
+      </div>
+    </div>`;
+
+  let dataSection = "";
+  if (hasPerm("can_export_import")) {
+    dataSection = `
+    <div class="section-title">Données (sauvegarde)</div>
+    <p class="small muted" style="margin:.1rem 0 .8rem">Exportez l'intégralité des données et de la configuration dans un fichier JSON, ou réimportez une sauvegarde. Le mot de passe administrateur n'est pas inclus dans l'export.</p>
     <div class="cluster">
       <button class="btn btn-sm" onclick="exportData()"><svg><use href="#i-download"/></svg>Exporter (JSON)</button>
       <button class="btn btn-sm" onclick="document.getElementById('import-file').click()"><svg><use href="#i-upload"/></svg>Importer…</button>
-    </div>
+    </div>`;
+  }
 
-    <div class="section-title">Profils utilisateurs</div>
-    <div class="card" style="background:var(--surface-2)">
-      <div class="small muted">Bientôt : créer des profils, leur affecter un ou plusieurs véhicules, et définir les actions autorisées (démarrer/arrêter une charge, modifier la programmation, gérer les abonnements…).</div>
+  let usersSection = "";
+  if (adminOnly) {
+    usersSection = `
+    <div class="section-title">Utilisateurs
+      <button class="btn btn-sm st-action" onclick="openCreateUserModal()"><svg><use href="#i-plus"/></svg>Ajouter</button>
+    </div>
+    <div id="settings-users-list"><div class="empty small">Chargement…</div></div>`;
+  }
+
+  let dangerSection = "";
+  if (adminOnly) {
+    dangerSection = `
+    <div class="section-title" style="color:var(--danger)">Zone de danger</div>
+    <div class="card" style="border-left:3px solid var(--danger); background:var(--danger-soft)">
+      <p class="small" style="margin:0 0 .6rem"><b>Supprimer tout l'historique</b> : efface définitivement toutes les sessions de charge (OCPP et externes). Les bornes, véhicules et abonnements sont conservés. Action irréversible.</p>
+      <button class="btn btn-danger btn-sm" onclick="deleteAllHistory()"><svg><use href="#i-trash"/></svg>Supprimer tout l'historique…</button>
+    </div>`;
+  }
+
+  const html = `<div class="modal-head"><h2><svg style="width:1.1em;height:1.1em;vertical-align:-.15em"><use href="#i-cog"/></svg> Réglages</h2>
+    <button class="btn btn-icon btn-ghost" onclick="closeModal()"><svg><use href="#i-close"/></svg></button></div>
+    ${passwordSection}${dataSection}${usersSection}${dangerSection}`;
+
+  openModal(html);
+
+  if (adminOnly) loadSettingsUsers();
+}
+
+async function changeMyPassword() {
+  const cur = document.getElementById("set-pw-cur").value;
+  const nw = document.getElementById("set-pw-new").value;
+  if (!cur || !nw) { toast("Remplissez les deux champs", "err"); return; }
+  const { ok } = await apiCall("api/auth/change-password", {
+    method: "POST", headers: jsonHeaders(),
+    body: JSON.stringify({ current_password: cur, new_password: nw }),
+  }, "Mot de passe modifié");
+  if (ok) { document.getElementById("set-pw-cur").value = ""; document.getElementById("set-pw-new").value = ""; }
+}
+
+async function deleteAllHistory() {
+  if (!confirm("Supprimer DÉFINITIVEMENT tout l'historique de charge ?\n\nCette action est irréversible. Les bornes, véhicules et abonnements sont conservés.")) return;
+  if (!confirm("Confirmation finale : effacer toutes les sessions ?")) return;
+  const { ok, data } = await apiCall("api/history/all", { method: "DELETE", headers: authHeaders() }, "Historique supprimé");
+  if (ok) toast(`${data?.deleted ?? 0} session(s) supprimée(s)`, "ok");
+}
+
+/* ---------- Gestion des utilisateurs (admin) ---------- */
+
+async function loadSettingsUsers() {
+  const el = document.getElementById("settings-users-list"); if (!el) return;
+  const users = await fetch("api/users", { headers: authHeaders() }).then(r => r.json());
+  if (!users.length) { el.innerHTML = `<div class="empty small">Aucun utilisateur.</div>`; return; }
+  el.innerHTML = users.map(u => `
+    <div class="card" style="margin:.35rem 0; padding:.55rem .75rem">
+      <div class="spread">
+        <div>
+          <span class="badge ${u.role === "admin" ? "ok" : "accent"}">${u.role}</span>
+          <b style="margin-left:.4rem">${esc(u.username)}</b>
+          <span class="tiny muted" style="margin-left:.5rem">${u.vehicle_ids.length} voiture(s) · ${u.charger_ids.length} borne(s)</span>
+        </div>
+        <div class="cluster center" style="gap:.5rem">
+          <button class="btn btn-sm btn-ghost" onclick="openEditUserModal(${u.id})"><svg><use href="#i-edit"/></svg></button>
+          ${u.username !== "admin" ? `<button class="btn btn-sm btn-ghost" onclick="confirmDeleteUser(${u.id}, '${esc(u.username)}')"><svg style="color:var(--danger)"><use href="#i-trash"/></svg></button>` : ""}
+        </div>
+      </div>
+    </div>`).join("");
+}
+
+async function openCreateUserModal() {
+  const [vehicles, chargers] = await Promise.all([
+    fetch("api/vehicles", { headers: authHeaders() }).then(r => r.json()),
+    fetch("api/chargers", { headers: authHeaders() }).then(r => r.json()),
+  ]);
+  const html = `<div class="modal-head"><h2>Nouvel utilisateur</h2>
+    <button class="btn btn-icon btn-ghost" onclick="openSettingsModal()"><svg><use href="#i-close"/></svg></button></div>
+    <div class="cluster" style="gap:.6rem; flex-wrap:wrap">
+      <label class="field"><span>Identifiant</span><input id="nu-name" autocomplete="off"></label>
+      <label class="field"><span>Mot de passe (≥ 6 car.)</span><input id="nu-pw" type="password"></label>
+      <label class="field"><span>Rôle</span><select id="nu-role"><option value="user">user</option><option value="admin">admin</option></select></label>
+    </div>
+    <div class="section-title" style="margin-top:.9rem">Voitures associées</div>
+    <div class="cluster" style="gap:.4rem; flex-wrap:wrap">${vehicles.map(v => `<label class="tiny cluster center" style="gap:.25rem"><input type="checkbox" class="nu-veh" value="${v.id}"> ${esc(v.name)}</label>`).join("")}</div>
+    <div class="section-title">Bornes associées</div>
+    <div class="cluster" style="gap:.4rem; flex-wrap:wrap">${chargers.map(c => `<label class="tiny cluster center" style="gap:.25rem"><input type="checkbox" class="nu-chr" value="${esc(c.id)}"> ${esc(c.id)}</label>`).join("")}</div>
+    <div class="section-title">Droits</div>
+    ${_permCheckboxes("nu")}
+    <div class="cluster" style="margin-top:1rem; justify-content:flex-end">
+      <button class="btn" onclick="openSettingsModal()">Annuler</button>
+      <button class="btn btn-primary" onclick="createUser()">Créer</button>
     </div>`;
   openModal(html);
+}
+
+function _permCheckboxes(prefix, perms) {
+  const p = perms || {};
+  const defs = [
+    ["can_manage_chargers", "Réglages des bornes"],
+    ["can_manage_tariffs", "Abonnements électriques"],
+    ["can_manage_vehicles", "Gérer les voitures"],
+    ["can_view_logs", "Voir les logs OCPP"],
+    ["can_export_import", "Exporter / importer"],
+  ];
+  return `<div class="cluster" style="gap:.6rem; flex-wrap:wrap">${defs.map(([k, lbl]) =>
+    `<label class="tiny cluster center" style="gap:.25rem"><input type="checkbox" class="${prefix}-perm" data-key="${k}" ${p[k] ? "checked" : ""}> ${esc(lbl)}</label>`
+  ).join("")}</div>`;
+}
+
+function _collectPerms(cls) {
+  const out = {};
+  document.querySelectorAll(`.${cls}`).forEach(el => { out[el.dataset.key] = el.checked; });
+  return out;
+}
+
+async function createUser() {
+  const name = document.getElementById("nu-name").value.trim();
+  const pw = document.getElementById("nu-pw").value;
+  if (!name || !pw) { toast("Identifiant et mot de passe requis", "err"); return; }
+  const vehicle_ids = Array.from(document.querySelectorAll(".nu-veh:checked")).map(e => parseInt(e.value, 10));
+  const charger_ids = Array.from(document.querySelectorAll(".nu-chr:checked")).map(e => e.value);
+  const permissions = _collectPerms("nu-perm");
+  const { ok } = await apiCall("api/users", {
+    method: "POST", headers: jsonHeaders(),
+    body: JSON.stringify({ username: name, password: pw, role: document.getElementById("nu-role").value, vehicle_ids, charger_ids, permissions }),
+  }, "Utilisateur créé");
+  if (ok) openSettingsModal();
+}
+
+async function openEditUserModal(userId) {
+  const [users, vehicles, chargers] = await Promise.all([
+    fetch("api/users", { headers: authHeaders() }).then(r => r.json()),
+    fetch("api/vehicles", { headers: authHeaders() }).then(r => r.json()),
+    fetch("api/chargers", { headers: authHeaders() }).then(r => r.json()),
+  ]);
+  const u = users.find(x => x.id === userId);
+  if (!u) return;
+  const vids = new Set(u.vehicle_ids);
+  const cids = new Set(u.charger_ids);
+  const html = `<div class="modal-head"><h2>Modifier · ${esc(u.username)}</h2>
+    <button class="btn btn-icon btn-ghost" onclick="openSettingsModal()"><svg><use href="#i-close"/></svg></button></div>
+    <div class="section-title" style="margin-top:0">Voitures associées</div>
+    <div class="cluster" style="gap:.4rem; flex-wrap:wrap">${vehicles.map(v => `<label class="tiny cluster center" style="gap:.25rem"><input type="checkbox" class="eu-veh" value="${v.id}" ${vids.has(v.id) ? "checked" : ""}> ${esc(v.name)}</label>`).join("")}</div>
+    <div class="section-title">Bornes associées</div>
+    <div class="cluster" style="gap:.4rem; flex-wrap:wrap">${chargers.map(c => `<label class="tiny cluster center" style="gap:.25rem"><input type="checkbox" class="eu-chr" value="${esc(c.id)}" ${cids.has(c.id) ? "checked" : ""}> ${esc(c.id)}</label>`).join("")}</div>
+    <div class="section-title">Droits</div>
+    ${_permCheckboxes("eu", u.permissions)}
+    <div class="section-title">Réinitialiser le mot de passe</div>
+    <div class="cluster">
+      <label class="field"><span>Nouveau mot de passe</span><input id="eu-pw" type="password" style="width:180px"></label>
+      <button class="btn btn-sm" onclick="adminResetPassword(${u.id})">Réinitialiser</button>
+    </div>
+    <div class="cluster" style="margin-top:1rem; justify-content:flex-end">
+      <button class="btn" onclick="openSettingsModal()">Annuler</button>
+      <button class="btn btn-primary" onclick="saveUserEdit(${u.id})">Enregistrer</button>
+    </div>`;
+  openModal(html);
+}
+
+async function saveUserEdit(userId) {
+  const vehicle_ids = Array.from(document.querySelectorAll(".eu-veh:checked")).map(e => parseInt(e.value, 10));
+  const charger_ids = Array.from(document.querySelectorAll(".eu-chr:checked")).map(e => e.value);
+  const permissions = _collectPerms("eu-perm");
+  const r1 = await apiCall(`api/users/${userId}/associations`, {
+    method: "PUT", headers: jsonHeaders(), body: JSON.stringify({ vehicle_ids, charger_ids }),
+  });
+  const r2 = await apiCall(`api/users/${userId}/permissions`, {
+    method: "PUT", headers: jsonHeaders(), body: JSON.stringify(permissions),
+  });
+  if (r1.ok && r2.ok) { toast("Modifications enregistrées", "ok"); openSettingsModal(); }
+}
+
+async function adminResetPassword(userId) {
+  const pw = document.getElementById("eu-pw").value;
+  if (!pw) { toast("Saisissez un nouveau mot de passe", "err"); return; }
+  const { ok } = await apiCall(`api/users/${userId}/reset-password`, {
+    method: "POST", headers: jsonHeaders(), body: JSON.stringify({ new_password: pw }),
+  }, "Mot de passe réinitialisé");
+  if (ok) document.getElementById("eu-pw").value = "";
+}
+
+async function confirmDeleteUser(userId, username) {
+  if (!confirm(`Supprimer l'utilisateur « ${username} » ?\n\nSes données restent intactes.`)) return;
+  const { ok } = await apiCall(`api/users/${userId}`, { method: "DELETE", headers: authHeaders() }, "Utilisateur supprimé");
+  if (ok) openSettingsModal();
 }
 
 /* ---------- Export / Import des données ---------- */

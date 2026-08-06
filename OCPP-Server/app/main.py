@@ -3,8 +3,8 @@ import logging
 import os
 from datetime import datetime
 
-from fastapi import FastAPI, WebSocket
-from fastapi.responses import FileResponse, Response
+from fastapi import FastAPI, WebSocket, Depends
+from fastapi.responses import FileResponse, Response, StreamingResponse
 from starlette.websockets import WebSocketDisconnect
 from sqlalchemy.orm import Session
 from ocpp.v16 import call
@@ -19,6 +19,8 @@ from .csms_local import LocalChargePoint, CONNECTED_CHARGERS
 from .relay import run_relay
 from .scheduler import run_scheduler
 from . import mqtt_bridge
+from .sse import sse_stream
+from .auth import get_current_user
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("ocpp-server")
@@ -27,23 +29,14 @@ app = FastAPI(title="OCPP Server")
 app.include_router(api_router)
 
 STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
-ROOT_DIR = os.path.dirname(os.path.dirname(__file__))  # racine de l'add-on (icon.png, logo.png)
+ROOT_DIR = os.path.dirname(os.path.dirname(__file__))
 
 
-# Sert la même page directement à la racine ET sur /admin, sans redirection.
-# Une redirection avec un chemin absolu ("/admin") fait sortir le navigateur
-# du sous-chemin dynamique de l'ingress de Home Assistant (il atterrit sur
-# "/admin" du frontend HA lui-même, d'où le "404 Not Found" observé).
 @app.get("/")
 @app.get("/admin")
 def admin_page():
     return FileResponse(os.path.join(STATIC_DIR, "admin.html"))
 
-
-# --- Ressources PWA --------------------------------------------------------
-# Servies à la racine (chemins relatifs depuis admin.html) pour que le service
-# worker ait pour portée tout le sous-chemin de l'appli, y compris sous
-# l'ingress Home Assistant.
 
 def _static_file(filename: str, media_type: str, base: str = STATIC_DIR,
                  extra_headers: dict | None = None):
@@ -63,8 +56,6 @@ def pwa_manifest():
 
 @app.get("/sw.js")
 def pwa_service_worker():
-    # no-cache : le navigateur reverifie le SW à chaque chargement, pour qu'une
-    # nouvelle version soit prise en compte rapidement.
     return _static_file(
         "sw.js", "application/javascript",
         extra_headers={"Service-Worker-Allowed": "./", "Cache-Control": "no-cache"},
@@ -78,8 +69,6 @@ def pwa_icon_svg():
 
 @app.get("/icon.png")
 def pwa_icon_png():
-    # icon.png est à la racine de l'add-on ; les variantes 192/512 optionnelles,
-    # si tu les ajoutes, vont dans app/static/.
     return _static_file("icon.png", "image/png", base=ROOT_DIR)
 
 
@@ -98,13 +87,29 @@ def pwa_icon_512_maskable():
     return _static_file("icon-512-maskable.png", "image/png")
 
 
+# --- SSE : flux d'événements temps-réel ---
+
+@app.get("/api/events")
+async def events_stream(token: str = ""):
+    """Flux Server-Sent Events. Authentification via query param ?token=...
+    (EventSource du navigateur ne supporte pas les headers Authorization)."""
+    if not token:
+        return Response(status_code=401, content="Token manquant")
+    try:
+        get_current_user(token)
+    except Exception:
+        return Response(status_code=401, content="Token invalide")
+    return StreamingResponse(
+        sse_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
 def _reconcile_stale_transactions():
-    """Au démarrage : clôture toute transaction encore "active" en base dont
-    le connecteur est en réalité déjà "Available" (cas d'une session restée
-    bloquée d'avant l'introduction de la clôture automatique, ou d'une
-    coupure survenue pendant que le serveur était arrêté). Le correctif
-    réactif (voir csms_local.py) ne se déclenche que sur un NOUVEAU
-    StatusNotification ; celui-ci rattrape les cas déjà figés en base."""
     db = SessionLocal()
     try:
         active_transactions = db.query(Transaction).filter(Transaction.status == "active").all()
@@ -137,7 +142,7 @@ async def on_startup():
     asyncio.create_task(run_scheduler())
 
 
-APP_VERSION = "0.18.0"
+APP_VERSION = "0.19.0"
 
 
 @app.get("/healthz")
@@ -160,13 +165,6 @@ def _pick_subprotocol(websocket: WebSocket) -> str | None:
 
 
 async def _refresh_connector_statuses(cp, charger_id: str):
-    """Redemande explicitement à la borne qui vient de se (re)connecter le
-    statut réel de chacun de ses connecteurs, plutôt que d'attendre qu'elle
-    le renvoie spontanément. Après une coupure, c'est le seul moyen fiable
-    de savoir si une charge est réellement toujours en cours. Si la borne ne
-    supporte pas TriggerMessage (RemoteTrigger n'est pas systématiquement
-    implémenté), on l'ignore silencieusement : elle renverra son statut au
-    prochain changement d'état comme avant."""
     db = SessionLocal()
     try:
         connector_ids = [
@@ -196,14 +194,10 @@ async def ocpp_endpoint(websocket: WebSocket, charge_point_id: str):
     try:
         charger = db.query(Charger).filter(Charger.id == charge_point_id).first()
         if not charger:
-            # Découverte automatique : une borne inconnue est enregistrée
-            # en mode local par défaut, modifiable ensuite via l'API.
             charger = Charger(id=charge_point_id, mode=ChargerMode.local)
             db.add(charger)
             db.commit()
         elif charger.deleted_at is not None:
-            # Une borne précédemment retirée du CSMS se reconnecte : on la
-            # restaure (son historique n'avait pas été supprimé).
             charger.deleted_at = None
             db.commit()
         mode = charger.mode
@@ -230,6 +224,8 @@ async def ocpp_endpoint(websocket: WebSocket, charge_point_id: str):
                 await cp.start()
             finally:
                 CONNECTED_CHARGERS.pop(charge_point_id, None)
+                from .sse import sse_notify
+                sse_notify("charger_disconnected", {"charger_id": charge_point_id})
     except (ConnectionError, WebSocketDisconnect):
         logger.info("Borne %s déconnectée", charge_point_id)
     except Exception:

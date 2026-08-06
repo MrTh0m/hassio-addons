@@ -16,45 +16,23 @@ from .models import Charger, ChargerMode, Transaction, MeterValue, Configuration
 from .pricing import freeze_transaction_cost
 from . import mqtt_bridge
 from . import ocpp_logs
+from .sse import sse_notify
 
-# Registre des bornes actuellement connectées en mode local, pour que l'API
-# puisse leur envoyer des commandes (RemoteStart, ChangeConfiguration, ...).
 logger = logging.getLogger("csms_local")
 
 CONNECTED_CHARGERS: dict[str, "LocalChargePoint"] = {}
-
-# Démarrages distants en attente : quand l'appli lance une charge pour un
-# véhicule donné, on mémorise (borne, connecteur) -> vehicle_id, pour rattacher
-# la session au bon véhicule même s'il n'a pas d'idTag (le StartTransaction qui
-# suit ne portera alors aucun idTag connu).
 PENDING_REMOTE_STARTS: dict[tuple[str, int], int] = {}
-
-# Connecteurs pour lesquels un démarrage automatique (mode 'free') a déjà été
-# tenté depuis le dernier branchement. Évite de relancer en boucle tant que le
-# connecteur reste en "Preparing" (y compris après un arrêt manuel : on ne
-# relance qu'après un débranchement, c'est-à-dire un retour à "Available").
 AUTO_START_ATTEMPTED: set[tuple[str, int]] = set()
-
-# idTags "système" toujours acceptés : ils ne proviennent que de nos propres
-# actions authentifiées (bouton de l'appli, commande MQTT, démarrage distant).
 RESERVED_TAGS = {"WEBADMIN", "MQTT", "SCHED"}
-
-# Support de SmartCharging par borne, tel que détecté via ChargeProfile.
-# True/False une fois testé, absent tant qu'inconnu. Sert au planificateur
-# pour choisir entre SetChargingProfile et un simple RemoteStart/Stop.
 SMART_CHARGING_SUPPORT: dict[str, bool] = {}
 
 
 def _auth_mode_value(charger) -> str:
-    """'free' par défaut : borne inconnue, ou base migrée sans la colonne."""
     mode = getattr(charger, "auth_mode", None) if charger is not None else None
     return mode.value if mode is not None else "free"
 
 
 def _tag_is_authorized(db, charger, id_tag) -> bool:
-    """En mode 'free', tout est accepté. En mode 'authorized', seuls un idTag
-    associé à un véhicule connu, un tag réservé (bouton appli / MQTT) ou un
-    tag de démarrage distant (préfixe REMOTE-) sont acceptés."""
     if _auth_mode_value(charger) == "free":
         return True
     if not id_tag:
@@ -65,13 +43,10 @@ def _tag_is_authorized(db, charger, id_tag) -> bool:
 
 
 def now_iso() -> str:
-    """Horodatage UTC conforme au type dateTime d'OCPP (ISO 8601, suffixe Z)."""
     return datetime.utcnow().isoformat() + "Z"
 
 
 class LocalChargePoint(ChargePoint16):
-    """Gère une borne en mode 'local' : le serveur backoffice est le seul
-    central system, avec accès complet au pilotage et à la configuration."""
 
     def _db(self):
         return SessionLocal()
@@ -100,11 +75,8 @@ class LocalChargePoint(ChargePoint16):
         finally:
             db.close()
 
-        # Détection proactive du support SmartCharging : on lit la clé
-        # standard SupportedFeatureProfiles. Fait en tâche de fond pour ne pas
-        # retarder la réponse Boot (et parce que call() ne peut pas être appelé
-        # de façon synchrone depuis un handler).
         asyncio.create_task(self._detect_smart_charging())
+        sse_notify("charger_connected", {"charger_id": self.id})
 
         return call_result.BootNotification(
             current_time=now_iso(),
@@ -113,9 +85,6 @@ class LocalChargePoint(ChargePoint16):
         )
 
     async def _detect_smart_charging(self):
-        """Interroge la borne sur ses profils de fonctionnalités supportés et
-        mémorise si SmartCharging en fait partie. Best-effort : en cas d'échec,
-        on laisse l'état 'inconnu', le premier SetChargingProfile tranchera."""
         try:
             ocpp_logs.record(self.id, "out", "GetConfiguration",
                              summary="SupportedFeatureProfiles", payload={"key": ["SupportedFeatureProfiles"]})
@@ -123,9 +92,18 @@ class LocalChargePoint(ChargePoint16):
             for item in getattr(resp, "configuration_key", None) or []:
                 if item.get("key") == "SupportedFeatureProfiles":
                     val = (item.get("value") or "").lower()
-                    SMART_CHARGING_SUPPORT[self.id] = "smartcharging" in val
+                    supported = "smartcharging" in val
+                    SMART_CHARGING_SUPPORT[self.id] = supported
+                    db = self._db()
+                    try:
+                        charger = db.query(Charger).filter(Charger.id == self.id).first()
+                        if charger:
+                            charger.smart_charging = supported
+                            db.commit()
+                    finally:
+                        db.close()
                     logger.info("Borne %s : SmartCharging %s", self.id,
-                                "supporté" if SMART_CHARGING_SUPPORT[self.id] else "non supporté")
+                                "supporté" if supported else "non supporté")
                     return
         except Exception:
             logger.debug("Détection SmartCharging impossible pour %s", self.id, exc_info=True)
@@ -139,8 +117,6 @@ class LocalChargePoint(ChargePoint16):
     async def on_authorize(self, id_tag, **kwargs):
         ocpp_logs.record(self.id, "in", "Authorize", summary=f"idTag={id_tag}",
                          payload={"idTag": id_tag})
-        # En mode 'authorized', on refuse un badge inconnu ; en mode 'free',
-        # tout est accepté (voir _tag_is_authorized).
         db = self._db()
         try:
             charger = db.query(Charger).filter(Charger.id == self.id).first()
@@ -174,17 +150,9 @@ class LocalChargePoint(ChargePoint16):
             entry.error_code = kwargs.get("error_code")
             entry.updated_at = datetime.utcnow()
 
-            # connectorId=0 désigne la borne elle-même (pas un connecteur
-            # physique) au sens de la norme : c'est ce statut qui sert de
-            # résumé au niveau de la borne, indépendamment de ses connecteurs.
             if connector_id == 0:
                 charger.status = status
 
-            # La borne annonce elle-même que ce connecteur est disponible :
-            # si une transaction y restait "active" (StopTransaction jamais
-            # reçu, ex. après une coupure réseau ou un redémarrage), on la
-            # clôture nous-mêmes plutôt que de la laisser trainer pour
-            # toujours comme "en cours".
             if status == "Available" and connector_id != 0:
                 stale = db.query(Transaction).filter(
                     Transaction.charger_id == self.id,
@@ -201,12 +169,6 @@ class LocalChargePoint(ChargePoint16):
                     db.flush()
                     freeze_transaction_cost(db, stale)
 
-            # --- Démarrage automatique (mode 'free') -------------------------
-            # En "sans autorisation", brancher un véhicule doit lancer la charge
-            # tout seul. La borne signale "Preparing" (câble branché, en
-            # attente) mais n'émet pas forcément de StartTransaction de
-            # lui-même : on déclenche alors un RemoteStart, une seule fois par
-            # branchement (le drapeau est levé au débranchement).
             if connector_id != 0:
                 if status == "Available":
                     AUTO_START_ATTEMPTED.discard((self.id, connector_id))
@@ -220,11 +182,6 @@ class LocalChargePoint(ChargePoint16):
                         Transaction.connector_id == connector_id,
                         Transaction.status == "active",
                     ).first() is not None
-                    # Départ différé : si la programmation interdit la charge
-                    # maintenant, on ne déclenche PAS l'auto-start. On laisse le
-                    # connecteur en Preparing ; le planificateur lancera la
-                    # charge à l'heure prévue. (On ne lève pas le drapeau
-                    # AUTO_START_ATTEMPTED, pour réévaluer au prochain Preparing.)
                     from .scheduler import connector_should_charge_now
                     allowed_now = connector_should_charge_now(db, charger, connector_id)
                     if not has_active and allowed_now:
@@ -235,6 +192,12 @@ class LocalChargePoint(ChargePoint16):
             db.commit()
         finally:
             db.close()
+
+        sse_notify("connector_status", {
+            "charger_id": self.id,
+            "connector_id": connector_id,
+            "status": status,
+        })
 
         if connector_id == 0:
             await mqtt_bridge.publish_state(self.id, status=status)
@@ -257,17 +220,12 @@ class LocalChargePoint(ChargePoint16):
                          payload={"connectorId": connector_id, "idTag": id_tag, "meterStart": meter_start, **kwargs},
                          connector_id=connector_id)
         db = self._db()
+        deferred_label = None
         try:
             charger = db.query(Charger).filter(Charger.id == self.id).first()
-
-            # On consomme systématiquement l'éventuel démarrage distant en
-            # attente pour ce connecteur (pour ne pas le laisser fuiter).
             pending_vehicle_id = PENDING_REMOTE_STARTS.pop((self.id, connector_id), None)
 
             if not _tag_is_authorized(db, charger, id_tag):
-                # Autorisation refusée : aucune transaction créée.
-                # transaction_id=0 = "pas de transaction", conforme à l'usage
-                # OCPP quand l'idTag est rejeté.
                 return call_result.StartTransaction(
                     transaction_id=0,
                     id_tag_info={"status": AuthorizationStatus.blocked},
@@ -276,6 +234,23 @@ class LocalChargePoint(ChargePoint16):
             vehicle = db.query(Vehicle).filter(Vehicle.id_tag == id_tag).first() if id_tag else None
             if vehicle is None and pending_vehicle_id is not None:
                 vehicle = db.query(Vehicle).filter(Vehicle.id == pending_vehicle_id).first()
+
+            suspend_now = False
+            if charger and charger.mode == ChargerMode.local:
+                from .scheduler import connector_should_charge_now, _get_active_conditions
+                suspend_now = not connector_should_charge_now(db, charger, connector_id)
+                if suspend_now:
+                    conds = _get_active_conditions(db, charger, connector_id)
+                    for cond in conds:
+                        if cond.type.value == "start_after" and cond.time_value:
+                            deferred_label = f"Démarrage après {cond.time_value}"
+                            break
+                        elif cond.type.value == "off_peak":
+                            deferred_label = "Heures creuses"
+                            break
+                    if not deferred_label:
+                        deferred_label = "Charge différée"
+
             txn = Transaction(
                 charger_id=self.id,
                 connector_id=connector_id,
@@ -283,22 +258,12 @@ class LocalChargePoint(ChargePoint16):
                 vehicle_id=vehicle.id if vehicle else None,
                 meter_start=meter_start,
                 status="active",
+                deferred_until=deferred_label if suspend_now else None,
             )
             db.add(txn)
             db.commit()
             db.refresh(txn)
             txn_id = txn.id
-
-            # Départ différé : si une condition de programmation interdit la
-            # charge à cet instant, on accepte quand même la transaction (le
-            # câble reste verrouillé, la session vit) mais on demande aussitôt
-            # une limite 0 W pour maintenir la borne en SuspendedEVSE, sans
-            # attendre le prochain tick du planificateur. Le planificateur
-            # lèvera la limite à l'heure prévue.
-            suspend_now = False
-            if charger and charger.mode == ChargerMode.local:
-                from .scheduler import connector_should_charge_now
-                suspend_now = not connector_should_charge_now(db, charger, connector_id)
         finally:
             db.close()
 
@@ -307,16 +272,19 @@ class LocalChargePoint(ChargePoint16):
         if suspend_now:
             asyncio.create_task(self._suspend_for_schedule(connector_id))
 
+        sse_notify("transaction_started", {
+            "charger_id": self.id,
+            "connector_id": connector_id,
+            "transaction_id": txn_id,
+            "deferred": suspend_now,
+        })
+
         return call_result.StartTransaction(
             transaction_id=txn_id,
             id_tag_info={"status": AuthorizationStatus.accepted},
         )
 
     async def _suspend_for_schedule(self, connector_id: int):
-        """Pose une limite 0 W (SuspendedEVSE) pour faire respecter un départ
-        différé dès le démarrage de la transaction. Sans effet si la borne ne
-        supporte pas SmartCharging (le repli RemoteStop du planificateur
-        prendra alors le relais au tick suivant)."""
         try:
             await self.set_charging_limit(connector_id, 0)
         except Exception:
@@ -337,6 +305,7 @@ class LocalChargePoint(ChargePoint16):
                 txn.meter_stop = meter_stop
                 txn.stop_time = datetime.utcnow()
                 txn.status = "completed"
+                txn.deferred_until = None
                 if txn.start_time:
                     duration_min = round((txn.stop_time - txn.start_time).total_seconds() / 60, 1)
                 db.flush()
@@ -349,6 +318,12 @@ class LocalChargePoint(ChargePoint16):
             await mqtt_bridge.publish_charge_control_state(self.id, connector_id, False)
             if duration_min is not None:
                 await mqtt_bridge.publish_connector_state(self.id, connector_id, session_duration_min=duration_min)
+
+        sse_notify("transaction_stopped", {
+            "charger_id": self.id,
+            "connector_id": connector_id,
+            "transaction_id": transaction_id,
+        })
 
         return call_result.StopTransaction(
             id_tag_info={"status": AuthorizationStatus.accepted}
@@ -398,8 +373,6 @@ class LocalChargePoint(ChargePoint16):
 
         return call_result.MeterValues()
 
-    # --- Actions déclenchées depuis l'API (backoffice -> borne) ---
-
     async def trigger_remote_start(self, connector_id: int, id_tag: str):
         ocpp_logs.record(self.id, "out", "RemoteStartTransaction",
                          summary=f"conn {connector_id}, idTag={id_tag}",
@@ -410,9 +383,6 @@ class LocalChargePoint(ChargePoint16):
         ))
 
     async def _auto_start(self, connector_id: int):
-        """Démarrage automatique (mode 'free'), lancé en tâche de fond : appeler
-        self.call() directement dans un handler bloquerait la boucle de
-        réception (la réponse ne pourrait jamais être lue)."""
         try:
             await self.trigger_remote_start(connector_id, "WEBADMIN")
         except Exception:
@@ -458,14 +428,7 @@ class LocalChargePoint(ChargePoint16):
                 db.close()
         return response.status
 
-    # --- SmartCharging (délestage / limitation pilotée par le CSMS) ---
-
     async def set_charging_limit(self, connector_id: int, limit_w: float | None):
-        """Impose (ou libère) une limite de puissance sur un connecteur via un
-        profil TxDefault. limit_w=0 revient à suspendre la charge sans clore la
-        transaction (la borne passera en SuspendedEVSE). limit_w=None efface le
-        profil (retour à la pleine puissance). Retourne True si la borne a
-        accepté (et mémorise au passage qu'elle supporte SmartCharging)."""
         try:
             if limit_w is None:
                 ocpp_logs.record(self.id, "out", "ClearChargingProfile",
@@ -502,6 +465,5 @@ class LocalChargePoint(ChargePoint16):
             SMART_CHARGING_SUPPORT[self.id] = bool(ok)
             return bool(ok)
         except Exception:
-            # La borne ne connaît pas ces messages : SmartCharging non supporté.
             SMART_CHARGING_SUPPORT[self.id] = False
             return False

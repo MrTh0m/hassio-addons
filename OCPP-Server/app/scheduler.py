@@ -30,8 +30,6 @@ from .csms_local import CONNECTED_CHARGERS, SMART_CHARGING_SUPPORT
 
 logger = logging.getLogger("scheduler")
 
-# Période d'évaluation. 60 s suffit largement : les plages tarifaires sont à la
-# minute, et on évite de marteler les bornes.
 TICK_SECONDS = 60
 
 
@@ -41,9 +39,6 @@ def _parse_hhmm(s: str) -> dtime:
 
 
 def _in_off_peak(plan, dt: datetime) -> bool:
-    """Vrai si l'instant tombe dans une plage tarifaire nommée (heures creuses)
-    du plan. On considère « heures creuses » = toute période explicitement
-    définie ; le prix par défaut (hors période) est « heures pleines »."""
     if plan is None:
         return False
     weekday = dt.weekday()
@@ -57,7 +52,7 @@ def _in_off_peak(plan, dt: datetime) -> bool:
         if start <= end:
             if start <= t < end:
                 return True
-        else:  # chevauche minuit
+        else:
             if t >= start or t < end:
                 return True
     return False
@@ -65,15 +60,6 @@ def _in_off_peak(plan, dt: datetime) -> bool:
 
 def should_charge_now(condition_type, time_value, plan, now: datetime,
                       already_started: bool) -> bool:
-    """Décide si la charge doit être ACTIVE à l'instant `now`, pour une
-    condition donnée. Isolé et pur pour être testable.
-
-    - off_peak    : actif seulement pendant une plage tarifaire nommée.
-    - start_after : inactif avant l'heure `time_value`, actif ensuite. Une fois
-                    démarrée (already_started), on ne re-suspend pas.
-    - ready_by    : on démarre tout de suite (pas d'estimation de durée fiable
-                    ici), donc toujours actif ; la contrainte sert de repère.
-    """
     if condition_type == ChargeConditionType.off_peak:
         return _in_off_peak(plan, now)
     if condition_type == ChargeConditionType.start_after:
@@ -88,14 +74,6 @@ def should_charge_now(condition_type, time_value, plan, now: datetime,
 
 
 def connector_should_charge_now(db, charger, connector_id: int, now: datetime | None = None) -> bool:
-    """Décision partagée (même logique ET que le planificateur) pour savoir si
-    un connecteur donné a le droit de charger à l'instant présent, compte tenu
-    des conditions de programmation définies sur la borne.
-
-    Renvoie True s'il n'y a aucune condition applicable (comportement par
-    défaut : la charge est autorisée). Utilisé aussi par le handler local pour
-    suspendre IMMÉDIATEMENT au StartTransaction, sans attendre le prochain tick.
-    """
     if now is None:
         now = datetime.utcnow()
     conds = (
@@ -106,7 +84,6 @@ def connector_should_charge_now(db, charger, connector_id: int, now: datetime | 
         )
         .all()
     )
-    # On ne garde que les conditions visant ce connecteur (ou toutes : NULL).
     applicable = [c for c in conds if c.connector_id in (None, connector_id)]
     if not applicable:
         return True
@@ -124,17 +101,13 @@ def connector_should_charge_now(db, charger, connector_id: int, now: datetime | 
 
 async def _apply(cp, charger_id: str, connector_id: int, should_charge: bool,
                  has_active_txn: bool):
-    """Applique l'intention sur un connecteur, en choisissant la stratégie
-    selon le support SmartCharging de la borne."""
     supports_smart = SMART_CHARGING_SUPPORT.get(charger_id)
 
     if should_charge:
         if supports_smart is not False:
-            # On tente d'abord de lever une éventuelle limite (profil effacé).
             ok = await cp.set_charging_limit(connector_id, None)
             if ok:
                 return
-        # Repli RemoteStart : seulement si aucune transaction n'est en cours.
         if not has_active_txn:
             try:
                 await cp.trigger_remote_start(connector_id, "SCHED")
@@ -145,7 +118,6 @@ async def _apply(cp, charger_id: str, connector_id: int, should_charge: bool,
             ok = await cp.set_charging_limit(connector_id, 0)
             if ok:
                 return
-        # Repli RemoteStop : on ferme la transaction active s'il y en a une.
         if has_active_txn:
             db = SessionLocal()
             try:
@@ -173,14 +145,12 @@ async def _evaluate_once():
             .filter(ChargeCondition.enabled.is_(True))
             .all()
         )
-        # Regroupe par (borne, connecteur) : plusieurs conditions se combinent
-        # en ET logique (toutes doivent autoriser pour que la charge tourne).
         plans = {}
         by_target: dict[tuple[str, int | None], list[ChargeCondition]] = {}
         for cond in conditions:
             by_target.setdefault((cond.charger_id, cond.connector_id), []).append(cond)
 
-        work = []  # (cp, charger_id, connector_id, should_charge, has_active_txn)
+        work = []
         for (charger_id, cond_connector), conds in by_target.items():
             charger = db.query(Charger).filter(
                 Charger.id == charger_id, Charger.deleted_at.is_(None)
@@ -194,8 +164,6 @@ async def _evaluate_once():
                 plans[charger_id] = resolve_plan_for_charger(db, charger)
             plan = plans[charger_id]
 
-            # Connecteurs concernés : celui de la condition, ou tous les
-            # connecteurs physiques connus si NULL.
             if cond_connector is not None:
                 connector_ids = [cond_connector]
             else:
@@ -212,13 +180,10 @@ async def _evaluate_once():
                     Transaction.connector_id == connector_id,
                     Transaction.status == "active",
                 ).first() is not None
-                # ET logique sur toutes les conditions de cette cible.
                 should = all(
                     should_charge_now(c.type, c.time_value, plan, now, has_active)
                     for c in conds
                 )
-                # On n'agit que si un véhicule est branché (statut connecteur
-                # pertinent) : inutile de démarrer sur un connecteur libre.
                 status_row = db.query(ConnectorStatus).filter(
                     ConnectorStatus.charger_id == charger_id,
                     ConnectorStatus.connector_id == connector_id,
@@ -240,7 +205,6 @@ async def _evaluate_once():
 
 
 async def run_scheduler():
-    """Boucle de fond du planificateur, lancée au démarrage."""
     logger.info("Planificateur de charge démarré (tick %ds)", TICK_SECONDS)
     while True:
         try:
@@ -248,3 +212,17 @@ async def run_scheduler():
         except Exception:
             logger.warning("Erreur dans le planificateur de charge", exc_info=True)
         await asyncio.sleep(TICK_SECONDS)
+
+
+def _get_active_conditions(db, charger, connector_id: int):
+    """Retourne les conditions actives applicables à un connecteur donné.
+    Utilisé par csms_local pour afficher un libellé dans l'UI."""
+    conds = (
+        db.query(ChargeCondition)
+        .filter(
+            ChargeCondition.charger_id == charger.id,
+            ChargeCondition.enabled.is_(True),
+        )
+        .all()
+    )
+    return [c for c in conds if c.connector_id in (None, connector_id)]
