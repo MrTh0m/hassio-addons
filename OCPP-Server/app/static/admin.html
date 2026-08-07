@@ -1706,9 +1706,9 @@ function renderHistory() {
 // OCPP (véhicule, km, % batterie) qu'une charge externe saisie à la main
 // (énergie, coût, lieu, dates en plus).
 async function openSessionEditModal(sessionId) {
+  sessionId = parseInt(sessionId, 10);
   let s = cachedHistory.find(x => x.id === sessionId);
   if (!s) {
-    // Pas encore en cache (appelé depuis l'Accueil) : charger depuis l'API
     try {
       const all = await fetch(`api/history?limit=200`, { headers: authHeaders() }).then(r => r.json());
       s = all.find(x => x.id === sessionId);
@@ -2141,10 +2141,13 @@ let logsPollTimer = null;
 const LOG_DIR_LABEL = { in: "Borne → CSMS", out: "CSMS → Borne" };
 
 async function initLogsView() {
-  // Peupler le filtre des messages une seule fois.
   const af = document.getElementById("log-action-filter");
   if (af && af.children.length <= 1) {
     af.innerHTML = `<option value="">Tous</option>` + LOG_ACTIONS.map(a => `<option value="${a}">${a}</option>`).join("");
+  }
+  // S'assurer que cachedChargers est disponible pour les display_name
+  if (!cachedChargers.length) {
+    try { cachedChargers = await fetch("api/chargers", { headers: authHeaders() }).then(r => r.json()); } catch(e) {}
   }
   await refreshLogChargerFilter();
   await loadLogs(true);
@@ -2152,11 +2155,15 @@ async function initLogsView() {
 }
 async function refreshLogChargerFilter() {
   try {
-    const chargers = await fetch("api/logs/chargers", { headers: authHeaders() }).then(r => r.json());
+    const ids = await fetch("api/logs/chargers", { headers: authHeaders() }).then(r => r.json());
     const sel = document.getElementById("log-charger-filter");
     const cur = sel.value;
-    sel.innerHTML = `<option value="">Toutes</option>` + chargers.map(c => `<option value="${esc(c)}">${esc(c)}</option>`).join("");
-    if (chargers.includes(cur)) sel.value = cur;
+    sel.innerHTML = `<option value="">Toutes</option>` + ids.map(id => {
+      const c = cachedChargers.find(x => x.id === id);
+      const label = (c && c.display_name) ? c.display_name : id;
+      return `<option value="${esc(id)}">${esc(label)}</option>`;
+    }).join("");
+    if (ids.includes(cur)) sel.value = cur;
   } catch (e) {}
 }
 function logFilters() {

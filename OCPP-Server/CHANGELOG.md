@@ -1,3 +1,8 @@
+## 0.19.7
+
+- Fix : bouton Modifier dans l'historique (comparaison id en entier).
+- Fix : UUID dans le filtre de bornes des logs remplacé par le nom d'affichage.
+
 ## 0.19.6
 
 - Fix : bouton Modifier dans l'historique cassé quand la session n'était pas encore en cache (appel depuis l'Accueil).
