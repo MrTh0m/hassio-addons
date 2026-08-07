@@ -1,3 +1,7 @@
+## 0.19.8
+
+- Fix : bouton Modifier dans l'historique (variable myRole non définie causait un crash silencieux de la modale).
+
 ## 0.19.7
 
 - Fix : bouton Modifier dans l'historique (comparaison id en entier).

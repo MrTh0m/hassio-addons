@@ -1749,7 +1749,7 @@ async function openSessionEditModal(sessionId) {
     </div>
     ${extBlock}
     <div class="cluster" style="margin-top:1rem; justify-content:flex-end; flex-wrap:wrap; gap:.5rem">
-      ${(!s.is_external && s.status === 'completed' && myRole === 'admin') ? `<button class="btn btn-outline" onclick="recalculateSession(${s.id})" style="margin-right:auto">
+      ${(!s.is_external && s.status === 'completed' && isAdmin()) ? `<button class="btn btn-outline" onclick="recalculateSession(${s.id})" style="margin-right:auto">
         <svg style="width:1em;height:1em;vertical-align:-.15em"><use href="#i-refresh"/></svg> Recalculer depuis compteur</button>` : ''}
       <button class="btn" onclick="closeModal()">Annuler</button>
       <button class="btn btn-primary" onclick="saveSessionEdit(${s.id}, ${s.is_external})">Enregistrer</button>
