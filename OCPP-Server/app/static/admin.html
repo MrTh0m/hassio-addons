@@ -860,10 +860,10 @@ async function renderHomeCurrent(active, chargers, condByCharger) {
         <option value="">(véhicule ?)</option>
         ${vehicles.map(v => `<option value="${v.id}" ${s.vehicle_id === v.id ? "selected" : ""}>${esc(v.name)}</option>`).join("")}
       </select>`;
-    // Contrôle d'arrêt : user doit avoir la borne ET la voiture associées
-    const canStop = isAdmin() ||
+    // Contrôle d'arrêt : masqué en Finishing (charge déjà terminée côté borne)
+    const canStop = (st !== "Finishing") && (isAdmin() ||
       ((!currentUser.charger_ids || currentUser.charger_ids.includes(s.charger_id)) &&
-       (!currentUser.vehicle_ids || !s.vehicle_id || currentUser.vehicle_ids.includes(s.vehicle_id)));
+       (!currentUser.vehicle_ids || !s.vehicle_id || currentUser.vehicle_ids.includes(s.vehicle_id))));
     const stopBtn = canStop
       ? `<button class="btn btn-danger" onclick="stopChargeFromHome('${esc(s.charger_id)}', ${s.connector_id}, ${s.id})"><svg><use href="#i-stop"/></svg>Arrêter</button>`
       : "";
@@ -1228,62 +1228,62 @@ async function openChargerConfigModal(id, activeTab) {
 }
 
 async function buildOcppConfigTab(chargerId, isLocal) {
-  if (!isLocal) {
-    return `<div class="empty">Indisponible en mode relais.</div>`;
-  }
+  if (!isLocal) return `<div class="empty">Indisponible en mode relais.</div>`;
   let keys = [];
   try {
     keys = await fetch(`api/chargers/${chargerId}/config`, { headers: authHeaders() }).then(r => r.json());
   } catch(e) {
     return `<div class="empty">Impossible de lire la configuration (borne déconnectée ?).</div>`;
   }
-  if (!keys || !keys.length) {
-    return `<div class="empty">Aucune clé de configuration disponible (borne peut-être déconnectée).</div>`;
-  }
+  if (!keys || !keys.length)
+    return `<div class="empty">Aucune clé disponible (borne peut-être déconnectée).</div>`;
 
-  // Clés mises en avant pour la recharge EV
   const HIGHLIGHT = ["MeterValueSampleInterval","MeterValuesSampledData","StopTxnSampledData",
     "HeartbeatInterval","ConnectionTimeOut","ResetRetries","AuthorizeRemoteTxRequests"];
 
   const sorted = [...keys].sort((a,b) => {
     const ia = HIGHLIGHT.indexOf(a.key), ib = HIGHLIGHT.indexOf(b.key);
     if (ia !== -1 && ib !== -1) return ia - ib;
-    if (ia !== -1) return -1;
-    if (ib !== -1) return 1;
+    if (ia !== -1) return -1; if (ib !== -1) return 1;
     return a.key.localeCompare(b.key);
   });
 
   const rows = sorted.map(k => {
-    const eid = `ocpp-val-${CSS.escape(k.key)}`;
-    const isReadonly = k.readonly;
-    return `<tr>
-      <td style="font-family:monospace;font-size:.82rem;padding:.45rem .5rem;vertical-align:middle;color:${HIGHLIGHT.includes(k.key) ? "var(--accent)" : "inherit"}">${esc(k.key)}</td>
-      <td style="padding:.45rem .5rem;vertical-align:middle">
-        ${isReadonly
+    const eid = `ocpp-val-${k.key.replace(/[^a-zA-Z0-9]/g,"-")}`;
+    return `<tr class="ocpp-row" data-key="${esc(k.key.toLowerCase())}">
+      <td style="padding:.35rem .4rem;vertical-align:middle;white-space:nowrap">
+        <span style="font-family:monospace;font-size:.8rem;color:${HIGHLIGHT.includes(k.key) ? "var(--accent)" : "inherit"}">${esc(k.key)}</span>
+      </td>
+      <td style="padding:.35rem .4rem;vertical-align:middle;width:100%">
+        ${k.readonly
           ? `<span class="muted small">${esc(k.value ?? "–")}</span>`
-          : `<input id="${eid}" value="${esc(k.value ?? "")}" style="width:100%;font-size:.85rem" onkeydown="if(event.key==='Enter')saveOcppKey('${chargerId}','${esc(k.key)}','${eid}')">`
+          : `<input id="${eid}" value="${esc(k.value ?? "")}" style="width:100%;font-size:.83rem;box-sizing:border-box"
+               onkeydown="if(event.key==='Enter')saveOcppKey('${chargerId}','${esc(k.key)}','${eid}')">`
         }
       </td>
-      <td style="padding:.45rem .3rem;white-space:nowrap">
-        ${isReadonly
-          ? `<span class="badge muted" style="font-size:.7rem">lecture seule</span>`
-          : `<button class="btn btn-sm" onclick="saveOcppKey('${chargerId}','${esc(k.key)}','${eid}')">Appliquer</button>`
+      <td style="padding:.35rem .3rem;vertical-align:middle;white-space:nowrap">
+        ${k.readonly
+          ? `<span class="badge muted" style="font-size:.7rem">R/O</span>`
+          : `<button class="btn btn-sm" onclick="saveOcppKey('${chargerId}','${esc(k.key)}','${eid}')">OK</button>`
         }
       </td>
     </tr>`;
   }).join("");
 
   return `<div id="ocpp-tab-body">
-    <p class="small muted" style="margin:0 0 .7rem">Clés OCPP lues directement depuis la borne. Les clés <span style="color:var(--accent)">colorées</span> sont importantes pour le suivi de la charge en temps réel.<br>
-    Astuce : régler <b>MeterValueSampleInterval=60</b> et <b>MeterValuesSampledData=Energy.Active.Import.Register,Power.Active.Import</b> pour activer les données temps réel.</p>
-    <div style="overflow-x:auto">
+    <p class="small muted" style="margin:0 0 .5rem">Les clés <span style="color:var(--accent)">colorées</span> sont importantes pour les données temps réel.</p>
+    <input type="search" id="ocpp-filter" placeholder="Filtrer…" oninput="filterOcppKeys()"
+      style="width:100%;margin-bottom:.6rem;font-size:.9rem;padding:.35rem .5rem;box-sizing:border-box;border:1px solid var(--border);border-radius:var(--r);background:var(--bg);color:var(--fg)">
+    <div style="overflow-x:auto;max-height:55vh;overflow-y:auto">
       <table style="width:100%;border-collapse:collapse">
-        <thead><tr style="border-bottom:1px solid var(--border)">
-          <th style="text-align:left;padding:.4rem .5rem;font-size:.8rem">Clé</th>
-          <th style="text-align:left;padding:.4rem .5rem;font-size:.8rem">Valeur</th>
-          <th></th>
-        </tr></thead>
-        <tbody>${rows}</tbody>
+        <thead style="position:sticky;top:0;background:var(--bg);z-index:1">
+          <tr style="border-bottom:1px solid var(--border)">
+            <th style="text-align:left;padding:.35rem .4rem;font-size:.78rem;white-space:nowrap">Clé</th>
+            <th style="text-align:left;padding:.35rem .4rem;font-size:.78rem">Valeur</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="ocpp-tbody">${rows}</tbody>
       </table>
     </div>
   </div>`;
@@ -1299,6 +1299,12 @@ async function saveOcppKey(chargerId, key, inputId) {
     `${key} mis à jour`
   );
   if (ok) el.style.background = "var(--ok-soft)";
+}
+function filterOcppKeys() {
+  const q = (document.getElementById("ocpp-filter")?.value || "").toLowerCase();
+  document.querySelectorAll(".ocpp-row").forEach(tr => {
+    tr.style.display = !q || tr.dataset.key.includes(q) ? "" : "none";
+  });
 }
 function onModeChange(id) {
   const relay = document.getElementById("mode-" + id).value === "relay";

@@ -344,6 +344,15 @@ class LocalChargePoint(ChargePoint16):
         db = self._db()
         mqtt_updates = {}
         try:
+            # Le transaction_id reçu est l'identifiant OCPP interne de la borne,
+            # pas notre id SQLite. On résout notre transaction active sur ce connecteur.
+            our_txn = db.query(Transaction).filter(
+                Transaction.charger_id == self.id,
+                Transaction.connector_id == connector_id,
+                Transaction.status == "active",
+            ).order_by(Transaction.id.desc()).first()
+            our_txn_id = our_txn.id if our_txn else None
+
             for mv in meter_value:
                 for sv in mv.get("sampled_value", []):
                     try:
@@ -352,15 +361,14 @@ class LocalChargePoint(ChargePoint16):
                         continue
                     measurand = sv.get("measurand", "Energy.Active.Import.Register")
                     unit = sv.get("unit")
-                    # Normaliser l'énergie en Wh : certaines bornes envoient des kWh
                     stored_value = value
                     if measurand == "Energy.Active.Import.Register":
                         if unit and unit.lower() in ("kwh", "kw·h", "kw-h"):
                             stored_value = value * 1000.0
-                            unit = "Wh"  # on normalise l'unité stockée
+                            unit = "Wh"
                     db.add(MeterValue(
                         charger_id=self.id,
-                        transaction_id=transaction_id,
+                        transaction_id=our_txn_id,
                         connector_id=connector_id,
                         measurand=measurand,
                         value=stored_value,
@@ -371,11 +379,9 @@ class LocalChargePoint(ChargePoint16):
                     elif measurand == "Energy.Active.Import.Register":
                         mqtt_updates["energy_wh"] = stored_value
 
-            if transaction_id is not None:
-                txn = db.query(Transaction).filter(Transaction.id == transaction_id).first()
-                if txn and txn.start_time:
-                    elapsed_min = (datetime.utcnow() - txn.start_time).total_seconds() / 60
-                    mqtt_updates["session_duration_min"] = round(elapsed_min, 1)
+            if our_txn and our_txn.start_time:
+                elapsed_min = (datetime.utcnow() - our_txn.start_time).total_seconds() / 60
+                mqtt_updates["session_duration_min"] = round(elapsed_min, 1)
 
             db.commit()
         finally:

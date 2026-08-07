@@ -1,3 +1,9 @@
+## 0.19.5
+
+- Fix : MeterValues correctement associés à la session active (résolution par connector_id plutôt que transaction_id OCPP, qui diffère de notre id interne). Les données temps réel (puissance, énergie) s'affichent maintenant pendant la charge.
+- Fix : bouton Arrêter masqué en statut Finishing (charge déjà terminée côté borne).
+- Config OCPP : filtre texte, scroll interne, bouton OK compact toujours visible.
+
 ## 0.19.4
 
 ### Nouveau : onglet Configuration OCPP dans la modale de borne
