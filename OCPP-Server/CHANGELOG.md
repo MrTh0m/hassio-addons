@@ -1,3 +1,8 @@
+## 0.19.6
+
+- Fix : bouton Modifier dans l'historique cassé quand la session n'était pas encore en cache (appel depuis l'Accueil).
+- Fix : UUID des bornes remplacé par le nom d'affichage dans les logs OCPP et dans la gestion des utilisateurs (checkboxes d'association).
+
 ## 0.19.5
 
 - Fix : MeterValues correctement associés à la session active (résolution par connector_id plutôt que transaction_id OCPP, qui diffère de notre id interne). Les données temps réel (puissance, énergie) s'affichent maintenant pendant la charge.
