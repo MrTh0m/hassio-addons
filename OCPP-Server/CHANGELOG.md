@@ -1,3 +1,7 @@
+## 0.19.9
+
+- Fix : bouton Recalculer (showToast non défini).
+
 ## 0.19.8
 
 - Fix : bouton Modifier dans l'historique (variable myRole non définie causait un crash silencieux de la modale).

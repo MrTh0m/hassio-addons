@@ -1784,7 +1784,7 @@ async function recalculateSession(id) {
     closeModal();
     loadHome();
     loadHistory();
-    showToast(`Énergie : ${kWh(data.energy_wh)} kWh · Coût : ${eur(data.cost)}`);
+    toast(`Énergie : ${kWh(data.energy_wh)} kWh · Coût : ${eur(data.cost)}`, "ok");
   }
 }
 async function deleteSession(id) {
