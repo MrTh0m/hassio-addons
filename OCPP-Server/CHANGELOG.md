@@ -5,7 +5,7 @@
 - Fix : la modale de détail d'un connecteur affichait l'UUID technique de la borne au lieu de son nom d'affichage.
 - Fix : id HTML dupliqué (`ocpp-tab-body`) entre le placeholder et le contenu chargé de l'onglet Configuration OCPP.
 - Nettoyage : suppression d'un dictionnaire mort (`_TABLE_BY_NAME`) dans l'export/import, jamais référencé.
-- Amélioration : dépendances non documentées dans `requirements.txt` (aucune version figée), à figer manuellement avec les versions actuellement déployées (`pip freeze` dans le conteneur).
+- Amélioration : versions des dépendances figées dans `requirements.txt` (étaient jusque-là sans version, donc sujettes à changer silencieusement à chaque rebuild d'image).
 
 ### Nouveau : diagnostic « Base de données »
 
