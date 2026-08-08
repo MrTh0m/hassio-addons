@@ -99,6 +99,24 @@ def set_debug_mode(body: DebugModeUpdate, db: Session = Depends(get_db), user=De
     return {"debug_mode": body.enabled}
 
 
+@router.get("/diagnostics/packages")
+def list_installed_packages(user=Depends(require_admin)):
+    """Liste les paquets Python réellement installés dans le conteneur, avec
+    leur version exacte. Sert à figer requirements.txt sur les versions qui
+    tournent actuellement, plutôt que de deviner. Lecture seule, ne dépend pas
+    de pip (lit les métadonnées d'installation directement)."""
+    import importlib.metadata as _im
+    pkgs = sorted(
+        (
+            {"name": dist.metadata["Name"], "version": dist.version}
+            for dist in _im.distributions()
+            if dist.metadata.get("Name")
+        ),
+        key=lambda p: p["name"].lower(),
+    )
+    return pkgs
+
+
 class ChangePasswordBody(BaseModel):
     current_password: str
     new_password: str

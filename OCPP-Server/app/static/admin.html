@@ -1923,7 +1923,11 @@ async function openSettingsModal() {
         <input type="checkbox" id="set-debug-mode" ${currentUser.debug_mode ? "checked" : ""} onchange="toggleDebugMode(this.checked)">
         <span>Mode débug (affiche l'onglet <b>Base de données</b> dans la navigation)</span>
       </label>
-      <p class="tiny muted" style="margin:.4rem 0 0">Vue en lecture seule du contenu brut des tables, utile pour vérifier la cohérence des données. Sans effet sur le fonctionnement normal de l'application.</p>
+      <p class="tiny muted" style="margin:.4rem 0 .6rem">Vue en lecture seule du contenu brut des tables, utile pour vérifier la cohérence des données. Sans effet sur le fonctionnement normal de l'application.</p>
+      <div class="cluster">
+        <button class="btn btn-sm" onclick="showInstalledPackages()">Versions des dépendances installées</button>
+      </div>
+      <p class="tiny muted" style="margin:.4rem 0 0">Affiche les versions Python réellement déployées, à copier dans requirements.txt pour les figer.</p>
     </div>`;
   }
 
@@ -1973,6 +1977,34 @@ async function toggleDebugMode(on) {
   } else {
     const cb = document.getElementById("set-debug-mode");
     if (cb) cb.checked = !on;
+  }
+}
+
+// Noms (en minuscule) des paquets déjà listés dans requirements.txt, pour ne
+// montrer par défaut que ceux-là plutôt que toutes les dépendances transitives.
+const REQUIREMENTS_PACKAGES = ["fastapi", "uvicorn", "sqlalchemy", "ocpp", "websockets", "pyjwt", "bcrypt", "python-multipart", "aiomqtt"];
+
+async function showInstalledPackages() {
+  openModal(`<div class="empty">Chargement…</div>`);
+  const pkgs = await fetch("api/diagnostics/packages", { headers: authHeaders() }).then(r => r.json()).catch(() => []);
+  const relevant = pkgs.filter(p => REQUIREMENTS_PACKAGES.includes(p.name.toLowerCase()));
+  const list = relevant.length ? relevant : pkgs;
+  const text = list.map(p => `${p.name}==${p.version}`).join("\n");
+  window._pkgsCopyText = text;
+  const html = `<div class="modal-head"><h2>Versions installées</h2>
+    <button class="btn btn-icon btn-ghost" onclick="closeModal()"><svg><use href="#i-close"/></svg></button></div>
+    <p class="small muted" style="margin:.1rem 0 .6rem">À copier tel quel dans requirements.txt pour figer les versions actuellement déployées. Exception : <code>uvicorn[standard]</code> garde ses crochets, l'extra n'apparaît pas dans cette liste, remplace juste le numéro après <code>==</code>.</p>
+    <pre style="white-space:pre-wrap; margin:0; padding:.6rem; background:var(--surface-2); border-radius:var(--r-sm); font-size:.82rem; max-height:50vh; overflow:auto">${esc(text) || "Aucun paquet trouvé."}</pre>
+    <div class="cluster" style="margin-top:.6rem"><button class="btn btn-sm btn-primary" onclick="copyPackagesText()">Copier</button></div>`;
+  openModal(html);
+}
+
+function copyPackagesText() {
+  const text = window._pkgsCopyText || "";
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(() => toast("Copié", "ok")).catch(() => toast("Copie impossible, sélectionnez le texte manuellement", "err"));
+  } else {
+    toast("Copie impossible, sélectionnez le texte manuellement", "err");
   }
 }
 
