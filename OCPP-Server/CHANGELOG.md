@@ -4,13 +4,18 @@
 - Fix : en mode relais, l'énergie annoncée en kWh par la borne n'était pas normalisée en Wh avant publication MQTT (incohérence de facteur 1000 sur le capteur énergie), contrairement au mode local. Harmonisé.
 - Fix : la modale de détail d'un connecteur affichait l'UUID technique de la borne au lieu de son nom d'affichage.
 - Fix : id HTML dupliqué (`ocpp-tab-body`) entre le placeholder et le contenu chargé de l'onglet Configuration OCPP.
-- Nettoyage : suppression d'un dictionnaire mort (`_TABLE_BY_NAME`) dans l'export/import, jamais référencé.
+- Fix : un token de session expiré laissait certaines pages vides sans jamais rediriger vers l'écran de connexion (la plupart des appels ne passaient pas par la fonction qui gérait déjà le 401). Un intercepteur global détecte maintenant n'importe quel 401 et redéclenche la connexion.
+- Fix : le compte `admin` était modifiable comme un utilisateur normal (permissions, associations de véhicules/bornes, mot de passe) alors qu'il voit tout par définition et que son mot de passe est géré par la configuration de l'add-on. Bloqué côté serveur (pas seulement masqué côté interface).
+- Sécurité : les routes du journal OCPP (`/api/logs*`) n'étaient protégées que côté interface, la permission « Voir les logs OCPP » n'était jamais vérifiée côté serveur. Désormais réservées admin, comme la Base de données.
+- Nettoyage : suppression d'un dictionnaire mort (`_TABLE_BY_NAME`) dans l'export/import, jamais référencé (puis réintroduit à bon escient pour alimenter le nouveau navigateur de tables ci-dessous).
 - Amélioration : versions des dépendances figées dans `requirements.txt` (étaient jusque-là sans version, donc sujettes à changer silencieusement à chaque rebuild d'image).
 
-### Nouveau : diagnostic « Base de données »
+### Nouveau : diagnostic « Base de données » et évolution du Mode débug
 
 - Nouvel onglet en lecture seule pour parcourir le contenu brut des tables (bornes, sessions, MeterValues, tarifs, véhicules, conditions de charge, clés de configuration, statuts de connecteur), paginé, trié du plus récent au plus ancien. Ne couvre pas la table des utilisateurs.
-- Masqué par défaut. Activable via Réglages → Avancé → « Mode débug » (réservé admin, réglage persisté en base).
+- Le réglage « Mode débug » (Réglages → Avancé, réservé admin, persisté en base) contrôle maintenant à la fois l'onglet Base de données et l'onglet Logs (auparavant lié à une permission par utilisateur, retirée du formulaire de droits).
+- Export CSV disponible sur Historique, Logs et Base de données (bouton « Exporter (CSV) » sur chaque vue, respecte les filtres actifs).
+- Utilisateur connecté (rôle + nom) affiché dans Réglages → Mon compte.
 
 ## 0.19.9
 

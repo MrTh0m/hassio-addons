@@ -1,7 +1,10 @@
+import csv
+import io
+import json
 from typing import Optional
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Response
 from fastapi.security import OAuth2PasswordRequestForm
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -21,6 +24,40 @@ from .auth import (
     get_current_user, require_admin, is_admin, get_user_id,
 )
 from .csms_local import CONNECTED_CHARGERS, PENDING_REMOTE_STARTS, SMART_CHARGING_SUPPORT
+
+
+def _to_csv_response(rows: list, filename: str) -> Response:
+    """Convertit une liste de dicts plats en réponse CSV téléchargeable.
+    Gère le marqueur {"__dt__": iso} utilisé par _serialize_row pour les
+    datetimes, et convertit les valeurs dict/list restantes (ex. payload de
+    log) en JSON compact plutôt que de planter sur un type non scalaire."""
+    columns: list = []
+    for r in rows:
+        for k in r.keys():
+            if k not in columns:
+                columns.append(k)
+    output = io.StringIO()
+    writer = csv.DictWriter(output, fieldnames=columns, extrasaction="ignore")
+    writer.writeheader()
+    for r in rows:
+        flat = {}
+        for k, v in r.items():
+            if isinstance(v, dict) and "__dt__" in v:
+                flat[k] = v["__dt__"]
+            elif isinstance(v, (dict, list)):
+                flat[k] = json.dumps(v, ensure_ascii=False)
+            elif v is None:
+                flat[k] = ""
+            else:
+                flat[k] = v
+        writer.writerow(flat)
+    # BOM utf-8 : Excel/LibreOffice ouvrent sinon les accents mal encodés.
+    csv_bytes = output.getvalue().encode("utf-8-sig")
+    return Response(
+        content=csv_bytes, media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
 
 router = APIRouter(prefix="/api")
 
@@ -133,6 +170,8 @@ def change_password(
     u = db.query(User).filter(User.id == uid).first() if uid else None
     if not u:
         raise HTTPException(status_code=404, detail="Utilisateur introuvable")
+    if u.username == "admin":
+        raise HTTPException(status_code=400, detail="Le mot de passe du compte admin est géré par la configuration de l'add-on Home Assistant")
     if not verify_password(body.current_password, u.password_hash):
         raise HTTPException(status_code=400, detail="Mot de passe actuel incorrect")
     if len(body.new_password) < 6:
@@ -726,12 +765,7 @@ def list_sessions(
     return _serialize_sessions_with_km(sessions, db)
 
 
-@router.get("/history")
-def list_history(
-    vehicle_id: Optional[int] = None, charger_id: Optional[str] = None,
-    status_filter: Optional[str] = None, limit: int = 200,
-    db: Session = Depends(get_db), user=Depends(get_current_user),
-):
+def _query_history(db: Session, user: dict, vehicle_id, charger_id, status_filter, limit: int):
     query = db.query(Transaction)
     # Filtrage par droits : un user ne voit que les sessions de ses véhicules
     allowed_vehicle_ids = _user_vehicle_ids(db, user)
@@ -743,8 +777,30 @@ def list_history(
         query = query.filter(Transaction.charger_id == charger_id)
     if status_filter is not None:
         query = query.filter(Transaction.status == status_filter)
-    sessions = query.order_by(Transaction.start_time.desc()).limit(limit).all()
+    return query.order_by(Transaction.start_time.desc()).limit(limit).all()
+
+
+@router.get("/history")
+def list_history(
+    vehicle_id: Optional[int] = None, charger_id: Optional[str] = None,
+    status_filter: Optional[str] = None, limit: int = 200,
+    db: Session = Depends(get_db), user=Depends(get_current_user),
+):
+    sessions = _query_history(db, user, vehicle_id, charger_id, status_filter, limit)
     return _serialize_sessions_with_km(sessions, db)
+
+
+@router.get("/history/export")
+def export_history(
+    vehicle_id: Optional[int] = None, charger_id: Optional[str] = None,
+    status_filter: Optional[str] = None, limit: int = 5000,
+    db: Session = Depends(get_db), user=Depends(get_current_user),
+):
+    """Export CSV de l'historique, mêmes filtres et même périmètre de droits
+    que /history (un user ne voit que les sessions de ses véhicules)."""
+    sessions = _query_history(db, user, vehicle_id, charger_id, status_filter, limit)
+    data = _serialize_sessions_with_km(sessions, db)
+    return _to_csv_response(data, "historique.csv")
 
 
 @router.get("/chargers/{charger_id}/metervalues")
@@ -1402,9 +1458,22 @@ def list_db_table_rows(
     }
 
 
+@router.get("/db/tables/{table_name}/export")
+def export_db_table(table_name: str, db: Session = Depends(get_db), user=Depends(require_admin)):
+    """Export CSV complet d'une table (pas de pagination : toutes les lignes)."""
+    model = _TABLE_BY_NAME.get(table_name)
+    if model is None:
+        raise HTTPException(status_code=404, detail="Table inconnue")
+    rows = db.query(model).order_by(_order_column(model)).all()
+    data = [_serialize_row(r) for r in rows]
+    return _to_csv_response(data, f"{table_name}.csv")
+
+
 # ============================ JOURNAL OCPP (live) ============================
 # Flux de diagnostic en mémoire : voir en direct les messages OCPP échangés
-# avec les bornes (local et relais, les deux sens). Non persisté.
+# avec les bornes (local et relais, les deux sens). Non persisté. Réservé
+# admin (voir aussi le réglage « Mode débug » qui masque/affiche l'onglet
+# côté UI, indépendamment de cette autorisation).
 
 from . import ocpp_logs
 
@@ -1413,7 +1482,7 @@ from . import ocpp_logs
 def get_logs(
     charger_id: Optional[str] = None, action: Optional[str] = None,
     direction: Optional[str] = None, since_id: int = 0, limit: int = 500,
-    user=Depends(get_current_user),
+    user=Depends(require_admin),
 ):
     return {
         "capture_high_volume": ocpp_logs.is_capturing_high_volume(),
@@ -1425,7 +1494,7 @@ def get_logs(
 
 
 @router.get("/logs/chargers")
-def get_logs_chargers(user=Depends(get_current_user)):
+def get_logs_chargers(user=Depends(require_admin)):
     """Bornes ayant produit au moins une entrée (pour alimenter le filtre)."""
     return ocpp_logs.known_chargers()
 
@@ -1445,6 +1514,20 @@ def set_logs_settings(body: LogSettings, user=Depends(require_admin)):
 def clear_logs(user=Depends(require_admin)):
     ocpp_logs.clear()
     return {"status": "ok"}
+
+
+@router.get("/logs/export")
+def export_logs(
+    charger_id: Optional[str] = None, action: Optional[str] = None,
+    direction: Optional[str] = None, limit: int = 2000,
+    user=Depends(require_admin),
+):
+    """Export CSV du journal en mémoire, avec les mêmes filtres que /logs."""
+    entries = ocpp_logs.get_entries(
+        charger_id=charger_id, action=action, direction=direction,
+        since_id=0, limit=limit,
+    )
+    return _to_csv_response(entries, "ocpp-logs.csv")
 
 
 # ============================ DANGER ZONE ============================
@@ -1554,6 +1637,8 @@ def update_user_permissions(
     u = db.query(User).filter(User.id == user_id, User.deleted_at.is_(None)).first()
     if not u:
         raise HTTPException(status_code=404, detail="Utilisateur introuvable")
+    if u.username == "admin":
+        raise HTTPException(status_code=400, detail="Le compte admin n'est pas modifiable, il voit tout par définition")
     perms = u.permissions
     if not perms:
         perms = UserPermission(user_id=u.id)
@@ -1575,6 +1660,8 @@ def update_user_associations(
     u = db.query(User).filter(User.id == user_id, User.deleted_at.is_(None)).first()
     if not u:
         raise HTTPException(status_code=404, detail="Utilisateur introuvable")
+    if u.username == "admin":
+        raise HTTPException(status_code=400, detail="Le compte admin n'est pas modifiable, il voit tout par définition")
     # Remplace les associations (supprime tout puis réinsère)
     db.query(UserVehicle).filter(UserVehicle.user_id == user_id).delete()
     db.query(UserCharger).filter(UserCharger.user_id == user_id).delete()
@@ -1592,10 +1679,15 @@ def admin_reset_password(
     user_id: int, body: AdminPasswordReset,
     db: Session = Depends(get_db), user=Depends(require_admin),
 ):
-    """L'admin peut réinitialiser le mot de passe de n'importe quel user."""
+    """L'admin peut réinitialiser le mot de passe de n'importe quel user, sauf
+    le sien : ce compte est synchronisé automatiquement depuis la config Home
+    Assistant à chaque démarrage (voir db.py::_sync_admin_password), un
+    changement fait ici serait donc silencieusement écrasé au redémarrage."""
     u = db.query(User).filter(User.id == user_id, User.deleted_at.is_(None)).first()
     if not u:
         raise HTTPException(status_code=404, detail="Utilisateur introuvable")
+    if u.username == "admin":
+        raise HTTPException(status_code=400, detail="Le mot de passe du compte admin est géré par la configuration de l'add-on Home Assistant")
     if len(body.new_password) < 6:
         raise HTTPException(status_code=400, detail="Le mot de passe doit faire au moins 6 caractères")
     u.password_hash = hash_password(body.new_password)

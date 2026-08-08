@@ -500,7 +500,10 @@
           <div class="spread">
             <label class="field"><span>Filtrer par véhicule</span>
               <select id="hist-vehicle-filter" onchange="loadHistory()"><option value="">Tous</option></select></label>
-            <button class="btn btn-sm" onclick="openExternalChargeModal()"><svg><use href="#i-ext"/></svg>Ajouter une charge externe</button>
+            <div class="cluster center" style="gap:.5rem">
+              <button class="btn btn-sm" onclick="exportHistoryCsv()"><svg><use href="#i-download"/></svg>Exporter (CSV)</button>
+              <button class="btn btn-sm" onclick="openExternalChargeModal()"><svg><use href="#i-ext"/></svg>Ajouter une charge externe</button>
+            </div>
           </div>
         </div>
         <div class="card" style="margin-top:.8rem">
@@ -538,6 +541,7 @@
               <label class="cluster center" style="gap:.4rem; font-size:.85rem; cursor:pointer" title="Les MeterValues sont très fréquents ; désactivés par défaut">
                 <input type="checkbox" id="log-metervalues" onchange="onMeterValuesToggle()"> MeterValues
               </label>
+              <button class="btn btn-sm" onclick="exportLogsCsv()"><svg><use href="#i-download"/></svg>Exporter (CSV)</button>
               <button class="btn btn-sm" onclick="clearLogs()"><svg><use href="#i-trash"/></svg>Vider</button>
             </div>
           </div>
@@ -557,6 +561,7 @@
             </label>
             <div class="cluster center" style="gap:.6rem">
               <span class="tiny muted" id="db-table-count"></span>
+              <button class="btn btn-sm" onclick="exportDbTableCsv()"><svg><use href="#i-download"/></svg>Exporter (CSV)</button>
               <button class="btn btn-icon btn-ghost" title="Rafraîchir" onclick="loadDbTableRows(dbAuditState.page)"><svg><use href="#i-refresh"/></svg></button>
             </div>
           </div>
@@ -590,6 +595,27 @@
 
 <script>
 let token = localStorage.getItem("ocpp_token") || null;
+
+/* ---------- Détection de session expirée sur n'importe quel appel API ---------- */
+// De nombreux fetch() directs dans ce fichier ne passent pas par apiCall()
+// (qui ne gère le 401 que pour les actions avec toast). Sans ce filet, un
+// token expiré se traduisait par des pages qui semblent ne plus répondre
+// (données vides) sans jamais rediriger vers l'écran de connexion. On
+// intercepte donc fetch() globalement pour tout appel vers l'API.
+const _nativeFetch = window.fetch.bind(window);
+let _sessionExpiredHandled = false;
+window.fetch = async function (input, init) {
+  const resp = await _nativeFetch(input, init);
+  const url = typeof input === "string" ? input : (input && input.url) || "";
+  const isApiCall = /(^|\/)api\//.test(url) && !/\/api\/auth\/login$/.test(url);
+  if (resp.status === 401 && isApiCall && !_sessionExpiredHandled) {
+    _sessionExpiredHandled = true;
+    logout();
+    toast("Session expirée, reconnecte-toi", "err");
+    setTimeout(() => { _sessionExpiredHandled = false; }, 3000);
+  }
+  return resp;
+};
 
 /* ---------- Thème ---------- */
 function applyTheme(theme) {
@@ -628,25 +654,27 @@ async function loadCurrentUser() {
 }
 function isAdmin() { return currentUser.role === "admin"; }
 function hasPerm(p) { return isAdmin() || !!(currentUser.permissions && currentUser.permissions[p]); }
-function dbAuditVisible() { return isAdmin() && !!currentUser.debug_mode; }
+// Base de données ET Logs partagent la même condition : réservé admin, et
+// seulement si le réglage « Mode débug » (Réglages → Avancé) est activé.
+function debugToolsVisible() { return isAdmin() && !!currentUser.debug_mode; }
 // Affiche/masque les éléments selon le rôle
 function applyRoleUI() {
-  // Onglet Logs
+  // Onglet Logs (réservé admin + mode débug, comme Base de données)
   const logBtn = document.querySelector(".navitem[data-nav='logs']");
-  if (logBtn) logBtn.style.display = hasPerm("can_view_logs") ? "" : "none";
+  if (logBtn) logBtn.style.display = debugToolsVisible() ? "" : "none";
   // Onglet Abo. électrique
   const tariffBtn = document.querySelector(".navitem[data-nav='tariffs']");
   if (tariffBtn) tariffBtn.style.display = hasPerm("can_manage_tariffs") ? "" : "none";
   // Onglet Base de données (admin + mode débug activé dans Réglages)
   const dbBtn = document.querySelector(".navitem[data-nav='dbaudit']");
-  if (dbBtn) dbBtn.style.display = dbAuditVisible() ? "" : "none";
+  if (dbBtn) dbBtn.style.display = debugToolsVisible() ? "" : "none";
   // Formulaire ajout de véhicule
   const vehAdd = document.getElementById("veh-add-card");
   if (vehAdd) vehAdd.style.display = hasPerm("can_manage_vehicles") ? "" : "none";
   // Si la vue actuelle n'est plus accessible, rediriger vers l'accueil
-  if (currentView === "logs" && !hasPerm("can_view_logs")) switchView("home");
+  if (currentView === "logs" && !debugToolsVisible()) switchView("home");
   if (currentView === "tariffs" && !hasPerm("can_manage_tariffs")) switchView("home");
-  if (currentView === "dbaudit" && !dbAuditVisible()) switchView("home");
+  if (currentView === "dbaudit" && !debugToolsVisible()) switchView("home");
 }
 
 /* ---------- SSE (push temps-réel) ---------- */
@@ -729,7 +757,9 @@ function toast(msg, kind) {
 
 async function apiCall(url, opts, okMsg) {
   const resp = await fetch(url, opts);
-  if (resp.status === 401) { logout(); return { ok: false }; }
+  // Le 401 est déjà géré globalement (logout + toast) par l'intercepteur posé
+  // sur window.fetch tout en haut du script, pas besoin de le refaire ici.
+  if (resp.status === 401) { return { ok: false }; }
   const data = await resp.json().catch(() => ({}));
   if (resp.ok) { if (okMsg) toast(okMsg, "ok"); }
   else { toast("Erreur : " + (data.detail || resp.status), "err"); }
@@ -784,9 +814,9 @@ const viewTitles = { home: "Accueil", chargers: "Bornes", vehicles: "Véhicules"
 const viewLoaded = {};
 function switchView(name) {
   // Garde : on redirige vers l'accueil si la vue est interdite au user
-  if (name === "logs" && !hasPerm("can_view_logs")) name = "home";
+  if (name === "logs" && !debugToolsVisible()) name = "home";
   if (name === "tariffs" && !hasPerm("can_manage_tariffs")) name = "home";
-  if (name === "dbaudit" && !dbAuditVisible()) name = "home";
+  if (name === "dbaudit" && !debugToolsVisible()) name = "home";
   currentView = name;
   document.querySelectorAll(".view").forEach(v => v.classList.remove("active"));
   document.getElementById("view-" + name).classList.add("active");
@@ -1881,17 +1911,24 @@ async function createExternalCharge() {
 async function openSettingsModal() {
   openModalConnector = null;
   const adminOnly = isAdmin();
+  const isBuiltinAdmin = currentUser.username === "admin";
 
   // Sections communes
   let passwordSection = `
     <div class="section-title" style="margin-top:0">Mon compte</div>
-    <div class="card form-card">
+    <p class="small" style="margin:0 0 .6rem">
+      <span class="badge ${isAdmin() ? "ok" : "accent"}">${esc(currentUser.role || "")}</span>
+      <b style="margin-left:.4rem">${esc(currentUser.username || "")}</b>
+      <span class="tiny muted" style="margin-left:.4rem">connecté(e)</span>
+    </p>
+    <div class="card form-card" style="${isBuiltinAdmin ? "opacity:.55" : ""}">
       <p class="small muted" style="margin:.1rem 0 .6rem">Modifier votre mot de passe.</p>
       <div class="cluster">
-        <label class="field"><span>Mot de passe actuel</span><input id="set-pw-cur" type="password" style="width:160px"></label>
-        <label class="field"><span>Nouveau (≥ 6 car.)</span><input id="set-pw-new" type="password" style="width:160px"></label>
-        <button class="btn btn-sm btn-primary" onclick="changeMyPassword()">Modifier</button>
+        <label class="field"><span>Mot de passe actuel</span><input id="set-pw-cur" type="password" style="width:160px" ${isBuiltinAdmin ? "disabled" : ""}></label>
+        <label class="field"><span>Nouveau (≥ 6 car.)</span><input id="set-pw-new" type="password" style="width:160px" ${isBuiltinAdmin ? "disabled" : ""}></label>
+        <button class="btn btn-sm btn-primary" onclick="changeMyPassword()" ${isBuiltinAdmin ? "disabled" : ""}>Modifier</button>
       </div>
+      ${isBuiltinAdmin ? `<p class="tiny muted" style="margin:.5rem 0 0">Géré par la configuration de l'add-on Home Assistant (option « admin_password »).</p>` : ""}
     </div>`;
 
   let dataSection = "";
@@ -1921,13 +1958,12 @@ async function openSettingsModal() {
     <div class="card form-card">
       <label class="cluster center" style="gap:.5rem; cursor:pointer">
         <input type="checkbox" id="set-debug-mode" ${currentUser.debug_mode ? "checked" : ""} onchange="toggleDebugMode(this.checked)">
-        <span>Mode débug (affiche l'onglet <b>Base de données</b> dans la navigation)</span>
+        <span>Mode débug (affiche les onglets <b>Base de données</b> et <b>Logs</b> dans la navigation)</span>
       </label>
-      <p class="tiny muted" style="margin:.4rem 0 .6rem">Vue en lecture seule du contenu brut des tables, utile pour vérifier la cohérence des données. Sans effet sur le fonctionnement normal de l'application.</p>
+      <p class="tiny muted" style="margin:.4rem 0 .6rem">Vues en lecture seule utiles pour vérifier la cohérence des données et diagnostiquer un problème. Sans effet sur le fonctionnement normal de l'application.</p>
       <div class="cluster">
         <button class="btn btn-sm" onclick="showInstalledPackages()">Versions des dépendances installées</button>
       </div>
-      <p class="tiny muted" style="margin:.4rem 0 0">Affiche les versions Python réellement déployées, à copier dans requirements.txt pour les figer.</p>
     </div>`;
   }
 
@@ -2023,8 +2059,10 @@ async function loadSettingsUsers() {
           <span class="tiny muted" style="margin-left:.5rem">${u.vehicle_ids.length} voiture(s) · ${u.charger_ids.length} borne(s)</span>
         </div>
         <div class="cluster center" style="gap:.5rem">
-          <button class="btn btn-sm btn-ghost" onclick="openEditUserModal(${u.id})"><svg><use href="#i-edit"/></svg></button>
-          ${u.username !== "admin" ? `<button class="btn btn-sm btn-ghost" onclick="confirmDeleteUser(${u.id}, '${esc(u.username)}')"><svg style="color:var(--danger)"><use href="#i-trash"/></svg></button>` : ""}
+          ${u.username === "admin"
+            ? `<span class="tiny muted" title="Compte administrateur principal, voit tout par définition, mot de passe géré par Home Assistant">non modifiable</span>`
+            : `<button class="btn btn-sm btn-ghost" onclick="openEditUserModal(${u.id})"><svg><use href="#i-edit"/></svg></button>
+               <button class="btn btn-sm btn-ghost" onclick="confirmDeleteUser(${u.id}, '${esc(u.username)}')"><svg style="color:var(--danger)"><use href="#i-trash"/></svg></button>`}
         </div>
       </div>
     </div>`).join("");
@@ -2061,7 +2099,6 @@ function _permCheckboxes(prefix, perms) {
     ["can_manage_chargers", "Réglages des bornes"],
     ["can_manage_tariffs", "Abonnements électriques"],
     ["can_manage_vehicles", "Gérer les voitures"],
-    ["can_view_logs", "Voir les logs OCPP"],
     ["can_export_import", "Exporter / importer"],
   ];
   return `<div class="cluster" style="gap:.6rem; flex-wrap:wrap">${defs.map(([k, lbl]) =>
@@ -2097,6 +2134,7 @@ async function openEditUserModal(userId) {
   ]);
   const u = users.find(x => x.id === userId);
   if (!u) return;
+  if (u.username === "admin") { toast("Le compte admin n'est pas modifiable", "err"); return; }
   const vids = new Set(u.vehicle_ids);
   const cids = new Set(u.charger_ids);
   const html = `<div class="modal-head"><h2>Modifier · ${esc(u.username)}</h2>
@@ -2145,6 +2183,47 @@ async function confirmDeleteUser(userId, username) {
   if (!confirm(`Supprimer l'utilisateur « ${username} » ?\n\nSes données restent intactes.`)) return;
   const { ok } = await apiCall(`api/users/${userId}`, { method: "DELETE", headers: authHeaders() }, "Utilisateur supprimé");
   if (ok) openSettingsModal();
+}
+
+/* ---------- Téléchargement générique (CSV, etc.) ---------- */
+async function downloadFile(url, fallbackFilename) {
+  try {
+    const resp = await fetch(url, { headers: authHeaders() });
+    if (!resp.ok) { toast("Export impossible", "err"); return; }
+    const blob = await resp.blob();
+    const cd = resp.headers.get("Content-Disposition") || "";
+    const match = cd.match(/filename="([^"]+)"/);
+    const filename = match ? match[1] : fallbackFilename;
+    const objUrl = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = objUrl; a.download = filename;
+    document.body.appendChild(a); a.click(); a.remove();
+    URL.revokeObjectURL(objUrl);
+    toast("Export téléchargé", "ok");
+  } catch (e) { toast("Export impossible", "err"); }
+}
+
+function exportDbTableCsv() {
+  if (!dbAuditState.table) { toast("Sélectionnez une table", "err"); return; }
+  downloadFile(`api/db/tables/${encodeURIComponent(dbAuditState.table)}/export`, `${dbAuditState.table}.csv`);
+}
+
+function exportLogsCsv() {
+  const params = new URLSearchParams();
+  const chargerVal = document.getElementById("log-charger-filter")?.value;
+  const actionVal = document.getElementById("log-action-filter")?.value;
+  const dirVal = document.getElementById("log-direction-filter")?.value;
+  if (chargerVal) params.set("charger_id", chargerVal);
+  if (actionVal) params.set("action", actionVal);
+  if (dirVal) params.set("direction", dirVal);
+  downloadFile(`api/logs/export?${params.toString()}`, "ocpp-logs.csv");
+}
+
+function exportHistoryCsv() {
+  const params = new URLSearchParams();
+  const vehVal = document.getElementById("hist-vehicle-filter")?.value;
+  if (vehVal) params.set("vehicle_id", vehVal);
+  downloadFile(`api/history/export?${params.toString()}`, "historique.csv");
 }
 
 /* ---------- Export / Import des données ---------- */
