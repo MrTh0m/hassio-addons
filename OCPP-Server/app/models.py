@@ -256,3 +256,12 @@ class ChargeCondition(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
     charger = relationship("Charger", back_populates="charge_conditions")
+
+
+class AppSetting(Base):
+    """Reglages globaux de l'application sous forme cle/valeur (ex. mode
+    debug). Une seule ligne par cle, valeur toujours stockee en texte."""
+    __tablename__ = "app_settings"
+
+    key = Column(String, primary_key=True)
+    value = Column(String, nullable=True)

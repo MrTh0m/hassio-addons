@@ -365,6 +365,7 @@
     <symbol id="i-download" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></symbol>
     <symbol id="i-upload" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21V9"/><path d="m7 14 5-5 5 5"/><path d="M5 3h14"/></symbol>
     <symbol id="i-logs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 6h11M8 12h11M8 18h11"/><path d="M4 6h.01M4 12h.01M4 18h.01"/></symbol>
+    <symbol id="i-database" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v6c0 1.66 3.58 3 8 3s8-1.34 8-3V5"/><path d="M4 11v6c0 1.66 3.58 3 8 3s8-1.34 8-3v-6"/></symbol>
   </defs>
 </svg>
 
@@ -407,6 +408,7 @@
     <button class="navitem" data-nav="tariffs" onclick="switchView('tariffs')"><svg><use href="#i-tariff"/></svg><span class="navlabel">Abo. électrique</span><span class="navlabel-mobile">Abo.</span></button>
     <button class="navitem" data-nav="history" onclick="switchView('history')"><svg><use href="#i-history"/></svg><span class="navlabel">Historique</span><span class="navlabel-mobile">Histo.</span></button>
     <button class="navitem" data-nav="logs" onclick="switchView('logs')"><svg><use href="#i-logs"/></svg><span class="navlabel">Logs</span><span class="navlabel-mobile">Logs</span></button>
+    <button class="navitem" data-nav="dbaudit" onclick="switchView('dbaudit')"><svg><use href="#i-database"/></svg><span class="navlabel">Base de données</span><span class="navlabel-mobile">BDD</span></button>
     <div class="nav-spacer"></div>
     <button class="navitem logout" onclick="logout()"><svg><use href="#i-logout"/></svg><span class="navlabel">Déconnexion</span></button>
   </aside>
@@ -546,6 +548,31 @@
         </div>
       </section>
 
+      <section class="view" id="view-dbaudit">
+        <div class="card">
+          <p class="small muted" style="margin:.1rem 0 .8rem">Vue en lecture seule du contenu de la base, pour vérifier la cohérence des données (ex. confirmer que des MeterValues sont bien enregistrées pendant une charge). Aucune modification possible depuis cette page.</p>
+          <div class="cluster center" style="justify-content:space-between; gap:.6rem; flex-wrap:wrap">
+            <label class="field"><span>Table</span>
+              <select id="db-table-select" onchange="selectDbTable(this.value)" style="min-width:200px"><option value="">Chargement…</option></select>
+            </label>
+            <div class="cluster center" style="gap:.6rem">
+              <span class="tiny muted" id="db-table-count"></span>
+              <button class="btn btn-icon btn-ghost" title="Rafraîchir" onclick="loadDbTableRows(dbAuditState.page)"><svg><use href="#i-refresh"/></svg></button>
+            </div>
+          </div>
+        </div>
+        <div class="card" style="margin-top:.8rem">
+          <div class="table-wrap"><table id="db-table-grid"><thead><tr></tr></thead><tbody><tr><td><span class="empty">Sélectionnez une table.</span></td></tr></tbody></table></div>
+          <div class="cluster center" style="justify-content:space-between; margin-top:.6rem">
+            <span class="tiny muted" id="db-page-info"></span>
+            <div class="cluster center" style="gap:.4rem">
+              <button class="btn btn-sm" id="db-prev-btn" onclick="dbAuditPage(-1)">← Précédent</button>
+              <button class="btn btn-sm" id="db-next-btn" onclick="dbAuditPage(1)">Suivant →</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
       <footer class="app-footer">
         <span id="app-version"></span>
         <span class="dot-sep">·</span>
@@ -601,6 +628,7 @@ async function loadCurrentUser() {
 }
 function isAdmin() { return currentUser.role === "admin"; }
 function hasPerm(p) { return isAdmin() || !!(currentUser.permissions && currentUser.permissions[p]); }
+function dbAuditVisible() { return isAdmin() && !!currentUser.debug_mode; }
 // Affiche/masque les éléments selon le rôle
 function applyRoleUI() {
   // Onglet Logs
@@ -609,12 +637,16 @@ function applyRoleUI() {
   // Onglet Abo. électrique
   const tariffBtn = document.querySelector(".navitem[data-nav='tariffs']");
   if (tariffBtn) tariffBtn.style.display = hasPerm("can_manage_tariffs") ? "" : "none";
+  // Onglet Base de données (admin + mode débug activé dans Réglages)
+  const dbBtn = document.querySelector(".navitem[data-nav='dbaudit']");
+  if (dbBtn) dbBtn.style.display = dbAuditVisible() ? "" : "none";
   // Formulaire ajout de véhicule
   const vehAdd = document.getElementById("veh-add-card");
   if (vehAdd) vehAdd.style.display = hasPerm("can_manage_vehicles") ? "" : "none";
   // Si la vue actuelle n'est plus accessible, rediriger vers l'accueil
   if (currentView === "logs" && !hasPerm("can_view_logs")) switchView("home");
   if (currentView === "tariffs" && !hasPerm("can_manage_tariffs")) switchView("home");
+  if (currentView === "dbaudit" && !dbAuditVisible()) switchView("home");
 }
 
 /* ---------- SSE (push temps-réel) ---------- */
@@ -633,7 +665,7 @@ function startSSE() {
       if (!isFocusWithin("view-chargers") && currentView === "chargers") loadChargers();
       // Si une modale est ouverte et porte sur un connecteur, on la rafraîchit
       if (openModalConnector && document.getElementById("modal-overlay").classList.contains("on")) {
-        if (!isFocusWithin("modal-box")) openConnectorModal(openModalConnector.chargerId, openModalConnector.connectorId, true);
+        if (!isFocusWithin("modal-box")) openConnectorModal(openModalConnector.chargerId, openModalConnector.connectorId, true, openModalConnector.displayName);
       }
     } catch (e) {}
   };
@@ -735,7 +767,7 @@ function pollTick() {
   if (currentView === "home" && !isFocusWithin("view-home")) loadHome();
   if (currentView === "chargers") loadChargers();
   if (openModalConnector && document.getElementById("modal-overlay").classList.contains("on")) {
-    if (!isFocusWithin("modal-box")) openConnectorModal(openModalConnector.chargerId, openModalConnector.connectorId, true);
+    if (!isFocusWithin("modal-box")) openConnectorModal(openModalConnector.chargerId, openModalConnector.connectorId, true, openModalConnector.displayName);
   }
 }
 function logout() {
@@ -748,12 +780,13 @@ function logout() {
 
 /* ---------- Navigation ---------- */
 let currentView = "home";
-const viewTitles = { home: "Accueil", chargers: "Bornes", vehicles: "Véhicules", tariffs: "Abo. électrique", history: "Historique", logs: "Logs" };
+const viewTitles = { home: "Accueil", chargers: "Bornes", vehicles: "Véhicules", tariffs: "Abo. électrique", history: "Historique", logs: "Logs", dbaudit: "Base de données" };
 const viewLoaded = {};
 function switchView(name) {
   // Garde : on redirige vers l'accueil si la vue est interdite au user
   if (name === "logs" && !hasPerm("can_view_logs")) name = "home";
   if (name === "tariffs" && !hasPerm("can_manage_tariffs")) name = "home";
+  if (name === "dbaudit" && !dbAuditVisible()) name = "home";
   currentView = name;
   document.querySelectorAll(".view").forEach(v => v.classList.remove("active"));
   document.getElementById("view-" + name).classList.add("active");
@@ -761,15 +794,16 @@ function switchView(name) {
   document.getElementById("view-title").textContent = viewTitles[name];
   const td = document.getElementById("view-title-desktop"); if (td) td.textContent = viewTitles[name];
   if (name !== "logs") stopLogsPolling();
-  const loaders = { home: loadHome, chargers: loadChargers, vehicles: loadVehicles, tariffs: loadTariffs, history: () => { populateVehicleFilter(); loadHistory(); }, logs: initLogsView };
+  const loaders = { home: loadHome, chargers: loadChargers, vehicles: loadVehicles, tariffs: loadTariffs, history: () => { populateVehicleFilter(); loadHistory(); }, logs: initLogsView, dbaudit: initDbAuditView };
   if (name === "home" || name === "chargers") loaders[name]();
   else if (name === "logs") loaders[name]();
   else if (!viewLoaded[name]) { loaders[name](); viewLoaded[name] = true; }
   // Pour les vues rechargées à chaque visite (sauf home/chargers déjà gérés)
   else if (name === "history") { populateVehicleFilter(); loadHistory(); }
+  else if (name === "dbaudit") { viewLoaded[name] = false; initDbAuditView(); viewLoaded[name] = true; }
 }
 function refreshCurrentView() {
-  const loaders = { home: loadHome, chargers: loadChargers, vehicles: loadVehicles, tariffs: loadTariffs, history: loadHistory, logs: () => loadLogs(true) };
+  const loaders = { home: loadHome, chargers: loadChargers, vehicles: loadVehicles, tariffs: loadTariffs, history: loadHistory, logs: () => loadLogs(true), dbaudit: () => loadDbTableRows(dbAuditState.page) };
   (loaders[currentView] || (() => {}))();
   toast("Rafraîchi", "ok");
 }
@@ -1163,7 +1197,7 @@ async function openChargerConfigModal(id, activeTab) {
   // Onglet Configuration OCPP : chargé à la demande
   const ocppTabContent = activeTab === "ocpp"
     ? await buildOcppConfigTab(id, isLocal)
-    : `<div id="ocpp-tab-body"><div class="empty">Cliquez sur l'onglet pour charger la configuration.</div></div>`;
+    : `<div id="ocpp-tab-placeholder"><div class="empty">Cliquez sur l'onglet pour charger la configuration.</div></div>`;
 
   const tabBtn = (key, label) =>
     `<button class="tab-btn${activeTab === key ? " active" : ""}" onclick="openChargerConfigModal('${id}','${key}')">${label}</button>`;
@@ -1388,15 +1422,15 @@ async function deleteCondition(chargerId, condId) {
 }
 
 /* --- Détail connecteur (lecture seule : plus de démarrage/arrêt ici) --- */
-async function openConnectorModal(chargerId, connectorId, silent) {
-  openModalConnector = { chargerId, connectorId };
+async function openConnectorModal(chargerId, connectorId, silent, displayName) {
+  openModalConnector = { chargerId, connectorId, displayName };
   if (!silent) openModal(`<div class="empty">Chargement…</div>`);
   const [sessions, meters] = await Promise.all([
     fetch(`api/chargers/${chargerId}/sessions?connector_id=${connectorId}`, { headers: authHeaders() }).then(r => r.json()),
     fetch(`api/chargers/${chargerId}/metervalues?connector_id=${connectorId}&limit=10`, { headers: authHeaders() }).then(r => r.json()),
   ]);
 
-  let html = `<div class="modal-head"><h2>${esc(chargerId)} · Conn. ${connectorId}</h2>
+  let html = `<div class="modal-head"><h2>${esc(displayName || chargerId)} · Conn. ${connectorId}</h2>
     <button class="btn btn-icon btn-ghost" onclick="closeModal()"><svg><use href="#i-close"/></svg></button></div>`;
 
   html += `<p class="small muted" style="margin:0 0 .6rem">Pour démarrer ou arrêter une charge, utilisez la page <b>Accueil</b> (bornes disponibles / charge en cours).</p>`;
@@ -1449,7 +1483,7 @@ async function openChargerStatsModal(chargerId) {
     <div class="card" style="margin:.35rem 0; padding:.55rem .8rem">
       <div class="spread">
         <div class="cluster center" style="gap:.5rem"><b>Connecteur ${cc.connector_id}</b><span class="badge ${esc(cc.status)}">${statusLabel(cc.status)}</span></div>
-        <button class="btn btn-sm" onclick="openConnectorModal('${esc(data.id)}', ${cc.connector_id})">Détails</button>
+        <button class="btn btn-sm" onclick="openConnectorModal('${esc(data.id)}', ${cc.connector_id}, false, '${esc(charger.display_name || "")}')">Détails</button>
       </div>
     </div>`).join("") : `<div class="empty">Aucun connecteur détecté (attendez le premier StatusNotification).</div>`;
 
@@ -1880,6 +1914,19 @@ async function openSettingsModal() {
     <div id="settings-users-list"><div class="empty small">Chargement…</div></div>`;
   }
 
+  let advancedSection = "";
+  if (adminOnly) {
+    advancedSection = `
+    <div class="section-title">Avancé</div>
+    <div class="card form-card">
+      <label class="cluster center" style="gap:.5rem; cursor:pointer">
+        <input type="checkbox" id="set-debug-mode" ${currentUser.debug_mode ? "checked" : ""} onchange="toggleDebugMode(this.checked)">
+        <span>Mode débug (affiche l'onglet <b>Base de données</b> dans la navigation)</span>
+      </label>
+      <p class="tiny muted" style="margin:.4rem 0 0">Vue en lecture seule du contenu brut des tables, utile pour vérifier la cohérence des données. Sans effet sur le fonctionnement normal de l'application.</p>
+    </div>`;
+  }
+
   let dangerSection = "";
   if (adminOnly) {
     dangerSection = `
@@ -1892,7 +1939,7 @@ async function openSettingsModal() {
 
   const html = `<div class="modal-head"><h2><svg style="width:1.1em;height:1.1em;vertical-align:-.15em"><use href="#i-cog"/></svg> Réglages</h2>
     <button class="btn btn-icon btn-ghost" onclick="closeModal()"><svg><use href="#i-close"/></svg></button></div>
-    ${passwordSection}${dataSection}${usersSection}${dangerSection}`;
+    ${passwordSection}${dataSection}${usersSection}${advancedSection}${dangerSection}`;
 
   openModal(html);
 
@@ -1915,6 +1962,18 @@ async function deleteAllHistory() {
   if (!confirm("Confirmation finale : effacer toutes les sessions ?")) return;
   const { ok, data } = await apiCall("api/history/all", { method: "DELETE", headers: authHeaders() }, "Historique supprimé");
   if (ok) toast(`${data?.deleted ?? 0} session(s) supprimée(s)`, "ok");
+}
+
+async function toggleDebugMode(on) {
+  const { ok } = await apiCall("api/settings/debug", { method: "PUT", headers: jsonHeaders(), body: JSON.stringify({ enabled: on }) },
+    on ? "Mode débug activé" : "Mode débug désactivé");
+  if (ok) {
+    currentUser.debug_mode = on;
+    applyRoleUI();
+  } else {
+    const cb = document.getElementById("set-debug-mode");
+    if (cb) cb.checked = !on;
+  }
 }
 
 /* ---------- Gestion des utilisateurs (admin) ---------- */
@@ -2242,6 +2301,66 @@ async function clearLogs() {
   if (!confirm("Vider le journal en mémoire ?")) return;
   await fetch("api/logs", { method: "DELETE", headers: authHeaders() });
   loadLogs(true);
+}
+
+/* ---------- Base de données (diagnostic, lecture seule) ---------- */
+let dbAuditState = { table: null, page: 1, limit: 50, total: 0 };
+
+async function initDbAuditView() {
+  const sel = document.getElementById("db-table-select");
+  sel.innerHTML = `<option value="">Chargement…</option>`;
+  const tables = await fetch("api/db/tables", { headers: authHeaders() }).then(r => r.json()).catch(() => []);
+  if (!tables.length) { sel.innerHTML = `<option value="">Aucune table</option>`; return; }
+  sel.innerHTML = tables.map(t => `<option value="${esc(t.name)}">${esc(t.name)} (${t.row_count})</option>`).join("");
+  const keep = tables.find(t => t.name === dbAuditState.table) ? dbAuditState.table : tables[0].name;
+  sel.value = keep;
+  selectDbTable(keep);
+}
+
+function selectDbTable(name) {
+  dbAuditState.table = name;
+  dbAuditState.page = 1;
+  loadDbTableRows(1);
+}
+
+async function loadDbTableRows(page) {
+  if (!dbAuditState.table) return;
+  page = Math.max(1, page || 1);
+  const data = await fetch(
+    `api/db/tables/${encodeURIComponent(dbAuditState.table)}/rows?page=${page}&limit=${dbAuditState.limit}`,
+    { headers: authHeaders() }
+  ).then(r => r.json()).catch(() => null);
+  if (!data) return;
+  dbAuditState.page = data.page;
+  dbAuditState.total = data.total;
+  renderDbTableGrid(data);
+}
+
+function dbAuditPage(delta) {
+  const maxPage = Math.max(1, Math.ceil(dbAuditState.total / dbAuditState.limit));
+  const next = Math.min(maxPage, Math.max(1, dbAuditState.page + delta));
+  if (next !== dbAuditState.page) loadDbTableRows(next);
+}
+
+function formatDbCell(v) {
+  if (v === null || v === undefined) return "–";
+  if (typeof v === "object" && v.__dt__) return formatDateTime(v.__dt__);
+  if (typeof v === "boolean") return v ? "oui" : "non";
+  return String(v);
+}
+
+function renderDbTableGrid(data) {
+  const table = document.getElementById("db-table-grid");
+  document.getElementById("db-table-count").textContent = `${data.total} ligne(s) au total`;
+  const maxPage = Math.max(1, Math.ceil(data.total / data.limit));
+  document.getElementById("db-page-info").textContent = `Page ${data.page} / ${maxPage}`;
+  document.getElementById("db-prev-btn").disabled = data.page <= 1;
+  document.getElementById("db-next-btn").disabled = data.page >= maxPage;
+  table.querySelector("thead tr").innerHTML = data.columns.map(c => `<th>${esc(c)}</th>`).join("");
+  const tbody = table.querySelector("tbody");
+  tbody.innerHTML = data.rows.length
+    ? data.rows.map(row => `<tr>${data.columns.map(c => `<td>${esc(formatDbCell(row[c]))}</td>`).join("")}</tr>`).join("")
+    : `<tr><td colspan="${data.columns.length || 1}"><span class="empty">Aucune ligne</span></td></tr>`;
 }
 
 /* ---------- PWA ---------- */

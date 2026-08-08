@@ -1,3 +1,17 @@
+## 0.19.10
+
+- **Fix critique** : le décorateur `@on(Action.meter_values)` avait disparu sur le handler `MeterValues` en mode local (régression post-0.19.5). Les trames MeterValues envoyées par une borne locale (dont la Schneider) étaient rejetées sans routage, donc jamais enregistrées : le kWh et le coût d'une charge en cours restaient figés à vide pendant toute la session. Restauré.
+- Fix : en mode relais, l'énergie annoncée en kWh par la borne n'était pas normalisée en Wh avant publication MQTT (incohérence de facteur 1000 sur le capteur énergie), contrairement au mode local. Harmonisé.
+- Fix : la modale de détail d'un connecteur affichait l'UUID technique de la borne au lieu de son nom d'affichage.
+- Fix : id HTML dupliqué (`ocpp-tab-body`) entre le placeholder et le contenu chargé de l'onglet Configuration OCPP.
+- Nettoyage : suppression d'un dictionnaire mort (`_TABLE_BY_NAME`) dans l'export/import, jamais référencé.
+- Amélioration : dépendances non documentées dans `requirements.txt` (aucune version figée), à figer manuellement avec les versions actuellement déployées (`pip freeze` dans le conteneur).
+
+### Nouveau : diagnostic « Base de données »
+
+- Nouvel onglet en lecture seule pour parcourir le contenu brut des tables (bornes, sessions, MeterValues, tarifs, véhicules, conditions de charge, clés de configuration, statuts de connecteur), paginé, trié du plus récent au plus ancien. Ne couvre pas la table des utilisateurs.
+- Masqué par défaut. Activable via Réglages → Avancé → « Mode débug » (réservé admin, réglage persisté en base).
+
 ## 0.19.9
 
 - Fix : bouton Recalculer (showToast non défini).

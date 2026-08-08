@@ -7,7 +7,7 @@ from starlette.websockets import WebSocket, WebSocketDisconnect
 
 from .db import SessionLocal
 from .models import MeterValue, Transaction, Charger, ConnectorStatus, Vehicle
-from .pricing import freeze_transaction_cost
+from .pricing import freeze_transaction_cost, _to_wh
 from . import mqtt_bridge
 from . import ocpp_logs
 
@@ -114,22 +114,31 @@ async def _snoop_frame(charger_id: str, raw: str):
                         except (TypeError, ValueError):
                             continue
                         measurand = sv.get("measurand", "Energy.Active.Import.Register")
+                        unit = sv.get("unit")
                         if measurand not in _SEEN_MEASURANDS.get(charger_id, set()):
                             _SEEN_MEASURANDS.setdefault(charger_id, set()).add(measurand)
                             logger.info("Relais %s : nouveau measurand observé « %s » (unité %s)",
-                                        charger_id, measurand, sv.get("unit"))
+                                        charger_id, measurand, unit)
+                        # Normalisation kWh -> Wh (certaines bornes, dont Schneider,
+                        # annoncent l'énergie en kWh). Même logique qu'en mode local
+                        # (csms_local.py), pour que la valeur stockée en base et celle
+                        # publiée en MQTT soient toujours cohérentes en Wh.
+                        stored_value = value
+                        if measurand == "Energy.Active.Import.Register" and unit and unit.lower() in ("kwh", "kw·h", "kw-h"):
+                            stored_value = _to_wh(value, unit)
+                            unit = "Wh"
                         db.add(MeterValue(
                             charger_id=charger_id,
                             transaction_id=transaction_id,
                             connector_id=connector_id,
                             measurand=measurand,
-                            value=value,
-                            unit=sv.get("unit"),
+                            value=stored_value,
+                            unit=unit,
                         ))
                         if measurand == "Power.Active.Import":
-                            connector_mqtt_updates.setdefault(connector_id, {})["power_w"] = value
+                            connector_mqtt_updates.setdefault(connector_id, {})["power_w"] = stored_value
                         elif measurand == "Energy.Active.Import.Register":
-                            connector_mqtt_updates.setdefault(connector_id, {})["energy_wh"] = value
+                            connector_mqtt_updates.setdefault(connector_id, {})["energy_wh"] = stored_value
                 db.commit()
             elif action == "StartTransaction":
                 id_tag = payload.get("idTag")

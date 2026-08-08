@@ -336,6 +336,7 @@ class LocalChargePoint(ChargePoint16):
             id_tag_info={"status": AuthorizationStatus.accepted}
         )
 
+    @on(Action.meter_values)
     async def on_meter_values(self, connector_id, meter_value, transaction_id=None, **kwargs):
         ocpp_logs.record(self.id, "in", "MeterValues",
                          summary=f"conn {connector_id}",

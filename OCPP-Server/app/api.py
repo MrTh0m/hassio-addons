@@ -11,6 +11,7 @@ from .models import (
     Charger, ChargerMode, AuthMode, Transaction, MeterValue, User, UserRole,
     UserVehicle, UserCharger, UserPermission, ConnectorStatus,
     Vehicle, TariffPlan, TariffPeriod, ChargeCondition, ChargeConditionType, ConfigurationKey,
+    AppSetting,
 )
 from .pricing import (
     compute_session_cost, resolve_plan_for_charger, freeze_transaction_cost, price_at,
@@ -26,6 +27,27 @@ router = APIRouter(prefix="/api")
 
 # --- Auth ---
 
+DEBUG_MODE_KEY = "debug_mode"
+
+
+def _get_setting(db: Session, key: str, default: str = "false") -> str:
+    row = db.query(AppSetting).filter(AppSetting.key == key).first()
+    return row.value if row and row.value is not None else default
+
+
+def _set_setting(db: Session, key: str, value: str) -> None:
+    row = db.query(AppSetting).filter(AppSetting.key == key).first()
+    if row:
+        row.value = value
+    else:
+        db.add(AppSetting(key=key, value=value))
+    db.commit()
+
+
+def _is_debug_mode(db: Session) -> bool:
+    return _get_setting(db, DEBUG_MODE_KEY, "false") == "true"
+
+
 @router.post("/auth/login")
 def login(form: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
     user = db.query(User).filter(
@@ -40,10 +62,11 @@ def login(form: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get
 @router.get("/auth/me")
 def get_me(db: Session = Depends(get_db), user=Depends(get_current_user)):
     """Retourne le profil complet du user connecté (rôle + permissions)."""
+    debug_mode = _is_debug_mode(db)
     uid = get_user_id(user)
     u = db.query(User).filter(User.id == uid).first() if uid else None
     if not u:
-        return {"role": user.get("role", "user"), "permissions": {}}
+        return {"role": user.get("role", "user"), "permissions": {}, "debug_mode": debug_mode}
     perms = u.permissions
     vehicle_ids = [lnk.vehicle_id for lnk in u.vehicle_links]
     charger_ids = [lnk.charger_id for lnk in u.charger_links]
@@ -53,6 +76,7 @@ def get_me(db: Session = Depends(get_db), user=Depends(get_current_user)):
         "role": u.role.value,
         "vehicle_ids": vehicle_ids,
         "charger_ids": charger_ids,
+        "debug_mode": debug_mode,
         "permissions": {
             "can_manage_chargers": is_admin(user) or (perms.can_manage_chargers if perms else False),
             "can_manage_tariffs": is_admin(user) or (perms.can_manage_tariffs if perms else False),
@@ -61,6 +85,18 @@ def get_me(db: Session = Depends(get_db), user=Depends(get_current_user)):
             "can_export_import": is_admin(user) or (perms.can_export_import if perms else False),
         },
     }
+
+
+class DebugModeUpdate(BaseModel):
+    enabled: bool
+
+
+@router.put("/settings/debug")
+def set_debug_mode(body: DebugModeUpdate, db: Session = Depends(get_db), user=Depends(require_admin)):
+    """Active/désactive l'onglet de diagnostic « Base de données » (réservé admin,
+    indépendamment de ce réglage : celui-ci ne fait que masquer/afficher l'onglet)."""
+    _set_setting(db, DEBUG_MODE_KEY, "true" if body.enabled else "false")
+    return {"debug_mode": body.enabled}
 
 
 class ChangePasswordBody(BaseModel):
@@ -1196,7 +1232,6 @@ _EXPORT_ORDER = [
     TariffPlan, TariffPeriod, Vehicle, Charger, ChargeCondition,
     Transaction, MeterValue, ConfigurationKey, ConnectorStatus,
 ]
-_TABLE_BY_NAME = {m.__tablename__: m for m in _EXPORT_ORDER}
 
 
 def _serialize_row(obj) -> dict:
@@ -1290,6 +1325,63 @@ def import_data(body: ImportBody, db: Session = Depends(get_db), user=Depends(re
         raise HTTPException(status_code=400, detail=f"Import échoué : {exc}")
 
     return {"status": "ok", "mode": mode}
+
+
+# ============================ DIAGNOSTIC : BASE DE DONNÉES ============================
+# Navigateur générique en lecture seule, réservé admin. Réutilise _EXPORT_ORDER
+# et _serialize_row (voir export ci-dessus) pour rester automatiquement à jour
+# avec le schéma. Volontairement limité aux tables déjà exportées : ne couvre
+# pas users/user_permissions/user_vehicles/user_chargers (mot de passe et
+# associations gérés depuis Réglages -> Utilisateurs, pas ici).
+
+_TABLE_BY_NAME = {m.__tablename__: m for m in _EXPORT_ORDER}
+
+
+def _order_column(model):
+    """Colonne utilisée pour trier « le plus récent en premier ». created_at
+    quand la table en a une, sinon la clé primaire (fonctionne aussi pour
+    Charger, dont la clé primaire est un chargePointId textuel non trié)."""
+    if hasattr(model, "created_at"):
+        return model.created_at.desc()
+    pk = list(model.__table__.primary_key.columns)[0]
+    return getattr(model, pk.name).desc()
+
+
+@router.get("/db/tables")
+def list_db_tables(db: Session = Depends(get_db), user=Depends(require_admin)):
+    """Liste des tables consultables avec leur nombre de lignes."""
+    return [
+        {"name": model.__tablename__, "row_count": db.query(model).count()}
+        for model in _EXPORT_ORDER
+    ]
+
+
+@router.get("/db/tables/{table_name}/rows")
+def list_db_table_rows(
+    table_name: str, page: int = 1, limit: int = 50,
+    db: Session = Depends(get_db), user=Depends(require_admin),
+):
+    """Lignes paginées d'une table, les plus récentes en premier. Lecture
+    seule : cette route ne modifie jamais rien."""
+    model = _TABLE_BY_NAME.get(table_name)
+    if model is None:
+        raise HTTPException(status_code=404, detail="Table inconnue")
+    page = max(1, page)
+    limit = max(1, min(limit, 200))
+    total = db.query(model).count()
+    rows = (
+        db.query(model)
+        .order_by(_order_column(model))
+        .offset((page - 1) * limit)
+        .limit(limit)
+        .all()
+    )
+    columns = [c.name for c in model.__table__.columns]
+    return {
+        "table": table_name, "page": page, "limit": limit, "total": total,
+        "columns": columns,
+        "rows": [_serialize_row(r) for r in rows],
+    }
 
 
 # ============================ JOURNAL OCPP (live) ============================
