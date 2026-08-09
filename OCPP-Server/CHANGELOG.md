@@ -1,3 +1,11 @@
+## 0.19.14
+
+- **Nouveau** : gestion du statut `RebootRequired` renvoyé par une borne à un `ChangeConfiguration`. Jusqu'ici, toute réponse OCPP différente d'une erreur HTTP affichait le même message de succès générique, même quand la borne signalait qu'un redémarrage était nécessaire pour appliquer la valeur (ex. `Cst_BackendUrl` sur le simulateur MicroOcpp). Désormais :
+  - L'onglet **Configuration OCPP** affiche un bandeau et un badge ⏳ sur les clés dont la borne a accepté la nouvelle valeur mais attend un redémarrage pour l'appliquer (suivi côté serveur, remis à zéro automatiquement au `BootNotification` suivant).
+  - Nouveau bouton **Redémarrer la borne** (Reset OCPP, redémarrage logiciel), avec confirmation renforcée si une charge est en cours sur un connecteur.
+  - Le toast de confirmation distingue maintenant `Accepted` (succès), `RebootRequired` (avertissement), `Rejected`/`NotSupported` (échec), au lieu d'un message identique dans tous les cas.
+  - Améliorations diverses de la modale : compteur de clés, bouton de rafraîchissement, bouton d'enregistrement désactivé pendant l'appel.
+
 ## 0.19.13
 
 - **Fix critique** : la charge externe (ajouter une charge sur borne tierce) échouait systématiquement avec une erreur 500 (`NOT NULL constraint failed: transactions.charger_id`), depuis l'introduction de cette fonctionnalité. La table `transactions` avait été créée avant que `charger_id` devienne nullable côté modèle ; l'ancienne contrainte NOT NULL restait gravée dans le schéma SQLite existant et bloquait toute insertion sans borne associée. Migration automatique au démarrage (recréation de la table selon le schéma à jour, données et MeterValues préservés).

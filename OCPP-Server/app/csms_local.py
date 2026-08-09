@@ -8,7 +8,7 @@ from ocpp.v16 import call, call_result
 from ocpp.v16.enums import (
     Action, RegistrationStatus, AuthorizationStatus, ConfigurationStatus,
     ChargingProfilePurposeType, ChargingProfileKindType, ChargingRateUnitType,
-    ClearChargingProfileStatus,
+    ClearChargingProfileStatus, ResetType,
 )
 
 from .db import SessionLocal
@@ -25,6 +25,12 @@ PENDING_REMOTE_STARTS: dict[tuple[str, int], int] = {}
 AUTO_START_ATTEMPTED: set[tuple[str, int]] = set()
 RESERVED_TAGS = {"WEBADMIN", "MQTT", "SCHED"}
 SMART_CHARGING_SUPPORT: dict[str, bool] = {}
+# Clés de configuration en attente d'un redémarrage de la borne pour être
+# effectivement appliquées (la borne a répondu RebootRequired à un
+# ChangeConfiguration). Purement en mémoire, remis à zéro pour une borne
+# dès qu'un nouveau BootNotification est reçu (elle vient de redémarrer,
+# pour quelque raison que ce soit) ou dès que le serveur redémarre.
+PENDING_REBOOT_KEYS: dict[str, set[str]] = {}
 
 
 def _auth_mode_value(charger) -> str:
@@ -69,6 +75,9 @@ class LocalChargePoint(ChargePoint16):
         ocpp_logs.record(self.id, "in", "BootNotification",
                          summary=f"{charge_point_vendor} {charge_point_model}",
                          payload={"vendor": charge_point_vendor, "model": charge_point_model, **kwargs})
+        # La borne vient de (re)démarrer : tout changement de configuration qui
+        # attendait un reboot est désormais supposé appliqué.
+        PENDING_REBOOT_KEYS.pop(self.id, None)
         db = self._db()
         try:
             charger = self._get_or_create_charger(db)
@@ -442,7 +451,12 @@ class LocalChargePoint(ChargePoint16):
         ocpp_logs.record(self.id, "out", "ChangeConfiguration",
                          summary=f"{key} = {value}", payload={"key": key, "value": value})
         response = await self.call(call.ChangeConfiguration(key=key, value=value))
-        if response.status == ConfigurationStatus.accepted:
+        # RebootRequired signifie que la borne a bien pris en compte et stocké
+        # la nouvelle valeur (confirmé par un GetConfiguration ultérieur coté
+        # borne), simplement pas encore appliquée à son comportement actif tant
+        # qu'elle n'a pas redémarré. Le cache local doit donc suivre ce cas au
+        # même titre qu'Accepted, contrairement à Rejected/NotSupported.
+        if response.status in (ConfigurationStatus.accepted, ConfigurationStatus.reboot_required):
             db = self._db()
             try:
                 entry = db.query(ConfigurationKey).filter(
@@ -454,7 +468,21 @@ class LocalChargePoint(ChargePoint16):
                 db.commit()
             finally:
                 db.close()
+        if response.status == ConfigurationStatus.reboot_required:
+            PENDING_REBOOT_KEYS.setdefault(self.id, set()).add(key)
+        else:
+            PENDING_REBOOT_KEYS.get(self.id, set()).discard(key)
         return response.status
+
+    async def trigger_reset(self, reset_type: str = "Soft"):
+        """Demande un redémarrage à la borne via OCPP (Reset.req). 'Soft' relance
+        le logiciel de la borne (recommandé pour appliquer un changement de
+        configuration comme l'URL du backend) ; 'Hard' fait un redémarrage
+        matériel complet. Les deux peuvent interrompre une charge en cours,
+        c'est à l'appelant de prévenir l'utilisateur avant d'appeler ceci."""
+        rtype = ResetType.hard if (reset_type or "").lower() == "hard" else ResetType.soft
+        ocpp_logs.record(self.id, "out", "Reset", summary=rtype.value, payload={"type": rtype.value})
+        return await self.call(call.Reset(type=rtype))
 
     async def set_charging_limit(self, connector_id: int, limit_w: float | None):
         try:

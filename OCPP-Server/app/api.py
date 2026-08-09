@@ -24,7 +24,9 @@ from .auth import (
     verify_password, hash_password, create_access_token,
     get_current_user, require_admin, is_admin, get_user_id,
 )
-from .csms_local import CONNECTED_CHARGERS, PENDING_REMOTE_STARTS, SMART_CHARGING_SUPPORT
+from .csms_local import (
+    CONNECTED_CHARGERS, PENDING_REMOTE_STARTS, SMART_CHARGING_SUPPORT, PENDING_REBOOT_KEYS,
+)
 
 
 def _to_csv_response(rows: list, filename: str) -> Response:
@@ -450,11 +452,15 @@ async def get_configuration(charger_id: str, db: Session = Depends(get_db), user
     cp = CONNECTED_CHARGERS.get(charger_id)
     if cp:
         keys = await cp.fetch_configuration()
-        return keys
-    return [
-        {"key": k.key, "value": k.value, "readonly": k.readonly}
-        for k in charger.config_keys
-    ]
+    else:
+        keys = [
+            {"key": k.key, "value": k.value, "readonly": k.readonly}
+            for k in charger.config_keys
+        ]
+    # Clés dont la borne a accepté la nouvelle valeur mais qui attendent un
+    # redémarrage pour être réellement appliquées (voir push_configuration).
+    pending = sorted(PENDING_REBOOT_KEYS.get(charger_id, set()))
+    return {"keys": keys, "pending_reboot_keys": pending}
 
 
 @router.put("/chargers/{charger_id}/config/{key}")
@@ -464,7 +470,25 @@ async def set_configuration(
 ):
     cp = _require_local_and_connected(charger_id, db)
     status_result = await cp.push_configuration(key, body.value)
-    return {"status": status_result}
+    return {"status": status_result, "reboot_required": status_result == "RebootRequired"}
+
+
+class ResetRequest(BaseModel):
+    type: str = "Soft"  # "Soft" (redémarrage logiciel) ou "Hard" (redémarrage matériel)
+
+
+@router.post("/chargers/{charger_id}/reset")
+async def reset_charger(
+    charger_id: str, body: ResetRequest,
+    db: Session = Depends(get_db), user=Depends(require_admin),
+):
+    """Déclenche un redémarrage à distance de la borne via OCPP (Reset.req).
+    Utile notamment pour appliquer une clé de configuration répondue en
+    RebootRequired. Peut interrompre une charge en cours : c'est à l'UI de
+    prévenir l'utilisateur avant l'appel."""
+    cp = _require_local_and_connected(charger_id, db)
+    result = await cp.trigger_reset(body.type)
+    return {"status": result.status}
 
 
 @router.get("/chargers/{charger_id}/connectors")

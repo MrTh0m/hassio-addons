@@ -313,7 +313,11 @@
   }
   .toast.err { background: var(--danger); color: #fff; }
   .toast.ok { background: var(--primary); color: var(--primary-contrast); }
+  .toast.warn { background: var(--warn); color: #fff; }
   @keyframes toastin { from { opacity: 0; transform: translateY(8px);} to { opacity: 1; transform: none; } }
+
+  /* Clé OCPP en attente d'un redémarrage de la borne pour être appliquée */
+  tr.ocpp-row-pending { background: var(--warn-soft); }
 
   .empty { color: var(--text-muted); padding: .8rem .2rem; }
   .divider { height: 1px; background: var(--border); margin: .9rem 0; }
@@ -1275,7 +1279,7 @@ async function openChargerConfigModal(id, activeTab) {
 
   // Onglet Configuration OCPP : chargé à la demande
   const ocppTabContent = activeTab === "ocpp"
-    ? await buildOcppConfigTab(id, isLocal)
+    ? await buildOcppConfigTab(id, isLocal, connectors)
     : `<div id="ocpp-tab-placeholder"><div class="empty">Cliquez sur l'onglet pour charger la configuration.</div></div>`;
 
   const tabBtn = (key, label) =>
@@ -1341,32 +1345,42 @@ async function openChargerConfigModal(id, activeTab) {
   openModal(html);
 }
 
-async function buildOcppConfigTab(chargerId, isLocal) {
+async function buildOcppConfigTab(chargerId, isLocal, connectors) {
   if (!isLocal) return `<div class="empty">Indisponible en mode relais.</div>`;
-  let keys = [];
+  let payload;
   try {
-    keys = await fetch(`api/chargers/${chargerId}/config`, { headers: authHeaders() }).then(r => r.json());
+    payload = await fetch(`api/chargers/${chargerId}/config`, { headers: authHeaders() }).then(r => r.json());
   } catch(e) {
     return `<div class="empty">Impossible de lire la configuration (borne déconnectée ?).</div>`;
   }
-  if (!keys || !keys.length)
+  const keys = payload && payload.keys || [];
+  const pendingReboot = new Set((payload && payload.pending_reboot_keys) || []);
+  if (!keys.length)
     return `<div class="empty">Aucune clé disponible (borne peut-être déconnectée).</div>`;
 
   const HIGHLIGHT = ["MeterValueSampleInterval","MeterValuesSampledData","StopTxnSampledData",
     "HeartbeatInterval","ConnectionTimeOut","ResetRetries","AuthorizeRemoteTxRequests"];
 
   const sorted = [...keys].sort((a,b) => {
+    // Une clé en attente de redémarrage remonte en tête : c'est l'info la
+    // plus actionnable du moment, peu importe son nom.
+    const pa = pendingReboot.has(a.key), pb = pendingReboot.has(b.key);
+    if (pa !== pb) return pa ? -1 : 1;
     const ia = HIGHLIGHT.indexOf(a.key), ib = HIGHLIGHT.indexOf(b.key);
     if (ia !== -1 && ib !== -1) return ia - ib;
     if (ia !== -1) return -1; if (ib !== -1) return 1;
     return a.key.localeCompare(b.key);
   });
 
+  const editableCount = keys.filter(k => !k.readonly).length;
+
   const rows = sorted.map(k => {
     const eid = `ocpp-val-${k.key.replace(/[^a-zA-Z0-9]/g,"-")}`;
-    return `<tr class="ocpp-row" data-key="${esc(k.key.toLowerCase())}">
+    const pending = pendingReboot.has(k.key);
+    return `<tr class="ocpp-row${pending ? " ocpp-row-pending" : ""}" data-key="${esc(k.key.toLowerCase())}">
       <td style="padding:.35rem .4rem;vertical-align:middle;white-space:nowrap">
         <span style="font-family:monospace;font-size:.8rem;color:${HIGHLIGHT.includes(k.key) ? "var(--accent)" : "inherit"}">${esc(k.key)}</span>
+        ${pending ? `<span class="badge warn" style="font-size:.62rem;margin-left:.35rem;white-space:nowrap" title="Enregistrée par la borne, redémarrage nécessaire pour l'appliquer"><svg style="width:.8em;height:.8em;vertical-align:-.1em"><use href="#i-clock"/></svg> reboot</span>` : ""}
       </td>
       <td style="padding:.35rem .4rem;vertical-align:middle;width:100%">
         ${k.readonly
@@ -1378,16 +1392,38 @@ async function buildOcppConfigTab(chargerId, isLocal) {
       <td style="padding:.35rem .3rem;vertical-align:middle;white-space:nowrap">
         ${k.readonly
           ? `<span class="badge muted" style="font-size:.7rem">R/O</span>`
-          : `<button class="btn btn-sm" onclick="saveOcppKey('${chargerId}','${esc(k.key)}','${eid}')">OK</button>`
+          : `<button class="btn btn-sm" id="${eid}-btn" onclick="saveOcppKey('${chargerId}','${esc(k.key)}','${eid}')">OK</button>`
         }
       </td>
     </tr>`;
   }).join("");
 
+  const hasActiveCharge = (connectors || []).some(c =>
+    ["Charging","SuspendedEV","SuspendedEVSE"].includes(c.status));
+
+  const banner = pendingReboot.size ? `
+    <div class="card" style="border-left:3px solid var(--warn); background:var(--warn-soft); margin-bottom:.6rem">
+      <div class="spread" style="align-items:center; gap:.6rem; flex-wrap:wrap">
+        <div class="small">
+          <b>${pendingReboot.size} valeur${pendingReboot.size > 1 ? "s" : ""} en attente de redémarrage</b><br>
+          <span class="muted">Enregistrée${pendingReboot.size > 1 ? "s" : ""} par la borne, mais pas encore active${pendingReboot.size > 1 ? "s" : ""} tant qu'elle n'a pas redémarré (comportement normal du protocole OCPP).</span>
+        </div>
+        <button class="btn btn-sm" onclick="triggerChargerReset('${chargerId}', ${hasActiveCharge})">Redémarrer la borne</button>
+      </div>
+    </div>` : "";
+
   return `<div id="ocpp-tab-body">
-    <p class="small muted" style="margin:0 0 .5rem">Les clés <span style="color:var(--accent)">colorées</span> sont importantes pour les données temps réel.</p>
-    <input type="search" id="ocpp-filter" placeholder="Filtrer…" oninput="filterOcppKeys()"
-      style="width:100%;margin-bottom:.6rem;font-size:.9rem;padding:.35rem .5rem;box-sizing:border-box;border:1px solid var(--border);border-radius:var(--r);background:var(--bg);color:var(--fg)">
+    <div class="spread" style="align-items:flex-start; gap:.6rem; margin-bottom:.5rem">
+      <p class="small muted" style="margin:0">Les clés <span style="color:var(--accent)">colorées</span> sont importantes pour les données temps réel.
+        <span class="badge warn" style="font-size:.62rem"><svg style="width:.8em;height:.8em;vertical-align:-.1em"><use href="#i-clock"/></svg> reboot</span> signale une valeur qui attend un redémarrage pour s'appliquer.</p>
+      <button class="btn btn-icon btn-ghost" title="Recharger la configuration en direct" onclick="openChargerConfigModal('${chargerId}','ocpp')"><svg><use href="#i-refresh"/></svg></button>
+    </div>
+    ${banner}
+    <div class="spread" style="align-items:center; margin-bottom:.4rem; gap:.6rem">
+      <input type="search" id="ocpp-filter" placeholder="Filtrer…" oninput="filterOcppKeys()"
+        style="flex:1;font-size:.9rem;padding:.35rem .5rem;box-sizing:border-box;border:1px solid var(--border);border-radius:var(--r);background:var(--bg);color:var(--fg)">
+      <span class="tiny muted" style="white-space:nowrap">${keys.length} clés · ${editableCount} modifiables</span>
+    </div>
     <div style="overflow-x:auto;max-height:55vh;overflow-y:auto">
       <table style="width:100%;border-collapse:collapse">
         <thead style="position:sticky;top:0;background:var(--bg);z-index:1">
@@ -1407,12 +1443,54 @@ async function saveOcppKey(chargerId, key, inputId) {
   const el = document.getElementById(inputId);
   if (!el) return;
   const value = el.value.trim();
-  const { ok } = await apiCall(
-    `api/chargers/${chargerId}/config/${encodeURIComponent(key)}`,
-    { method: "PUT", headers: jsonHeaders(), body: JSON.stringify({ value }) },
-    `${key} mis à jour`
+  const btn = document.getElementById(`${inputId}-btn`);
+  if (btn) { btn.disabled = true; btn.dataset.origText = btn.textContent; btn.textContent = "…"; }
+  let ok, data;
+  try {
+    ({ ok, data } = await apiCall(
+      `api/chargers/${chargerId}/config/${encodeURIComponent(key)}`,
+      { method: "PUT", headers: jsonHeaders(), body: JSON.stringify({ value }) },
+      null  // le toast est géré ci-dessous, selon le statut OCPP renvoyé
+    ));
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = btn.dataset.origText || "OK"; }
+  }
+  if (!ok) return;
+  const status = data && data.status;
+  if (status === "Accepted") {
+    toast(`${key} mis à jour`, "ok");
+    el.style.background = "var(--ok-soft)";
+  } else if (status === "RebootRequired") {
+    toast(`${key} enregistré : redémarrage de la borne requis pour l'appliquer`, "warn");
+    el.style.background = "var(--warn-soft)";
+    // Rafraîchit l'onglet pour faire apparaître le badge et le bandeau de
+    // redémarrage, cohérents avec l'état que le serveur suit désormais.
+    openChargerConfigModal(chargerId, "ocpp");
+  } else if (status === "Rejected") {
+    toast(`${key} refusé par la borne`, "err");
+  } else if (status === "NotSupported") {
+    toast(`${key} non supporté par cette borne`, "err");
+  } else {
+    toast(`${key} : statut ${status || "inconnu"}`, "ok");
+  }
+}
+
+async function triggerChargerReset(chargerId, hasActiveCharge) {
+  const msg = hasActiveCharge
+    ? "Cette borne a une charge en cours : un redémarrage risque de l'interrompre. Redémarrer quand même ?"
+    : "Redémarrer cette borne maintenant ? (redémarrage logiciel OCPP, la borne va se déconnecter puis se reconnecter)";
+  if (!confirm(msg)) return;
+  const { ok, data } = await apiCall(
+    `api/chargers/${chargerId}/reset`,
+    { method: "POST", headers: jsonHeaders(), body: JSON.stringify({ type: "Soft" }) },
+    null
   );
-  if (ok) el.style.background = "var(--ok-soft)";
+  if (!ok) return;
+  if (data && data.status === "Accepted") {
+    toast("Redémarrage demandé, la borne va se reconnecter", "ok");
+  } else {
+    toast(`La borne a refusé le redémarrage (statut : ${data && data.status || "?"})`, "err");
+  }
 }
 function filterOcppKeys() {
   const q = (document.getElementById("ocpp-filter")?.value || "").toLowerCase();

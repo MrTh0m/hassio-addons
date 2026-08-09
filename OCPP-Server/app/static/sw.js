@@ -12,7 +12,7 @@
  * un accès HTTPS (Nabu Casa, reverse-proxy) ou en localhost. Une éventuelle
  * erreur d'enregistrement est sans conséquence : l'appli fonctionne comme avant.
  */
-const CACHE = "ocpp-shell-v0.19.11";
+const CACHE = "ocpp-shell-v0.19.14";
 const SHELL = ["icon.svg", "icon.png", "manifest.webmanifest"];
 
 self.addEventListener("install", (event) => {
