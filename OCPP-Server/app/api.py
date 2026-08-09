@@ -499,9 +499,16 @@ def _session_power_max_w(db: Session, s: Transaction) -> Optional[float]:
 
 
 def _serialize_session(s: Transaction, db: Session, prev_odometer: Optional[float] = None) -> dict:
+    # energy_wh_known : la vraie valeur telle qu'enregistrée, potentiellement
+    # None (charge externe dont l'énergie n'a jamais été renseignée à la
+    # création). Les calculs dérivés ci-dessous utilisent `energy_wh` (jamais
+    # None, 0.0 par défaut) pour ne pas planter, mais c'est bien
+    # energy_wh_known qui est renvoyé au client : afficher "0.00 kWh" pour une
+    # valeur en réalité inconnue serait trompeur, à ne pas confondre avec une
+    # charge qui a réellement délivré zéro kWh.
     if s.is_external:
         # Charge externe : énergie et coût saisis à la main, jamais recalculés.
-        cost, energy_wh, tariff_plan_name = s.cost, s.energy_wh or 0.0, s.tariff_plan_name
+        cost, energy_wh_known, tariff_plan_name = s.cost, s.energy_wh, s.tariff_plan_name
     elif s.status == "completed":
         if s.cost is None and s.energy_wh is None:
             # Ancienne session (créée avant l'introduction du gel de coût) :
@@ -509,7 +516,7 @@ def _serialize_session(s: Transaction, db: Session, prev_odometer: Optional[floa
             # recalculer à partir d'un tarif qui aura pu changer depuis.
             freeze_transaction_cost(db, s)
             db.commit()
-        cost, energy_wh, tariff_plan_name = s.cost, s.energy_wh or 0.0, s.tariff_plan_name
+        cost, energy_wh_known, tariff_plan_name = s.cost, s.energy_wh, s.tariff_plan_name
     else:
         # Session encore active : calcul en direct, forcément amené à changer
         # au fil de la charge, donc jamais figé.
@@ -524,8 +531,10 @@ def _serialize_session(s: Transaction, db: Session, prev_odometer: Optional[floa
             MeterValue.connector_id == s.connector_id,
         ).all()
         cost_info = compute_session_cost(s, meter_values, plan, ignore_meter_stop=True)
-        cost, energy_wh = cost_info["cost"], cost_info["energy_wh"]
+        cost, energy_wh_known = cost_info["cost"], cost_info["energy_wh"]
         tariff_plan_name = plan.name if plan else None
+
+    energy_wh = energy_wh_known or 0.0
 
     vehicle = db.query(Vehicle).filter(Vehicle.id == s.vehicle_id).first() if s.vehicle_id else None
 
@@ -566,7 +575,7 @@ def _serialize_session(s: Transaction, db: Session, prev_odometer: Optional[floa
         "start_time": s.start_time.isoformat() if s.start_time else None,
         "stop_time": s.stop_time.isoformat() if s.stop_time else None,
         "status": s.status, "duration_min": duration_min,
-        "energy_wh": energy_wh, "cost": cost,
+        "energy_wh": energy_wh_known, "cost": cost,
         "tariff_plan_name": tariff_plan_name,
         "odometer_km": s.odometer_km,
         "battery_percent_start": s.battery_percent_start,
@@ -642,9 +651,16 @@ class SessionUpdate(BaseModel):
 
 class ExternalChargeCreate(BaseModel):
     """Charge réalisée ailleurs (borne tierce), saisie manuellement pour garder
-    une continuité de suivi du véhicule (coût total, kWh, km, %)."""
+    une continuité de suivi du véhicule (coût total, kWh, km, %).
+
+    energy_kwh est optionnel : l'énergie réelle n'est pas toujours connue au
+    moment de la saisie (ex. relevé de compteur perdu suite à un bug côté
+    borne). Une charge sans énergie renseignée reste malgré tout utile pour
+    tracer l'événement (date, véhicule, kilométrage), à compléter plus tard
+    via Modifier si la valeur est retrouvée.
+    """
     vehicle_id: int
-    energy_kwh: float
+    energy_kwh: Optional[float] = None
     cost: Optional[float] = None
     location_label: Optional[str] = None
     start_time: Optional[str] = None
@@ -683,7 +699,7 @@ def create_external_charge(
         charger_id=None, connector_id=None, vehicle_id=vehicle.id,
         start_time=start, stop_time=stop, status="completed",
         is_external=True, location_label=body.location_label,
-        energy_wh=(body.energy_kwh or 0.0) * 1000.0,
+        energy_wh=(body.energy_kwh * 1000.0) if body.energy_kwh is not None else None,
         cost=body.cost,
         tariff_plan_name=body.location_label or "Externe",
         odometer_km=body.odometer_km,

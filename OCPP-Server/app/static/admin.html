@@ -1859,7 +1859,7 @@ async function openSessionEditModal(sessionId) {
   const extBlock = s.is_external ? `
     <div class="cluster" style="margin-top:.6rem">
       <label class="field"><span>Lieu</span><input id="se-loc" value="${esc(s.location_label || "")}" style="width:160px"></label>
-      <label class="field"><span>Énergie kWh</span><input id="se-kwh" type="number" step="0.01" value="${(s.energy_wh/1000).toFixed(2)}" style="width:110px"></label>
+      <label class="field"><span>Énergie kWh</span><input id="se-kwh" type="number" step="0.01" value="${s.energy_wh != null ? (s.energy_wh/1000).toFixed(2) : ""}" placeholder="inconnue" style="width:110px"></label>
       <label class="field"><span>Coût €</span><input id="se-cost" type="number" step="0.01" value="${s.cost ?? ""}" style="width:110px"></label>
     </div>
     <div class="cluster" style="margin-top:.6rem">
@@ -1940,7 +1940,7 @@ async function openExternalChargeModal() {
       <label class="field"><span>Lieu (optionnel)</span><input id="ext-loc" placeholder="ex. Ionity A6"></label>
     </div>
     <div class="cluster" style="margin-top:.6rem">
-      <label class="field"><span>Énergie kWh</span><input id="ext-kwh" type="number" step="0.01" style="width:110px"></label>
+      <label class="field"><span>Énergie kWh (optionnel)</span><input id="ext-kwh" type="number" step="0.01" style="width:110px" placeholder="si connue"></label>
       <label class="field"><span>Coût € (optionnel)</span><input id="ext-cost" type="number" step="0.01" style="width:120px"></label>
       <label class="field"><span>Date/heure</span><input id="ext-when" type="datetime-local" value="${localIso}"></label>
     </div>
@@ -1960,7 +1960,6 @@ async function createExternalCharge() {
   const vid = document.getElementById("ext-veh").value;
   if (!vid) { toast("Véhicule requis", "err"); return; }
   const kwh = n("ext-kwh");
-  if (kwh == null) { toast("Énergie requise", "err"); return; }
   const when = document.getElementById("ext-when").value;
   const body = {
     vehicle_id: parseInt(vid, 10), energy_kwh: kwh, cost: n("ext-cost"),

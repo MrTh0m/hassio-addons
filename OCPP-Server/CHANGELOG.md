@@ -1,3 +1,8 @@
+## 0.19.13
+
+- **Fix critique** : la charge externe (ajouter une charge sur borne tierce) échouait systématiquement avec une erreur 500 (`NOT NULL constraint failed: transactions.charger_id`), depuis l'introduction de cette fonctionnalité. La table `transactions` avait été créée avant que `charger_id` devienne nullable côté modèle ; l'ancienne contrainte NOT NULL restait gravée dans le schéma SQLite existant et bloquait toute insertion sans borne associée. Migration automatique au démarrage (recréation de la table selon le schéma à jour, données et MeterValues préservés).
+- L'énergie (kWh) d'une charge externe est désormais optionnelle à la saisie : utile pour tracer une charge dont la valeur réelle est inconnue ou perdue, à compléter plus tard via Modifier. Une valeur non renseignée s'affiche distinctement d'une charge ayant réellement délivré zéro kWh.
+
 ## 0.19.12
 
 - **Fix critique** : une session pouvait hériter des MeterValues (donc de l'énergie et du coût) d'une toute autre charge, sur une autre borne et à une autre date. Cause : "Supprimer tout l'historique" effaçait les transactions sans toucher à leurs MeterValues, qui restaient orphelins ; SQLite réutilisant les id auto-increment libérés, une nouvelle session pouvait retomber sur un id d'une ancienne transaction supprimée et hériter de ses relevés.
