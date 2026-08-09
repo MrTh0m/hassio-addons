@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, status, Response
 from fastapi.security import OAuth2PasswordRequestForm
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
+from sqlalchemy import func
 
 from .db import get_db
 from .models import (
@@ -372,6 +373,8 @@ async def start_charge(
         vehicle = db.query(Vehicle).filter(Vehicle.id == body.vehicle_id).first()
         if not vehicle:
             raise HTTPException(status_code=404, detail="Véhicule inconnu")
+        if vehicle.deleted_at is not None:
+            raise HTTPException(status_code=400, detail="Véhicule désactivé : réactivez-le avant de démarrer une charge")
         if not id_tag:
             id_tag = vehicle.id_tag or f"REMOTE-{vehicle.id}"
     if not id_tag:
@@ -642,6 +645,8 @@ def create_external_charge(
     vehicle = db.query(Vehicle).filter(Vehicle.id == body.vehicle_id).first()
     if not vehicle:
         raise HTTPException(status_code=404, detail="Véhicule inconnu")
+    if vehicle.deleted_at is not None:
+        raise HTTPException(status_code=400, detail="Véhicule désactivé : réactivez-le avant de lui associer une charge")
     start = _parse_iso(body.start_time) or datetime.utcnow()
     stop = _parse_iso(body.stop_time)
     txn = Transaction(
@@ -831,7 +836,11 @@ class VehicleCreate(BaseModel):
 
 @router.get("/vehicles")
 def list_vehicles(db: Session = Depends(get_db), user=Depends(get_current_user)):
-    vehicles = db.query(Vehicle).filter(Vehicle.deleted_at.is_(None)).order_by(Vehicle.name).all()
+    """Renvoie aussi les véhicules désactivés (deleted_at rempli), avec le
+    champ `active` pour que l'UI les affiche grisés plutôt que de les cacher
+    complètement. Seule une suppression DÉFINITIVE (voir plus bas) les fait
+    disparaître."""
+    vehicles = db.query(Vehicle).order_by(Vehicle.deleted_at.is_not(None), Vehicle.name).all()
     allowed_ids = _user_vehicle_ids(db, user)
     if allowed_ids is not None:
         vehicles = [v for v in vehicles if v.id in allowed_ids]
@@ -839,6 +848,7 @@ def list_vehicles(db: Session = Depends(get_db), user=Depends(get_current_user))
         {
             "id": v.id, "name": v.name, "id_tag": v.id_tag,
             "battery_capacity_kwh": v.battery_capacity_kwh,
+            "active": v.deleted_at is None,
         }
         for v in vehicles
     ]
@@ -867,6 +877,7 @@ def vehicle_stats(vehicle_id: int, db: Session = Depends(get_db), user=Depends(g
     return {
         "id": vehicle.id, "name": vehicle.name, "id_tag": vehicle.id_tag,
         "battery_capacity_kwh": vehicle.battery_capacity_kwh,
+        "active": vehicle.deleted_at is None,
         "stats": {
             "charge_count": len(completed),
             "external_count": sum(1 for s in completed if s["is_external"]),
@@ -891,16 +902,39 @@ def _require_vehicle_permission(user: dict, db: Session):
         raise HTTPException(status_code=403, detail="Droits insuffisants pour gérer les véhicules")
 
 
+def _check_vehicle_name_unique(db: Session, name: str, exclude_id: Optional[int] = None):
+    """Un libellé dupliqué (même entre un véhicule actif et un désactivé) est
+    une source de confusion directe : on risque d'associer une charge au
+    mauvais véhicule sans s'en rendre compte. Vérifié sans distinction de
+    casse ni espaces superflus, sur TOUS les véhicules (actifs et
+    désactivés) puisqu'une suppression logique reste réversible."""
+    clean = name.strip()
+    if not clean:
+        raise HTTPException(status_code=400, detail="Le nom du véhicule ne peut pas être vide")
+    q = db.query(Vehicle).filter(func.lower(Vehicle.name) == clean.lower())
+    if exclude_id is not None:
+        q = q.filter(Vehicle.id != exclude_id)
+    existing = q.first()
+    if existing:
+        etat = "désactivé" if existing.deleted_at is not None else "actif"
+        raise HTTPException(
+            status_code=400,
+            detail=f"Un véhicule nommé « {existing.name} » existe déjà ({etat}). "
+                   f"Réactivez-le ou choisissez un autre nom.",
+        )
+
+
 @router.post("/vehicles")
 def create_vehicle(body: VehicleCreate, db: Session = Depends(get_db), user=Depends(get_current_user)):
     _require_vehicle_permission(user, db)
+    _check_vehicle_name_unique(db, body.name)
     if body.id_tag:
         existing = db.query(Vehicle).filter(
             Vehicle.id_tag == body.id_tag, Vehicle.deleted_at.is_(None)
         ).first()
         if existing:
             raise HTTPException(status_code=400, detail="Ce idTag est déjà associé à un autre véhicule")
-    vehicle = Vehicle(name=body.name, id_tag=body.id_tag or None, battery_capacity_kwh=body.battery_capacity_kwh)
+    vehicle = Vehicle(name=body.name.strip(), id_tag=body.id_tag or None, battery_capacity_kwh=body.battery_capacity_kwh)
     db.add(vehicle)
     db.flush()
     # Le créateur (admin ou user) est automatiquement associé à la voiture.
@@ -925,13 +959,14 @@ def update_vehicle(
     allowed_ids = _user_vehicle_ids(db, user)
     if allowed_ids is not None and vehicle_id not in allowed_ids:
         raise HTTPException(status_code=403, detail="Véhicule non associé à votre compte")
+    _check_vehicle_name_unique(db, body.name, exclude_id=vehicle_id)
     if body.id_tag:
         existing = db.query(Vehicle).filter(
             Vehicle.id_tag == body.id_tag, Vehicle.id != vehicle_id, Vehicle.deleted_at.is_(None)
         ).first()
         if existing:
             raise HTTPException(status_code=400, detail="Ce idTag est déjà associé à un autre véhicule")
-    vehicle.name = body.name
+    vehicle.name = body.name.strip()
     vehicle.id_tag = body.id_tag or None
     vehicle.battery_capacity_kwh = body.battery_capacity_kwh
     db.commit()
@@ -940,7 +975,9 @@ def update_vehicle(
 
 @router.delete("/vehicles/{vehicle_id}")
 def delete_vehicle(vehicle_id: int, db: Session = Depends(get_db), user=Depends(get_current_user)):
-    """Retire un véhicule (suppression LOGIQUE)."""
+    """Désactive un véhicule (suppression LOGIQUE, réversible). Reste visible
+    (grisé) dans la liste et dans l'historique, mais ne peut plus recevoir de
+    nouvelle charge tant qu'il n'est pas réactivé."""
     _require_vehicle_permission(user, db)
     vehicle = db.query(Vehicle).filter(Vehicle.id == vehicle_id).first()
     if not vehicle:
@@ -952,6 +989,45 @@ def delete_vehicle(vehicle_id: int, db: Session = Depends(get_db), user=Depends(
     vehicle.id_tag = None
     db.commit()
     return {"status": "ok"}
+
+
+@router.post("/vehicles/{vehicle_id}/reactivate")
+def reactivate_vehicle(vehicle_id: int, db: Session = Depends(get_db), user=Depends(get_current_user)):
+    """Annule une désactivation. Le idTag (retiré lors de la désactivation)
+    n'est pas restauré automatiquement, à resaisir si besoin."""
+    _require_vehicle_permission(user, db)
+    vehicle = db.query(Vehicle).filter(Vehicle.id == vehicle_id).first()
+    if not vehicle:
+        raise HTTPException(status_code=404, detail="Véhicule inconnu")
+    allowed_ids = _user_vehicle_ids(db, user)
+    if allowed_ids is not None and vehicle_id not in allowed_ids:
+        raise HTTPException(status_code=403, detail="Véhicule non associé à votre compte")
+    vehicle.deleted_at = None
+    db.commit()
+    return {"status": "ok"}
+
+
+@router.delete("/vehicles/{vehicle_id}/permanent")
+def hard_delete_vehicle(vehicle_id: int, db: Session = Depends(get_db), user=Depends(get_current_user)):
+    """Suppression DÉFINITIVE et IRRÉVERSIBLE d'un véhicule ET de tout son
+    historique de charge (sessions + MeterValues associées). Contrairement à
+    la désactivation, ceci efface réellement les lignes en base. L'UI doit
+    avertir explicitement l'utilisateur avant d'appeler cette route."""
+    _require_vehicle_permission(user, db)
+    vehicle = db.query(Vehicle).filter(Vehicle.id == vehicle_id).first()
+    if not vehicle:
+        raise HTTPException(status_code=404, detail="Véhicule inconnu")
+    allowed_ids = _user_vehicle_ids(db, user)
+    if allowed_ids is not None and vehicle_id not in allowed_ids:
+        raise HTTPException(status_code=403, detail="Véhicule non associé à votre compte")
+    txn_ids = [t.id for t in db.query(Transaction.id).filter(Transaction.vehicle_id == vehicle_id).all()]
+    if txn_ids:
+        db.query(MeterValue).filter(MeterValue.transaction_id.in_(txn_ids)).delete(synchronize_session=False)
+        db.query(Transaction).filter(Transaction.id.in_(txn_ids)).delete(synchronize_session=False)
+    db.query(UserVehicle).filter(UserVehicle.vehicle_id == vehicle_id).delete(synchronize_session=False)
+    db.delete(vehicle)
+    db.commit()
+    return {"status": "ok", "deleted_sessions": len(txn_ids)}
 
 
 # --- Tarifs ---

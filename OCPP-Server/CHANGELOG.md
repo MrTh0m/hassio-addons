@@ -17,6 +17,13 @@
 - Export CSV disponible sur Historique, Logs et Base de données (bouton « Exporter (CSV) » sur chaque vue, respecte les filtres actifs).
 - Utilisateur connecté (rôle + nom) affiché dans Réglages → Mon compte.
 
+### Nouveau : désactivation / suppression définitive des véhicules
+
+- Un véhicule « supprimé » (ex bouton Supprimer) est en réalité désactivé depuis toujours (suppression logique, `deleted_at`), mais restait jusqu'ici totalement invisible dans l'UI classique, y compris quand il n'était lié à aucune transaction (aucun intérêt à le garder caché dans ce cas). Il apparaît maintenant grisé dans la liste des véhicules plutôt que d'être masqué, avec la mention « (désactivé) ». Son historique reste consultable, mais il ne peut plus recevoir de nouvelle charge (démarrage à distance ou charge externe) tant qu'il n'est pas réactivé.
+- Nouveau bouton **Réactiver** sur un véhicule désactivé (annule la désactivation).
+- Nouveau bouton **Supprimer définitivement**, réservé aux véhicules déjà désactivés : efface réellement le véhicule ET tout son historique de charge (sessions + MeterValues associées), avec double confirmation explicite avant exécution. Irréversible.
+- Fix : deux véhicules pouvaient porter exactement le même nom (actif ou non), sans aucun avertissement, source de confusion pour associer une charge au bon véhicule. Le nom est maintenant vérifié (insensible à la casse, sur les véhicules actifs et désactivés) à la création et à la modification.
+
 ## 0.19.9
 
 - Fix : bouton Recalculer (showToast non défini).
