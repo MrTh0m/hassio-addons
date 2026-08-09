@@ -1,3 +1,11 @@
+## 0.19.12
+
+- **Fix critique** : une session pouvait hériter des MeterValues (donc de l'énergie et du coût) d'une toute autre charge, sur une autre borne et à une autre date. Cause : "Supprimer tout l'historique" effaçait les transactions sans toucher à leurs MeterValues, qui restaient orphelins ; SQLite réutilisant les id auto-increment libérés, une nouvelle session pouvait retomber sur un id d'une ancienne transaction supprimée et hériter de ses relevés.
+  - La suppression totale de l'historique efface désormais aussi les MeterValues.
+  - Le calcul d'énergie filtre les MeterValues par borne et connecteur, pas seulement par id de session.
+  - Garde supplémentaire : tout relevé dont l'horodatage tombe hors de la fenêtre de la session (marge de 10 min) est ignoré.
+  - Les sessions déjà affectées se corrigent avec le bouton **Recalculer depuis compteur** (Historique → Modifier).
+
 ## 0.19.10
 
 - **Fix critique** : le décorateur `@on(Action.meter_values)` avait disparu sur le handler `MeterValues` en mode local (régression post-0.19.5). Les trames MeterValues envoyées par une borne locale (dont la Schneider) étaient rejetées sans routage, donc jamais enregistrées : le kWh et le coût d'une charge en cours restaient figés à vide pendant toute la session. Restauré.

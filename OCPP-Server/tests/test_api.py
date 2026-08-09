@@ -129,6 +129,8 @@ def test_charger_display_name_clear(client, auth):
     assert r.json()["display_name"] is None
 
 def test_delete_charger(client, auth):
+    """Suppression logique (soft-delete) : la borne reste visible dans la
+    liste, grisée (active=False), pas de suppression physique."""
     db = TestingSession()
     db.add(Charger(id="del-id", mode=ChargerMode.local))
     db.commit()
@@ -137,7 +139,9 @@ def test_delete_charger(client, auth):
     r = client.delete("/api/chargers/del-id", headers=auth)
     assert r.status_code == 200
     r = client.get("/api/chargers", headers=auth)
-    assert all(c["id"] != "del-id" for c in r.json())
+    chargers = r.json()
+    deleted = next(c for c in chargers if c["id"] == "del-id")
+    assert deleted["active"] is False
 
 
 # ---------------------------------------------------------------------------
@@ -250,9 +254,33 @@ def test_vehicle_idtag_unique(client, auth):
     assert r.status_code == 400
 
 def test_delete_vehicle(client, auth):
+    """Suppression logique (soft-delete) : le véhicule reste visible dans la
+    liste, grisé (active=False), pas de suppression physique."""
     r = client.post("/api/vehicles", json={"name": "ToDelete"}, headers=auth)
     vid = r.json()["id"]
     r = client.delete(f"/api/vehicles/{vid}", headers=auth)
+    assert r.status_code == 200
+    r = client.get("/api/vehicles", headers=auth)
+    vehicles = r.json()
+    deleted = next(v for v in vehicles if v["id"] == vid)
+    assert deleted["active"] is False
+
+def test_reactivate_vehicle(client, auth):
+    """Réactiver un véhicule désactivé annule le soft-delete."""
+    r = client.post("/api/vehicles", json={"name": "ToReactivate"}, headers=auth)
+    vid = r.json()["id"]
+    client.delete(f"/api/vehicles/{vid}", headers=auth)
+    r = client.post(f"/api/vehicles/{vid}/reactivate", headers=auth)
+    assert r.status_code == 200
+    r = client.get("/api/vehicles", headers=auth)
+    reactivated = next(v for v in r.json() if v["id"] == vid)
+    assert reactivated["active"] is True
+
+def test_hard_delete_vehicle(client, auth):
+    """Suppression définitive : le véhicule disparait vraiment de la liste."""
+    r = client.post("/api/vehicles", json={"name": "ToHardDelete"}, headers=auth)
+    vid = r.json()["id"]
+    r = client.delete(f"/api/vehicles/{vid}/permanent", headers=auth)
     assert r.status_code == 200
     r = client.get("/api/vehicles", headers=auth)
     assert all(v["id"] != vid for v in r.json())
@@ -345,6 +373,84 @@ def test_session_active_ignore_meter_stop(client, auth):
     assert len(sessions) == 1
     # Sans MeterValues et avec ignore_meter_stop → 0.0
     assert sessions[0]["energy_wh"] == 0.0
+
+
+# ---------------------------------------------------------------------------
+# Suppression totale de l'historique : doit aussi nettoyer les MeterValues
+# ---------------------------------------------------------------------------
+
+def test_delete_all_history_supprime_metervalues(client, auth):
+    """La suppression totale de l'historique doit supprimer les MeterValues
+    en même temps que les transactions. Sinon ils restent orphelins et
+    peuvent fausser le calcul d'une future session qui hériterait du même id
+    SQLite (voir bug découvert en prod : energy_wh=98075 au lieu de 1532)."""
+    from app.models import MeterValue
+    db = TestingSession()
+    charger = Charger(id="c-hist", mode=ChargerMode.local)
+    db.add(charger)
+    txn = Transaction(
+        charger_id="c-hist", connector_id=1,
+        meter_start=0, meter_stop=5000,
+        start_time=datetime(2026, 8, 7, 10, 0),
+        stop_time=datetime(2026, 8, 7, 11, 0),
+        status="completed",
+    )
+    db.add(txn)
+    db.flush()
+    db.add(MeterValue(
+        charger_id="c-hist", transaction_id=txn.id, connector_id=1,
+        measurand="Energy.Active.Import.Register", value=2500.0, unit="Wh",
+        timestamp=datetime(2026, 8, 7, 10, 30),
+    ))
+    db.commit()
+    db.close()
+
+    r = client.delete("/api/history/all", headers=auth)
+    assert r.status_code == 200
+    data = r.json()
+    assert data["deleted"] == 1
+    assert data["meter_values_deleted"] == 1
+
+    db = TestingSession()
+    remaining = db.query(MeterValue).count()
+    db.close()
+    assert remaining == 0
+
+
+def test_id_reutilise_ne_pollue_pas_nouvelle_session(client, auth):
+    """Reproduction exacte du bug de prod : si un MeterValue orphelin (d'une
+    session supprimée sans passer par /history/all, ou d'avant ce fix)
+    partage le même transaction_id qu'une nouvelle session sur UNE AUTRE
+    borne, il ne doit pas polluer son calcul grâce au filtre charger_id."""
+    from app.models import MeterValue
+    db = TestingSession()
+    db.add(Charger(id="charger-A", mode=ChargerMode.local))
+    db.add(Charger(id="charger-B", mode=ChargerMode.local))
+    txn = Transaction(
+        charger_id="charger-B", connector_id=1,
+        meter_start=98075, meter_stop=98075,
+        start_time=datetime(2026, 8, 6, 15, 57),
+        stop_time=datetime(2026, 8, 7, 6, 21),
+        status="completed",
+    )
+    db.add(txn)
+    db.flush()
+    # MeterValue orphelin : même transaction_id mais autre borne, autre date
+    db.add(MeterValue(
+        charger_id="charger-A", transaction_id=txn.id, connector_id=2,
+        measurand="Energy.Active.Import.Register", value=0.0, unit="Wh",
+        timestamp=datetime(2026, 8, 1, 13, 17),
+    ))
+    db.commit()
+    txn_id = txn.id
+    db.close()
+
+    r = client.post(f"/api/sessions/{txn_id}/recalculate", headers=auth)
+    assert r.status_code == 200
+    data = r.json()
+    # meter_start == meter_stop == 98075 : la vraie énergie est 0, pas 98075
+    # (ce qui se produirait si l'orphelin charger-A était pris en compte)
+    assert data["energy_wh"] == 0.0
 
 
 if __name__ == "__main__":

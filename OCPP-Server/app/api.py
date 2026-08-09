@@ -515,7 +515,14 @@ def _serialize_session(s: Transaction, db: Session, prev_odometer: Optional[floa
         # au fil de la charge, donc jamais figé.
         charger = db.query(Charger).filter(Charger.id == s.charger_id).first()
         plan = resolve_plan_for_charger(db, charger)
-        meter_values = db.query(MeterValue).filter(MeterValue.transaction_id == s.id).all()
+        # Filtre aussi par charger_id + connector_id (pas seulement transaction_id) :
+        # une réutilisation d'id SQLite après suppression peut sinon faire hériter
+        # les MeterValues d'une toute autre session (voir freeze_transaction_cost).
+        meter_values = db.query(MeterValue).filter(
+            MeterValue.transaction_id == s.id,
+            MeterValue.charger_id == s.charger_id,
+            MeterValue.connector_id == s.connector_id,
+        ).all()
         cost_info = compute_session_cost(s, meter_values, plan, ignore_meter_stop=True)
         cost, energy_wh = cost_info["cost"], cost_info["energy_wh"]
         tariff_plan_name = plan.name if plan else None
@@ -1634,11 +1641,20 @@ def export_logs(
 
 @router.delete("/history/all")
 def delete_all_history(db: Session = Depends(get_db), user=Depends(require_admin)):
-    """Supprime DÉFINITIVEMENT toutes les transactions (y compris externes).
-    Action irréversible, réservée à l'admin."""
+    """Supprime DÉFINITIVEMENT toutes les transactions (y compris externes)
+    ET leurs MeterValues associés. Action irréversible, réservée à l'admin.
+
+    Les MeterValues doivent être supprimés en même temps que les transactions :
+    sinon ils restent orphelins avec un transaction_id qui pointe dans le vide.
+    Comme SQLite réutilise les id auto-increment quand la table transactions
+    redevient vide, une future session pourrait hériter du même id et se
+    retrouver avec les MeterValues (et donc l'énergie/le coût) d'une toute
+    autre charge, potentiellement sur une autre borne et à une autre date.
+    """
+    mv_count = db.query(MeterValue).delete()
     count = db.query(Transaction).delete()
     db.commit()
-    return {"status": "ok", "deleted": count}
+    return {"status": "ok", "deleted": count, "meter_values_deleted": mv_count}
 
 
 # ============================ GESTION DES UTILISATEURS ============================

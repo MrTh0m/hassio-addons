@@ -56,14 +56,32 @@ def compute_session_cost(transaction, meter_values, plan, ignore_meter_stop: boo
     ignore_meter_stop=True pour les sessions actives : on n'utilise que les
     MeterValues reçus, pas meter_stop qui peut être parasite (hérité d'un
     redémarrage ou d'un reconcile incorrect).
+
+    Garde défensive : tout MeterValue dont le timestamp tombe nettement hors
+    de la fenêtre [start_time, stop_time] (marge de 10 min) est ignoré. Ça
+    protège contre des lignes orphelines qui partageraient le même
+    transaction_id suite à une réutilisation d'id SQLite (ex. après un
+    "Supprimer tout l'historique" mal nettoyé) : un tel relevé, bien plus
+    ancien ou postérieur à la session réelle, fausserait complètement le
+    calcul en devenant le premier ou le dernier point.
     """
+    from datetime import timedelta
+    MARGIN = timedelta(minutes=10)
+    window_start = transaction.start_time - MARGIN if transaction.start_time else None
+    window_end = (transaction.stop_time + MARGIN) if transaction.stop_time else None
+
     # meterStart / meterStop sont en Wh par la spec OCPP 1.6
     points = []
     if transaction.meter_start is not None and transaction.start_time:
         points.append((transaction.start_time, float(transaction.meter_start)))
     for mv in meter_values:
-        if mv.measurand == "Energy.Active.Import.Register":
-            points.append((mv.timestamp, _to_wh(mv.value, mv.unit)))
+        if mv.measurand != "Energy.Active.Import.Register":
+            continue
+        if window_start and mv.timestamp < window_start:
+            continue
+        if window_end and mv.timestamp > window_end:
+            continue
+        points.append((mv.timestamp, _to_wh(mv.value, mv.unit)))
     if not ignore_meter_stop and transaction.meter_stop is not None and transaction.stop_time:
         points.append((transaction.stop_time, float(transaction.meter_stop)))
 
@@ -110,7 +128,14 @@ def freeze_transaction_cost(db, transaction):
     from .models import Charger, MeterValue
     charger = db.query(Charger).filter(Charger.id == transaction.charger_id).first()
     plan = resolve_plan_for_charger(db, charger)
-    meter_values = db.query(MeterValue).filter(MeterValue.transaction_id == transaction.id).all()
+    # Filtre aussi par charger_id + connector_id, pas seulement transaction_id :
+    # une réutilisation d'id SQLite (transactions.id) après suppression peut
+    # sinon faire hériter les MeterValues d'une toute autre session.
+    meter_values = db.query(MeterValue).filter(
+        MeterValue.transaction_id == transaction.id,
+        MeterValue.charger_id == transaction.charger_id,
+        MeterValue.connector_id == transaction.connector_id,
+    ).all()
     result = compute_session_cost(transaction, meter_values, plan)
     transaction.cost = result["cost"]
     transaction.energy_wh = result["energy_wh"]
