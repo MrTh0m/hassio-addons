@@ -840,12 +840,16 @@ function refreshCurrentView() {
 
 /* ========================= ACCUEIL ========================= */
 async function loadHome() {
-  const [active, recent, chargers, occupancy] = await Promise.all([
+  const [active, recent, allChargers, occupancy] = await Promise.all([
     fetch("api/history?status_filter=active&limit=20", { headers: authHeaders() }).then(r => r.json()),
     fetch("api/history?limit=10", { headers: authHeaders() }).then(r => r.json()),
     fetch("api/chargers", { headers: authHeaders() }).then(r => r.json()),
     fetch("api/occupancy", { headers: authHeaders() }).then(r => r.json()),
   ]);
+  // Une borne désactivée n'est plus pilotable : on l'exclut de l'accueil (cartes
+  // « disponible pour démarrer », programmation), elle reste visible dans la
+  // page Bornes (grisée) et dans l'historique.
+  const chargers = allChargers.filter(c => c.active);
   // Conditions de programmation des bornes locales, pour signaler sur chaque
   // connecteur qu'une charge y est différée / conditionnée.
   const condByCharger = {};
@@ -1152,6 +1156,28 @@ async function loadChargers() {
   }));
   el.innerHTML = chargers.map(c => {
     const { connectors, conditions } = extra[c.id] || { connectors: [], conditions: [] };
+    if (!c.active) {
+      // Borne désactivée : carte grisée, aucune action de pilotage possible.
+      // Seule la fiche (lecture seule) et le renommage restent accessibles.
+      // Redevient active automatiquement si elle se reconnecte physiquement.
+      return `
+      <div class="card" style="opacity:.55">
+        <div class="spread">
+          <div class="clickable" style="flex:1; margin:-.8rem -.4rem -.8rem -.95rem; padding:.8rem .4rem .8rem .95rem; border-radius:var(--r)" onclick="openChargerStatsModal('${esc(c.id)}')">
+            <div class="cluster center" style="gap:.5rem">
+              <b>${esc(chargerLabel(c))}</b>
+              <span class="tiny muted">(désactivée)</span>
+            </div>
+            <div class="small muted" style="margin-top:.35rem">${esc(c.vendor || "")} ${esc(c.model || "")} ${c.ocpp_version ? "· OCPP " + esc(c.ocpp_version) : ""}</div>
+            <div class="tiny muted" style="margin-top:.2rem">ID borne (chargePointId) : <code>${esc(c.id)}</code></div>
+          </div>
+          <div class="cluster center" style="gap:.3rem">
+            <button class="btn btn-icon btn-ghost" title="Fiche & statistiques" onclick="openChargerStatsModal('${esc(c.id)}')"><svg><use href="#i-info"/></svg></button>
+            ${hasPerm("can_manage_chargers") ? `<button class="btn btn-icon btn-ghost" title="Renommer" onclick="openRenameChargerModal('${esc(c.id)}', '${esc(c.display_name || "")}')"><svg><use href="#i-edit"/></svg></button>` : ""}
+          </div>
+        </div>
+      </div>`;
+    }
     // Une puce de statut par connecteur.
     const connBadges = connectors.length
       ? connectors.map(cc => `<span class="badge ${esc(cc.status)}" title="Connecteur ${cc.connector_id}">Conn. ${cc.connector_id} · ${statusLabel(cc.status)}</span>`).join("")
@@ -1177,16 +1203,32 @@ async function loadChargers() {
         <div class="cluster center" style="gap:.3rem">
           <button class="btn btn-icon btn-ghost" title="Fiche & statistiques" onclick="openChargerStatsModal('${esc(c.id)}')"><svg><use href="#i-info"/></svg></button>
           ${hasPerm("can_manage_chargers") ? `<button class="btn btn-icon btn-ghost" title="Configuration" onclick="openChargerConfigModal('${esc(c.id)}')"><svg><use href="#i-cog"/></svg></button>` : ""}
-          ${isAdmin() ? `<button class="btn btn-icon btn-ghost" title="Supprimer du CSMS" onclick="deleteCharger('${esc(c.id)}')"><svg style="color:var(--danger)"><use href="#i-trash"/></svg></button>` : ""}
+          ${isAdmin() ? `<button class="btn btn-icon btn-ghost" title="Désactiver" onclick="deleteCharger('${esc(c.id)}')"><svg style="color:var(--danger)"><use href="#i-trash"/></svg></button>` : ""}
         </div>
       </div>
     </div>`;
   }).join("");
 }
 async function deleteCharger(id) {
-  if (!confirm(`Retirer la borne « ${id} » du CSMS ?\n\nSon historique de charges est conservé. Si elle se reconnecte, elle réapparaîtra.`)) return;
-  const { ok } = await apiCall(`api/chargers/${id}`, { method: "DELETE", headers: authHeaders() }, "Borne retirée");
+  if (!confirm(`Désactiver la borne « ${id} » ?\n\nElle apparaîtra grisée dans la liste (son historique est conservé) et ne sera plus pilotable. Si elle se reconnecte physiquement, elle est réactivée automatiquement.`)) return;
+  const { ok } = await apiCall(`api/chargers/${id}`, { method: "DELETE", headers: authHeaders() }, "Borne désactivée");
   if (ok) { loadChargers(); }
+}
+async function openRenameChargerModal(id, currentName) {
+  openModalConnector = null;
+  const html = `<div class="modal-head"><h2>Renommer la borne</h2>
+    <button class="btn btn-icon btn-ghost" onclick="closeModal()"><svg><use href="#i-close"/></svg></button></div>
+    <p class="small muted" style="margin:0 0 .8rem">Cette borne est désactivée : seul son nom d'affichage peut être modifié. Elle redevient pleinement pilotable automatiquement si elle se reconnecte physiquement.</p>
+    <div class="cluster">
+      <label class="field" style="flex:1; min-width:200px"><span>Nom d'affichage</span><input id="rename-charger-input" value="${esc(currentName || "")}"></label>
+      <button class="btn btn-primary" onclick="saveRenameCharger('${esc(id)}')">Enregistrer</button>
+    </div>`;
+  openModal(html);
+}
+async function saveRenameCharger(id) {
+  const name = document.getElementById("rename-charger-input").value.trim();
+  const { ok } = await apiCall(`api/chargers/${id}/display-name`, { method: "PUT", headers: jsonHeaders(), body: JSON.stringify({ display_name: name || null }) }, "Nom mis à jour");
+  if (ok) { closeModal(); loadChargers(); }
 }
 
 const CONDITION_LABELS = { off_peak: "Heures creuses uniquement", start_after: "Différer le départ après", ready_by: "Terminée pour" };
@@ -2110,7 +2152,7 @@ async function openCreateUserModal() {
     <div class="section-title" style="margin-top:.9rem">Voitures associées</div>
     <div class="cluster" style="gap:.4rem; flex-wrap:wrap">${vehicles.map(v => `<label class="tiny cluster center" style="gap:.25rem"><input type="checkbox" class="nu-veh" value="${v.id}"> ${esc(v.name)}${v.active ? "" : " (désactivé)"}</label>`).join("")}</div>
     <div class="section-title">Bornes associées</div>
-    <div class="cluster" style="gap:.4rem; flex-wrap:wrap">${chargers.map(c => `<label class="tiny cluster center" style="gap:.25rem"><input type="checkbox" class="nu-chr" value="${esc(c.id)}"> ${esc(c.display_name || c.id)}</label>`).join("")}</div>
+    <div class="cluster" style="gap:.4rem; flex-wrap:wrap">${chargers.map(c => `<label class="tiny cluster center" style="gap:.25rem"><input type="checkbox" class="nu-chr" value="${esc(c.id)}"> ${esc(c.display_name || c.id)}${c.active ? "" : " (désactivée)"}</label>`).join("")}</div>
     <div class="section-title">Droits</div>
     ${_permCheckboxes("nu")}
     <div class="cluster" style="margin-top:1rem; justify-content:flex-end">
@@ -2169,7 +2211,7 @@ async function openEditUserModal(userId) {
     <div class="section-title" style="margin-top:0">Voitures associées</div>
     <div class="cluster" style="gap:.4rem; flex-wrap:wrap">${vehicles.map(v => `<label class="tiny cluster center" style="gap:.25rem"><input type="checkbox" class="eu-veh" value="${v.id}" ${vids.has(v.id) ? "checked" : ""}> ${esc(v.name)}${v.active ? "" : " (désactivé)"}</label>`).join("")}</div>
     <div class="section-title">Bornes associées</div>
-    <div class="cluster" style="gap:.4rem; flex-wrap:wrap">${chargers.map(c => `<label class="tiny cluster center" style="gap:.25rem"><input type="checkbox" class="eu-chr" value="${esc(c.id)}" ${cids.has(c.id) ? "checked" : ""}> ${esc(c.display_name || c.id)}</label>`).join("")}</div>
+    <div class="cluster" style="gap:.4rem; flex-wrap:wrap">${chargers.map(c => `<label class="tiny cluster center" style="gap:.25rem"><input type="checkbox" class="eu-chr" value="${esc(c.id)}" ${cids.has(c.id) ? "checked" : ""}> ${esc(c.display_name || c.id)}${c.active ? "" : " (désactivée)"}</label>`).join("")}</div>
     <div class="section-title">Droits</div>
     ${_permCheckboxes("eu", u.permissions)}
     <div class="section-title">Réinitialiser le mot de passe</div>

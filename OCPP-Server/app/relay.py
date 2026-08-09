@@ -86,6 +86,12 @@ async def _snoop_frame(charger_id: str, raw: str):
                     charger = db.query(Charger).filter(Charger.id == charger_id).first()
                     if charger:
                         charger.status = status
+                        if charger.deleted_at is not None:
+                            # Même logique qu'en mode local : un signal de vie
+                            # (ici une StatusNotification relayée) réactive
+                            # automatiquement une borne désactivée.
+                            charger.deleted_at = None
+                            logger.info("Borne %s (relais) : signal reçu, réactivation automatique (était désactivée)", charger_id)
                     charger_mqtt_updates["status"] = status
                 else:
                     await mqtt_bridge.publish_connector_discovery(charger_id, connector_id, "relay")

@@ -56,6 +56,12 @@ class LocalChargePoint(ChargePoint16):
         if not charger:
             charger = Charger(id=self.id, mode=ChargerMode.local)
             db.add(charger)
+        elif charger.deleted_at is not None:
+            # La borne avait été désactivée (suppression logique) mais se
+            # reconnecte physiquement : la connexion fait foi, réactivation
+            # automatique, pas besoin d'action manuelle.
+            charger.deleted_at = None
+            logger.info("Borne %s : reconnexion détectée, réactivation automatique (était désactivée)", self.id)
         return charger
 
     @on(Action.boot_notification)

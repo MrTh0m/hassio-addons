@@ -24,6 +24,12 @@
 - Nouveau bouton **Supprimer définitivement**, réservé aux véhicules déjà désactivés : efface réellement le véhicule ET tout son historique de charge (sessions + MeterValues associées), avec double confirmation explicite avant exécution. Irréversible.
 - Fix : deux véhicules pouvaient porter exactement le même nom (actif ou non), sans aucun avertissement, source de confusion pour associer une charge au bon véhicule. Le nom est maintenant vérifié (insensible à la casse, sur les véhicules actifs et désactivés) à la création et à la modification.
 
+### Nouveau : désactivation des bornes, réactivation automatique
+
+- Une borne « supprimée » (désactivation logique existante, `deleted_at`) était jusqu'ici totalement invisible dans l'UI. Elle apparaît maintenant grisée dans la liste des bornes, avec la mention « (désactivée) ». Contrairement aux véhicules, pas de suppression définitive pour les bornes : l'identifiant (chargePointId) est imposé par la borne elle-même, pas de risque de doublon de nom à gérer.
+- **Réactivation automatique** : si une borne désactivée se reconnecte physiquement (BootNotification en mode local, premier signal reçu en mode relais), elle redevient active toute seule, avec le même id. Pas de bouton « Réactiver » manuel : la connexion physique fait foi. Corrige une incohérence de la version précédente, où la borne était bien retrouvée à la reconnexion (même ligne en base, pas de doublon) mais restait invisible malgré tout, contrairement à ce que documentait le code.
+- Tant qu'elle est désactivée, seule la modification du nom d'affichage reste possible (nouvelle modale dédiée). Changer son mode, son authentification, son tarif, pousser une configuration OCPP, ou démarrer/arrêter une charge sont bloqués côté serveur.
+
 ## 0.19.9
 
 - Fix : bouton Recalculer (showToast non défini).

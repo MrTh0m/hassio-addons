@@ -213,7 +213,11 @@ def _user_vehicle_ids(db: Session, user: dict) -> Optional[list]:
 
 @router.get("/chargers")
 def list_chargers(db: Session = Depends(get_db), user=Depends(get_current_user)):
-    chargers = db.query(Charger).filter(Charger.deleted_at.is_(None)).all()
+    """Renvoie aussi les bornes désactivées (deleted_at rempli), avec le champ
+    `active`, pour que l'UI les affiche grisées plutôt que de les cacher. Une
+    borne désactivée se réactive automatiquement toute seule si elle se
+    reconnecte physiquement (voir LocalChargePoint._get_or_create_charger)."""
+    chargers = db.query(Charger).order_by(Charger.deleted_at.is_not(None)).all()
     allowed_ids = _user_charger_ids(db, user)
     if allowed_ids is not None:
         chargers = [c for c in chargers if c.id in allowed_ids]
@@ -227,19 +231,32 @@ def list_chargers(db: Session = Depends(get_db), user=Depends(get_current_user))
             "smart_charging": SMART_CHARGING_SUPPORT.get(c.id),
             "relay_url": c.relay_url,
             "tariff_plan_id": c.tariff_plan_id,
+            "active": c.deleted_at is None,
         }
         for c in chargers
     ]
 
 
+def _require_active_charger(charger: "Charger"):
+    """La seule action autorisée sur une borne désactivée est de renommer son
+    nom d'affichage (voir set_charger_display_name). Toute autre modification
+    est bloquée ; elle redevient pleinement pilotable automatiquement si elle
+    se reconnecte physiquement."""
+    if charger.deleted_at is not None:
+        raise HTTPException(
+            status_code=400,
+            detail="Borne désactivée : seule la modification du nom d'affichage est possible. Reconnectez-la physiquement pour la réactiver.",
+        )
+
+
 @router.delete("/chargers/{charger_id}")
 def delete_charger(charger_id: str, db: Session = Depends(get_db), user=Depends(require_admin)):
-    """Retire une borne du CSMS (remplacement, panne...) sans perdre son
-    historique : suppression LOGIQUE (deleted_at). Les transactions déjà
-    enregistrées restent en base et continuent d'alimenter l'historique et les
-    statistiques des véhicules ; la borne disparaît simplement des listes et
-    n'est plus pilotée. Si elle se reconnecte, elle sera redécouverte comme
-    une nouvelle borne (ou tu peux la restaurer via l'API)."""
+    """Désactive une borne (suppression LOGIQUE, réversible) sans perdre son
+    historique : les transactions déjà enregistrées restent en base et
+    continuent d'alimenter l'historique et les statistiques des véhicules ;
+    la borne apparaît grisée dans la liste et n'est plus pilotable. Si elle se
+    reconnecte physiquement (BootNotification), elle est réactivée
+    automatiquement avec le même id, pas besoin d'action manuelle."""
     charger = db.query(Charger).filter(Charger.id == charger_id).first()
     if not charger:
         raise HTTPException(status_code=404, detail="Borne inconnue")
@@ -266,6 +283,7 @@ def get_charger(charger_id: str, db: Session = Depends(get_db), user=Depends(get
         "status": charger.status, "connected": charger.id in CONNECTED_CHARGERS,
         "tariff_plan_id": charger.tariff_plan_id,
         "smart_charging": SMART_CHARGING_SUPPORT.get(charger.id),
+        "active": charger.deleted_at is None,
     }
 
 
@@ -278,6 +296,8 @@ def set_charger_mode(
     if not charger:
         charger = Charger(id=charger_id)
         db.add(charger)
+    else:
+        _require_active_charger(charger)
     if update.mode == ChargerMode.relay and not update.relay_url:
         raise HTTPException(status_code=400, detail="relay_url requis en mode relais")
     charger.mode = update.mode
@@ -301,6 +321,7 @@ def set_charger_auth_mode(
     charger = db.query(Charger).filter(Charger.id == charger_id).first()
     if not charger:
         raise HTTPException(status_code=404, detail="Borne inconnue")
+    _require_active_charger(charger)
     charger.auth_mode = update.auth_mode
     db.commit()
     return {"status": "ok"}
@@ -329,6 +350,8 @@ def _require_local_and_connected(charger_id: str, db: Session):
     charger = db.query(Charger).filter(Charger.id == charger_id).first()
     if not charger:
         raise HTTPException(status_code=404, detail="Borne inconnue")
+    if charger.deleted_at is not None:
+        raise HTTPException(status_code=400, detail="Borne désactivée : reconnectez-la physiquement pour la réactiver")
     if charger.mode != ChargerMode.local:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -1190,6 +1213,7 @@ def set_charger_tariff(
     charger = db.query(Charger).filter(Charger.id == charger_id).first()
     if not charger:
         raise HTTPException(status_code=404, detail="Borne inconnue")
+    _require_active_charger(charger)
     charger.tariff_plan_id = body.tariff_plan_id
     db.commit()
     return {"status": "ok"}
