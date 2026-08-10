@@ -295,7 +295,7 @@
   #modal-overlay.on { display: flex; }
   @media (min-width: 640px) { #modal-overlay { align-items: center; padding: 1.2rem; } }
   #modal-box {
-    background: var(--surface); width: 100%; max-width: 680px; max-height: 88dvh; overflow-y: auto;
+    background: var(--surface); width: 100%; max-width: 680px; max-height: 88dvh; overflow-y: auto; overflow-x: hidden;
     border: 1px solid var(--border); border-radius: var(--r-lg) var(--r-lg) 0 0; box-shadow: var(--shadow-lg);
     padding: 1.1rem 1.2rem calc(1.1rem + env(safe-area-inset-bottom));
   }
@@ -746,8 +746,69 @@ function statusLabel(status) {
   return map[status] || status;
 }
 
+/* Statut effectif d'un connecteur pour l'affichage : le dernier statut connu
+   en base (ex. "Available") peut être obsolète si la borne n'est plus
+   connectée (elle a pu changer d'état sans qu'on le sache, ou redémarrer).
+   On affiche alors "Indisponible" (Unavailable, un statut OCPP existant, pas
+   un nouvel état inventé), plutôt que de présenter comme fiable une donnée
+   qui ne l'est plus. Fonction centrale : toute vue affichant un statut de
+   connecteur ou de borne doit passer par ici pour rester cohérente (Accueil,
+   liste Bornes, fiche borne, etc.).
+   `charger` doit exposer `.connected` (booléen, tel que renvoyé par l'API). */
+function effectiveConnectorStatus(charger, status) {
+  return (charger && charger.connected) ? status : "Unavailable";
+}
+
 /* Nom d'affichage d'une borne : display_name si défini, sinon l'id technique. */
 function chargerLabel(c) { return c.display_name || c.id; }
+
+/* Descriptions des clés de configuration OCPP 1.6 (profils Core / SmartCharging
+   principalement), pour l'infobulle "i" affichée dans l'onglet Configuration
+   OCPP. `type` sert aussi à choisir le bon contrôle de saisie (liste
+   déroulante true/false pour un booléen, sinon champ texte). Les clés absentes
+   de ce dictionnaire (souvent des extensions propres au constructeur, ex. le
+   préfixe Cst_ chez Schneider) affichent une description générique de repli
+   via ocppKeyInfo(). À compléter au fil de l'eau : mieux vaut une clé absente
+   du dictionnaire (repli générique, honnête) qu'une description inexacte. */
+const OCPP_KEY_INFO = {
+  HeartbeatInterval: { type: "int", desc: "Intervalle en secondes entre deux messages Heartbeat envoyés par la borne pour signaler qu'elle est toujours en ligne." },
+  MeterValueSampleInterval: { type: "int", desc: "Intervalle en secondes entre deux relevés de compteur (MeterValues) envoyés pendant une charge en cours. 0 désactive l'envoi périodique." },
+  MeterValuesSampledData: { type: "text", desc: "Liste des grandeurs à inclure dans chaque relevé MeterValues périodique, séparées par des virgules (ex. Energy.Active.Import.Register, Power.Active.Import.Register)." },
+  StopTxnSampledData: { type: "text", desc: "Comme MeterValuesSampledData, mais pour le relevé unique envoyé à l'arrêt d'une charge (StopTransaction)." },
+  MeterValuesAlignedData: { type: "text", desc: "Comme MeterValuesSampledData, mais pour les relevés calés sur l'horloge (voir ClockAlignedDataInterval) plutôt que sur un intervalle glissant." },
+  StopTxnAlignedData: { type: "text", desc: "Comme MeterValuesAlignedData, mais pour le relevé unique envoyé à l'arrêt d'une charge." },
+  ConnectionTimeOut: { type: "int", desc: "Délai en secondes, après autorisation, pendant lequel la borne attend le branchement du câble avant d'annuler la charge en attente." },
+  ResetRetries: { type: "int", desc: "Nombre de tentatives que la borne effectue en interne si un redémarrage (Reset) échoue." },
+  AuthorizeRemoteTxRequests: { type: "bool", desc: "Si activé (true), la borne redemande une autorisation (Authorize) même pour une charge démarrée à distance (RemoteStartTransaction), avant de démarrer." },
+  AllowOfflineTxForUnknownId: { type: "bool", desc: "Si activé (true), la borne autorise une charge en local (hors ligne) même pour un badge/idTag qu'elle ne connaît pas dans son cache." },
+  AuthorizationKey: { type: "text", desc: "Clé partagée utilisée pour sécuriser la connexion OCPP selon l'implémentation de la borne. Généralement vide sauf configuration spécifique." },
+  ChargeProfileMaxStackLevel: { type: "int", desc: "Nombre maximal de niveaux de priorité (stackLevel) que la borne accepte pour les profils de charge (SmartCharging)." },
+  ChargingScheduleAllowedChargingRateUnit: { type: "text", desc: "Unité(s) de puissance que la borne accepte dans un profil de charge : courant et/ou puissance. La représentation exacte (ex. \u00abPower\u00bb/\u00abCurrent\u00bb ou \u00abW\u00bb/\u00abA\u00bb) dépend du constructeur, à vérifier avant modification." },
+  ChargingScheduleMaxPeriods: { type: "int", desc: "Nombre maximal de périodes (paliers de puissance) qu'un profil de charge envoyé à la borne peut contenir." },
+  ClockAlignedDataInterval: { type: "int", desc: "Taille en secondes des intervalles d'agrégation calés sur l'horloge (ex. 900 = toutes les 15 min depuis minuit) pour l'envoi de relevés alignés. 0 désactive cette fonction." },
+  StopTransactionOnEVSideDisconnect: { type: "bool", desc: "Si activé (true), la borne arrête automatiquement la charge quand le véhicule débranche le câble de son côté." },
+  StopTransactionOnInvalidId: { type: "bool", desc: "Si activé (true), la borne arrête la charge en cours si le badge présenté pour la stopper n'est pas autorisé." },
+  UnlockConnectorOnEVSideDisconnect: { type: "bool", desc: "Si activé (true), la borne déverrouille automatiquement le câble quand le véhicule le débranche de son côté." },
+  LocalAuthorizeOffline: { type: "bool", desc: "Si activé (true), la borne peut autoriser localement une charge via son cache d'autorisations quand elle est hors ligne." },
+  LocalPreAuthorize: { type: "bool", desc: "Si activé (true), la borne peut démarrer la charge sur la base de son cache local, avant même la réponse du serveur à l'Authorize." },
+  TransactionMessageAttempts: { type: "int", desc: "Nombre de tentatives que la borne effectue pour renvoyer un message lié à une transaction (Start/StopTransaction) resté sans réponse." },
+  TransactionMessageRetryInterval: { type: "int", desc: "Délai en secondes entre deux tentatives de renvoi d'un message de transaction resté sans réponse." },
+  MinimumStatusDuration: { type: "int", desc: "Durée minimale en secondes qu'un statut de connecteur doit tenir avant que la borne envoie une nouvelle StatusNotification pour ce changement." },
+  NumberOfConnectors: { type: "int", desc: "Nombre de connecteurs physiques de la borne (hors connecteur 0, qui représente la borne elle-même). Lecture seule." },
+  GetConfigurationMaxKeys: { type: "int", desc: "Nombre maximal de clés que la borne peut renvoyer en une seule réponse GetConfiguration. Lecture seule." },
+  SupportedFeatureProfiles: { type: "text", desc: "Liste des profils de fonctionnalités OCPP pris en charge par la borne (Core, FirmwareManagement, LocalAuthListManagement, Reservation, SmartCharging, RemoteTrigger). Lecture seule." },
+  LightIntensity: { type: "int", desc: "Pourcentage (0 à 100) de l'intensité maximale d'éclairage du bandeau LED de la borne. Clé non standard OCPP mais reprise à l'identique chez plusieurs constructeurs (dont Schneider) avec cette même sémantique de pourcentage." },
+};
+function ocppKeyInfo(key) {
+  return OCPP_KEY_INFO[key] || {
+    type: "text",
+    desc: "Clé spécifique à cette borne (extension constructeur), non définie par le standard OCPP 1.6. Consultez la documentation du fabricant pour ses valeurs possibles.",
+  };
+}
+function toggleOcppInfo(id) {
+  const el = document.getElementById(id);
+  if (el) el.style.display = el.style.display === "none" ? "block" : "none";
+}
 
 let toastTimer = null;
 function toast(msg, kind) {
@@ -999,22 +1060,27 @@ async function renderHomeAvailable(chargers, active, condByCharger) {
     const conds = (condByCharger || {})[c.id];
     for (const conn of connectors) {
       if (activeKeys.has(`${c.id}:${conn.connector_id}`)) continue;
+      // Statut effectif : si la borne est hors ligne, on n'affiche jamais un
+      // connecteur comme prêt/disponible, même si c'est le dernier état connu.
+      const effStatus = effectiveConnectorStatus(c, conn.status);
       // Le véhicule n'est prêt à charger QUE lorsqu'il est branché (Preparing).
       // Available = connecteur libre : rien à démarrer, on n'affiche pas de bouton.
-      const preparing = conn.status === "Preparing";
+      const preparing = effStatus === "Preparing";
       const condBadge = conditionBadge(conds, conn.connector_id);
       // Statut du connecteur : une seule puce, à gauche. En Preparing on précise
       // « Véhicule branché · prêt » ; sinon le libellé de statut normal.
       const statusBadge = preparing
         ? `<span class="badge Preparing">Véhicule branché · prêt</span>`
-        : `<span class="badge ${esc(conn.status)}">${statusLabel(conn.status)}</span>`;
+        : `<span class="badge ${esc(effStatus)}">${statusLabel(effStatus)}</span>`;
       // Action à droite (jamais un badge de statut, pour ne pas doublonner) :
       // bouton Démarrer si un véhicule est branché, puce « Démarrage auto » en
       // mode libre, sinon rien.
       // L'user doit avoir la borne ET au moins une voiture associée pour démarrer
-      const canStart = isAdmin() ||
+      // (et la borne doit être en ligne : impossible de démarrer une charge sur
+      // une borne déconnectée, quel que soit le dernier statut connu).
+      const canStart = c.connected && (isAdmin() ||
         (currentUser.charger_ids && currentUser.charger_ids.includes(c.id) &&
-         currentUser.vehicle_ids && currentUser.vehicle_ids.length > 0);
+         currentUser.vehicle_ids && currentUser.vehicle_ids.length > 0));
       // Filtrer les options de voitures aux voitures associées (pour un user)
       const filteredVehOpts = isAdmin()
         ? vehOptions
@@ -1182,9 +1248,11 @@ async function loadChargers() {
         </div>
       </div>`;
     }
-    // Une puce de statut par connecteur.
+    // Une puce de statut par connecteur. Si la borne est hors ligne, le dernier
+    // statut connu n'est plus fiable : on affiche "Indisponible" plutôt que de
+    // présenter comme à jour un état potentiellement périmé.
     const connBadges = connectors.length
-      ? connectors.map(cc => `<span class="badge ${esc(cc.status)}" title="Connecteur ${cc.connector_id}">Conn. ${cc.connector_id} · ${statusLabel(cc.status)}</span>`).join("")
+      ? connectors.map(cc => { const st = effectiveConnectorStatus(c, cc.status); return `<span class="badge ${esc(st)}" title="Connecteur ${cc.connector_id}">Conn. ${cc.connector_id} · ${statusLabel(st)}</span>`; }).join("")
       : `<span class="tiny muted">Connecteurs non encore signalés</span>`;
     // Badge de programmation si au moins une condition active.
     const schedBadge = conditions.length
@@ -1249,10 +1317,30 @@ async function openChargerConfigModal(id, activeTab) {
     fetch(`api/chargers/${id}/connectors`, { headers: authHeaders() }).then(r => r.json()).then(a => a.filter(c => c.connector_id !== 0)).catch(() => []),
   ]);
   const isLocal = charger.mode === "local";
+  // L'onglet Configuration OCPP (clés brutes du protocole) est réservé au mode
+  // debug : c'est un outil avancé, pas un réglage grand public. Même garde que
+  // pour Logs/Base de données : si redemandé alors que le debug est désactivé
+  // (lien direct, onglet rouvert après coupure du flag), on retombe sur Réglages.
+  const ocppTabAllowed = isLocal && debugToolsVisible();
+  if (activeTab === "ocpp" && !ocppTabAllowed) activeTab = "settings";
   const authMode = charger.auth_mode || "free";
   const smart = charger.smart_charging;
   const scheduleBlocked = isLocal && smart === false;
   configConnectors = connectors.map(c => c.connector_id);
+
+  // Clés OCPP promues dans l'onglet Réglages sous une forme plus élémentaire
+  // (visible même hors mode debug, contrairement au reste de la config OCPP
+  // brute). Seul candidat identifié à ce jour : LightIntensity (luminosité du
+  // bandeau LED sur les bornes Schneider). N'apparaît que si la clé existe
+  // vraiment sur cette borne précise et est modifiable.
+  let friendlyLight = null;
+  if (isLocal && charger.connected) {
+    try {
+      const cfg = await fetch(`api/chargers/${id}/config`, { headers: authHeaders() }).then(r => r.json());
+      const light = (cfg.keys || []).find(k => k.key === "LightIntensity");
+      if (light && !light.readonly) friendlyLight = light.value;
+    } catch (e) { /* borne injoignable : le réglage reste simplement absent */ }
+  }
 
   const condRows = conditions.length ? conditions.map(cd => `
     <div class="card" style="margin:.35rem 0; padding:.55rem .75rem">
@@ -1290,7 +1378,7 @@ async function openChargerConfigModal(id, activeTab) {
 
     <div class="tab-bar" style="display:flex;gap:.25rem;border-bottom:1px solid var(--border);margin-bottom:1rem">
       ${tabBtn("settings","Réglages")}
-      ${isLocal ? tabBtn("ocpp","Configuration OCPP") : ""}
+      ${ocppTabAllowed ? tabBtn("ocpp","Configuration OCPP") : ""}
     </div>
 
     <div style="${activeTab === "settings" ? "" : "display:none"}">
@@ -1298,6 +1386,20 @@ async function openChargerConfigModal(id, activeTab) {
       <label class="field" style="max-width:340px; margin-bottom:.8rem"><span>Nom d'affichage (optionnel)</span>
         <input id="dispname-${id}" value="${esc(charger.display_name || "")}" placeholder="${esc(id)}">
       </label>
+      ${friendlyLight != null ? `
+      <div style="max-width:340px; margin-bottom:.2rem">
+        <div class="cluster center" style="gap:.3rem">
+          <span style="font-size:.8rem;color:var(--text-muted);font-weight:550">Luminosité (LED)</span>
+          <button class="btn btn-icon btn-ghost" style="width:1.3rem;height:1.3rem;min-height:0;padding:0" title="Voir la description" onclick="toggleOcppInfo('light-intensity-${id}-info')"><svg style="width:.85em;height:.85em"><use href="#i-info"/></svg></button>
+        </div>
+        <div class="cluster center" style="gap:.6rem;margin-top:.35rem;flex-wrap:nowrap">
+          <input type="range" min="0" max="100" step="5" id="light-intensity-${id}" value="${esc(friendlyLight)}" style="flex:1;min-width:0"
+            oninput="document.getElementById('light-intensity-${id}-val').textContent = this.value + '\u00a0%'"
+            onchange="saveOcppKey('${id}','LightIntensity','light-intensity-${id}')">
+          <span id="light-intensity-${id}-val" class="small" style="min-width:3.4em;text-align:right;flex:none">${esc(friendlyLight)}\u00a0%</span>
+        </div>
+      </div>
+      <div id="light-intensity-${id}-info" class="tiny muted" style="display:none;margin:0 0 .8rem;max-width:340px;line-height:1.4">${esc(ocppKeyInfo("LightIntensity").desc)}</div>` : ""}
       <div class="grid-cards two">
         <div>
           <label class="field"><span>Mode de pilotage</span>
@@ -1377,18 +1479,36 @@ async function buildOcppConfigTab(chargerId, isLocal, connectors) {
   const rows = sorted.map(k => {
     const eid = `ocpp-val-${k.key.replace(/[^a-zA-Z0-9]/g,"-")}`;
     const pending = pendingReboot.has(k.key);
+    const info = ocppKeyInfo(k.key);
+    const typeHint = info.type === "bool" ? " Valeurs possibles : true ou false."
+      : info.type === "int" ? " Valeur attendue : un nombre entier." : "";
+    let valueControl;
+    if (k.readonly) {
+      valueControl = `<span class="muted small" style="overflow-wrap:anywhere;word-break:break-word">${esc(k.value ?? "–")}</span>`;
+    } else if (info.type === "bool") {
+      // Booléen OCPP : toujours la chaîne "true" ou "false" (jamais true/false
+      // JSON natifs). Liste déroulante plutôt que texte libre : élimine tout
+      // risque de faute de frappe sur ces deux seules valeurs valides.
+      const cur = String(k.value ?? "").toLowerCase();
+      valueControl = `<select id="${eid}" style="width:100%;font-size:.83rem;box-sizing:border-box"
+          onchange="saveOcppKey('${chargerId}','${esc(k.key)}','${eid}')">
+          <option value="true" ${cur === "true" ? "selected" : ""}>true</option>
+          <option value="false" ${cur === "false" ? "selected" : ""}>false</option>
+        </select>`;
+    } else {
+      valueControl = `<input id="${eid}" value="${esc(k.value ?? "")}" style="width:100%;font-size:.83rem;box-sizing:border-box"
+             onkeydown="if(event.key==='Enter')saveOcppKey('${chargerId}','${esc(k.key)}','${eid}')">`;
+    }
     return `<tr class="ocpp-row${pending ? " ocpp-row-pending" : ""}" data-key="${esc(k.key.toLowerCase())}">
-      <td style="padding:.35rem .4rem;vertical-align:middle;white-space:nowrap">
-        <span style="font-family:monospace;font-size:.8rem;color:${HIGHLIGHT.includes(k.key) ? "var(--accent)" : "inherit"}">${esc(k.key)}</span>
-        ${pending ? `<span class="badge warn" style="font-size:.62rem;margin-left:.35rem;white-space:nowrap" title="Enregistrée par la borne, redémarrage nécessaire pour l'appliquer"><svg style="width:.8em;height:.8em;vertical-align:-.1em"><use href="#i-clock"/></svg> reboot</span>` : ""}
+      <td style="padding:.35rem .4rem;vertical-align:middle;overflow-wrap:anywhere;word-break:break-word">
+        <span class="cluster center" style="gap:.3rem;flex-wrap:wrap">
+          <span style="font-family:monospace;font-size:.8rem;color:${HIGHLIGHT.includes(k.key) ? "var(--accent)" : "inherit"}">${esc(k.key)}</span>
+          <button class="btn btn-icon btn-ghost" style="width:1.3rem;height:1.3rem;min-height:0;padding:0;flex:none" title="Voir la description" onclick="toggleOcppInfo('${eid}-info')"><svg style="width:.85em;height:.85em"><use href="#i-info"/></svg></button>
+          ${pending ? `<span class="badge warn" style="font-size:.62rem" title="Enregistrée par la borne, redémarrage nécessaire pour l'appliquer"><svg style="width:.8em;height:.8em;vertical-align:-.1em"><use href="#i-clock"/></svg> reboot</span>` : ""}
+        </span>
+        <div id="${eid}-info" class="tiny muted" style="display:none;margin-top:.3rem;line-height:1.4;font-family:initial">${esc(info.desc)}${typeHint}</div>
       </td>
-      <td style="padding:.35rem .4rem;vertical-align:middle;width:100%">
-        ${k.readonly
-          ? `<span class="muted small">${esc(k.value ?? "–")}</span>`
-          : `<input id="${eid}" value="${esc(k.value ?? "")}" style="width:100%;font-size:.83rem;box-sizing:border-box"
-               onkeydown="if(event.key==='Enter')saveOcppKey('${chargerId}','${esc(k.key)}','${eid}')">`
-        }
-      </td>
+      <td style="padding:.35rem .4rem;vertical-align:middle">${valueControl}</td>
       <td style="padding:.35rem .3rem;vertical-align:middle;white-space:nowrap">
         ${k.readonly
           ? `<span class="badge muted" style="font-size:.7rem">R/O</span>`
@@ -1421,14 +1541,15 @@ async function buildOcppConfigTab(chargerId, isLocal, connectors) {
     ${banner}
     <div class="spread" style="align-items:center; margin-bottom:.4rem; gap:.6rem">
       <input type="search" id="ocpp-filter" placeholder="Filtrer…" oninput="filterOcppKeys()"
-        style="flex:1;font-size:.9rem;padding:.35rem .5rem;box-sizing:border-box;border:1px solid var(--border);border-radius:var(--r);background:var(--bg);color:var(--fg)">
+        style="flex:1;min-width:0;font-size:.9rem;padding:.35rem .5rem;box-sizing:border-box;border:1px solid var(--border);border-radius:var(--r);background:var(--bg);color:var(--fg)">
       <span class="tiny muted" style="white-space:nowrap">${keys.length} clés · ${editableCount} modifiables</span>
     </div>
     <div style="overflow-x:auto;max-height:55vh;overflow-y:auto">
-      <table style="width:100%;border-collapse:collapse">
+      <table style="width:100%;border-collapse:collapse;table-layout:fixed">
+        <colgroup><col style="width:44%"><col><col style="width:52px"></colgroup>
         <thead style="position:sticky;top:0;background:var(--bg);z-index:1">
           <tr style="border-bottom:1px solid var(--border)">
-            <th style="text-align:left;padding:.35rem .4rem;font-size:.78rem;white-space:nowrap">Clé</th>
+            <th style="text-align:left;padding:.35rem .4rem;font-size:.78rem">Clé</th>
             <th style="text-align:left;padding:.35rem .4rem;font-size:.78rem">Valeur</th>
             <th></th>
           </tr>
@@ -1622,7 +1743,7 @@ async function openChargerStatsModal(chargerId) {
     <div class="cluster center" style="gap:.5rem; margin:-.4rem 0 .3rem">
       <span class="badge ${charger.mode}">${charger.mode}</span>
       <span class="badge ${charger.connected ? "ok" : "off"}"><span class="dot"></span>${charger.connected ? "connectée" : "hors ligne"}</span>
-      <span class="badge ${esc(charger.status)}">${statusLabel(charger.status)}</span>
+      <span class="badge ${esc(effectiveConnectorStatus(charger, charger.status))}">${statusLabel(effectiveConnectorStatus(charger, charger.status))}</span>
       <button class="btn btn-sm btn-ghost" style="margin-left:auto" onclick="openChargerConfigModal('${esc(data.id)}')"><svg><use href="#i-cog"/></svg>Configurer</button>
     </div>
     ${meta ? `<div class="small muted" style="margin:0 0 .3rem">${esc(meta)}</div>` : ""}
@@ -1636,13 +1757,13 @@ async function openChargerStatsModal(chargerId) {
     </div>`;
 
   html += `<div class="section-title">Connecteurs</div>`;
-  html += connectors.length ? connectors.map(cc => `
+  html += connectors.length ? connectors.map(cc => { const connSt = effectiveConnectorStatus(charger, cc.status); return `
     <div class="card" style="margin:.35rem 0; padding:.55rem .8rem">
       <div class="spread">
-        <div class="cluster center" style="gap:.5rem"><b>Connecteur ${cc.connector_id}</b><span class="badge ${esc(cc.status)}">${statusLabel(cc.status)}</span></div>
+        <div class="cluster center" style="gap:.5rem"><b>Connecteur ${cc.connector_id}</b><span class="badge ${esc(connSt)}">${statusLabel(connSt)}</span></div>
         <button class="btn btn-sm" onclick="openConnectorModal('${esc(data.id)}', ${cc.connector_id}, false, '${esc(charger.display_name || "")}')">Détails</button>
       </div>
-    </div>`).join("") : `<div class="empty">Aucun connecteur détecté (attendez le premier StatusNotification).</div>`;
+    </div>`; }).join("") : `<div class="empty">Aucun connecteur détecté (attendez le premier StatusNotification).</div>`;
 
   html += renderChargerSessionsTable(data.sessions);
   openModal(html);

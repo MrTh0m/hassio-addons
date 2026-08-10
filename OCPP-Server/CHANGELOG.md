@@ -1,3 +1,24 @@
+## 0.19.18
+
+- **Amélioré** : le champ Luminosité (LED) devient un curseur (slider) par pas de 5 %, avec la valeur affichée en direct, au lieu d'un champ numérique à taper. L'enregistrement se déclenche au relâchement du curseur, sans bouton séparé.
+
+## 0.19.17
+
+- **Corrigé** : le champ Luminosité (LED) ajouté en 0.19.16 précise désormais l'échelle, 0 à 100 (pourcentage de l'intensité maximale), plutôt qu'une plage non confirmée. Basé sur la documentation OCPP 1.6 d'un autre constructeur (ABB) qui documente la même clé `LightIntensity` avec cette sémantique de pourcentage.
+
+## 0.19.16
+
+- **Nouveau** : la clé OCPP `LightIntensity` (luminosité du bandeau LED, observée sur les bornes Schneider) est désormais remontée dans l'onglet **Réglages** sous forme d'un simple champ numérique avec bouton Enregistrer, visible même hors mode debug, plutôt que de nécessiter un passage par la configuration OCPP brute. Elle n'apparaît que si la borne possède réellement cette clé (absente sur les simulateurs MicroOcpp). Après revue de l'ensemble des clés d'une borne réelle, c'est la seule identifiée comme pertinente pour ce traitement à ce stade : les autres clés modifiables touchent au réseau, à la sécurité (ex. `SecurityProfile`, risqué à exposer sans garde-fou) ou à des comportements protocolaires trop techniques pour un réglage grand public.
+
+## 0.19.15
+
+- **Corrigé** : incohérence d'affichage quand une borne est hors ligne. Les puces de connecteur ("Conn. 1 · Disponible", etc.) continuaient d'afficher le dernier statut connu en base, même quand la borne elle-même était marquée hors ligne, ce qui pouvait laisser croire à tort qu'on pouvait démarrer une charge. Désormais, dès qu'une borne est hors ligne, tous ses connecteurs s'affichent "Indisponible" (Accueil, liste Bornes, fiche borne), via une fonction centralisée (`effectiveConnectorStatus`) réutilisée partout pour rester cohérent.
+- **Amélioré** : refonte de l'onglet **Configuration OCPP** :
+  - Le tableau ne déborde plus de la modale (PC comme mobile) : colonnes à largeur fixe et coupure de mot sur les valeurs longues sans espace.
+  - Ajout d'un bouton "i" par clé affichant une description (rôle, type attendu, valeurs possibles) pour les clés standard du protocole OCPP 1.6. Les clés propres au constructeur (ex. préfixe `Cst_` chez Schneider) affichent un message générique faute de documentation officielle.
+  - Les clés booléennes reconnues (ex. `AuthorizeRemoteTxRequests`) sont désormais éditées via une liste déroulante true/false plutôt qu'un champ texte libre, pour éliminer tout risque de faute de frappe.
+  - Cet onglet est désormais réservé au **mode debug** (même réglage que Logs et Base de données) : c'est un outil avancé, pas un réglage grand public.
+
 ## 0.19.14
 
 - **Nouveau** : gestion du statut `RebootRequired` renvoyé par une borne à un `ChangeConfiguration`. Jusqu'ici, toute réponse OCPP différente d'une erreur HTTP affichait le même message de succès générique, même quand la borne signalait qu'un redémarrage était nécessaire pour appliquer la valeur (ex. `Cst_BackendUrl` sur le simulateur MicroOcpp). Désormais :
