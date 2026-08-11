@@ -12,6 +12,18 @@
   - `Dernière charge énergie/coût/borne`, `Kilométrage`, `Capacité batterie`.
   - Créé/mis à jour à la création ou l'édition d'un véhicule ; retiré côté HA uniquement sur suppression DÉFINITIVE (la désactivation, réversible, laisse les entités en place).
   - Pas de test automatisé dédié pour cette fonctionnalité (nécessiterait de mocker un client MQTT, absent de la suite actuelle) : la logique de calcul réutilisée (`compute_session_cost`) est déjà couverte par ailleurs.
+- **Corrigé** : la réduction nocturne de luminosité (introduite en 0.19.20) ne s'appliquait qu'en mode Auto alors qu'elle devait être indépendante du mode (sur la valeur fixe elle-même en mode Fixe). `compute_light_target` gère maintenant les deux cas ; le planificateur réévalue aussi les bornes en mode Fixe dès que la réduction nocturne y est activée (pas seulement le mode Auto), y compris pour restaurer automatiquement la valeur pleine une fois la fenêtre nocturne terminée. Tests dédiés ajoutés (`test_light_intensity.py`, jamais déposé sur E: lors de son introduction en 0.19.20 malgré avoir été validé en local à l'époque, corrigé au passage).
+- **Amélioré** : refonte de la section **Luminosité** de l'onglet Réglages (maquette validée au préalable) :
+  - Encadrée dans une carte pleine largeur, cohérente avec le reste du formulaire (ne détonne plus dans une colonne étroite à 340px).
+  - « Réduire la nuit » sorti du bloc Auto : réglage partagé affiché sous les deux modes, avec la précision « (s'applique en Fixe comme en Auto) ».
+  - Panneau nuit redessiné en grille (Réduction sur sa ligne, Début/Fin côte à côte) au lieu d'une ligne qui débordait sur deux lignes.
+  - Le curseur du mode Fixe suit le même schéma visuel que ceux du mode Auto (libellé + valeur au-dessus, curseur en dessous).
+  - Retrait de « (optionnel) » sur le champ Nom d'affichage.
+- **Corrigé** : un véhicule sans historique de charge affichait « Inconnu » sur tous ses capteurs MQTT de session (En charge, En charge sur, énergie/coût/durée de session), faute d'une quelconque valeur jamais publiée sur ces topics. Désormais des valeurs par défaut cohérentes (pas en charge, compteurs à 0) sont publiées à la création d'un véhicule, et republiées à chaque reconnexion MQTT en interrogeant s'il a une session active (au lieu de rester silencieux comme avant) — corrige aussi rétroactivement les véhicules existants dès la prochaine reconnexion.
+- **Corrigé/amélioré** : le capteur « Kilométrage » du véhicule prêtait à confusion (odomètre brut à la dernière charge, pas les km parcourus depuis la charge précédente). Renommé en « Odomètre (dernière charge) », et ajout d'un nouveau capteur séparé **« Km depuis la charge précédente »** (delta, même calcul que celui déjà utilisé dans l'historique). Au passage, nouvelle fonction centrale `publish_vehicle_last_charge` (recalcule le résumé « dernière charge » à partir de la base, plutôt que de propager des valeurs au coup par coup) appelée :
+  - à la fin d'une session OCPP réelle (StopTransaction, et la fermeture automatique d'une transaction restée active) ;
+  - **surtout** lors de la modification a posteriori d'une session (`PUT /api/sessions/{id}`) : l'odomètre est en pratique presque toujours saisi APRÈS la charge, pas au moment même de `StopTransaction`, et rien ne republiait le MQTT à ce moment-là jusqu'ici (point identifié mais laissé de côté lors de l'introduction initiale de cette fonctionnalité) ;
+  - à la création d'une charge externe.
 
 ## 0.19.20
 

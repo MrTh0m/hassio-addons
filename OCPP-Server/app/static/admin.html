@@ -826,7 +826,7 @@ function renderLightSection(id, value, s) {
     `<button class="btn btn-sm ${s.mode === m ? "" : "btn-ghost"}" onclick="setLightMode('${id}','${m}')">${label}</button>`;
 
   const fixedBlock = `
-    <div class="cluster center" style="gap:.6rem;margin-top:.5rem;flex-wrap:nowrap">
+    <div class="cluster center" style="gap:.6rem;margin-top:.7rem;flex-wrap:nowrap">
       <input type="range" min="0" max="100" step="5" id="light-intensity-${id}" value="${esc(value)}" style="flex:1;min-width:0"
         oninput="document.getElementById('light-intensity-${id}-val').textContent = this.value + '\u00a0%'"
         onchange="saveOcppKey('${id}','LightIntensity','light-intensity-${id}')">
@@ -834,7 +834,7 @@ function renderLightSection(id, value, s) {
     </div>`;
 
   const sliderRow = (label, fieldId, val) => `
-    <div style="margin-top:.5rem">
+    <div style="margin-top:.6rem">
       <div class="spread" style="margin-bottom:.15rem"><span class="tiny muted">${label}</span><span id="${fieldId}-val" class="tiny">${val}\u00a0%</span></div>
       <input type="range" min="0" max="100" step="5" id="${fieldId}" value="${val}"
         oninput="document.getElementById('${fieldId}-val').textContent = this.value + '\u00a0%'"
@@ -843,34 +843,45 @@ function renderLightSection(id, value, s) {
 
   const autoBlock = `
     ${sliderRow("En charge (véhicule branché)", `light-auto-charge-${id}`, chargeVal)}
-    ${sliderRow("Libre (aucun véhicule)", `light-auto-free-${id}`, freeVal)}
-    <label class="cluster center" style="gap:.4rem;margin-top:.6rem;font-size:.85rem;cursor:pointer">
+    ${sliderRow("Libre (aucun véhicule)", `light-auto-free-${id}`, freeVal)}`;
+
+  // Réduction nocturne : partagée entre Fixe et Auto (indépendante du mode,
+  // voir compute_light_target côté serveur), donc en dehors du bloc
+  // spécifique à chaque mode plutôt que à l'intérieur de autoBlock.
+  const nightSection = `
+    <label class="cluster center" style="gap:.45rem;margin-top:.9rem;padding-top:.9rem;border-top:1px dashed var(--border);font-size:.85rem;cursor:pointer">
       <input type="checkbox" id="light-night-enabled-${id}" ${s.night_enabled ? "checked" : ""} onchange="saveLightSettings('${id}')">
-      Réduire la nuit
+      Réduire la nuit <span class="tiny muted">(s'applique en Fixe comme en Auto)</span>
     </label>
-    <div id="light-night-params-${id}" class="cluster center" style="gap:.4rem;margin-top:.4rem;flex-wrap:wrap;${s.night_enabled ? "" : "display:none"}">
-      <span class="tiny muted">de</span>
-      <input type="number" id="light-night-reduction-${id}" value="${nightReduction}" min="1" max="100" style="width:4.5em" onchange="saveLightSettings('${id}')">
-      <span class="tiny muted">points, entre</span>
-      <input type="time" id="light-night-start-${id}" value="${esc(nightStart)}" onchange="saveLightSettings('${id}')">
-      <span class="tiny muted">et</span>
-      <input type="time" id="light-night-end-${id}" value="${esc(nightEnd)}" onchange="saveLightSettings('${id}')">
-    </div>
-    ${s.zero_supported === false ? `<div class="tiny muted" style="margin-top:.3rem">Extinction totale (0%) refusée par cette borne lors d'un précédent essai : la réduction nocturne se limitera à 1%.</div>` : ""}`;
+    <div id="light-night-params-${id}" style="margin-top:.6rem;${s.night_enabled ? "" : "display:none"}">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:0 .7rem">
+        <label class="field" style="grid-column:span 2;max-width:140px"><span>Réduction (points)</span>
+          <input type="number" id="light-night-reduction-${id}" value="${nightReduction}" min="1" max="100" onchange="saveLightSettings('${id}')">
+        </label>
+        <label class="field"><span>Début</span>
+          <input type="time" id="light-night-start-${id}" value="${esc(nightStart)}" onchange="saveLightSettings('${id}')">
+        </label>
+        <label class="field"><span>Fin</span>
+          <input type="time" id="light-night-end-${id}" value="${esc(nightEnd)}" onchange="saveLightSettings('${id}')">
+        </label>
+      </div>
+      ${s.zero_supported === false ? `<div class="tiny muted" style="margin-top:.4rem">Extinction totale (0%) refusée par cette borne lors d'un précédent essai : la réduction nocturne se limitera à 1%.</div>` : ""}
+    </div>`;
 
   return `
-    <div style="max-width:340px; margin-bottom:.2rem">
-      <div class="cluster center" style="gap:.3rem">
-        <span style="font-size:.8rem;color:var(--text-muted);font-weight:550">Luminosité (LED)</span>
+    <div class="card" style="margin-bottom:1rem">
+      <div class="spread">
+        <span class="small" style="font-weight:600">Luminosité (LED)</span>
         <button class="btn btn-icon btn-ghost" style="width:1.3rem;height:1.3rem;min-height:0;padding:0" title="Voir la description" onclick="toggleOcppInfo('light-intensity-${id}-info')"><svg style="width:.85em;height:.85em"><use href="#i-info"/></svg></button>
       </div>
-      <div class="cluster center" style="gap:.3rem;margin-top:.4rem">
+      <div class="cluster center" style="gap:.3rem;margin-top:.6rem">
         ${modeBtn("fixed", "Fixe")}
         ${modeBtn("auto", "Auto")}
       </div>
       ${isAuto ? autoBlock : fixedBlock}
-    </div>
-    <div id="light-intensity-${id}-info" class="tiny muted" style="display:none;margin:.3rem 0 .8rem;max-width:340px;line-height:1.4">${esc(ocppKeyInfo("LightIntensity").desc)}</div>`;
+      ${nightSection}
+      <div id="light-intensity-${id}-info" class="tiny muted" style="display:none;margin-top:.6rem;line-height:1.4">${esc(ocppKeyInfo("LightIntensity").desc)}</div>
+    </div>`;
 }
 
 async function setLightMode(chargerId, mode) {
@@ -1493,7 +1504,7 @@ async function openChargerConfigModal(id, activeTab) {
 
     <div style="${activeTab === "settings" ? "" : "display:none"}">
       <div class="section-title" style="margin-top:0">Réglages</div>
-      <label class="field" style="max-width:340px; margin-bottom:.8rem"><span>Nom d'affichage (optionnel)</span>
+      <label class="field" style="max-width:340px; margin-bottom:.8rem"><span>Nom d'affichage</span>
         <input id="dispname-${id}" value="${esc(charger.display_name || "")}" placeholder="${esc(id)}">
       </label>
       ${friendlyLight != null ? renderLightSection(id, friendlyLight, lightSettings) : ""}

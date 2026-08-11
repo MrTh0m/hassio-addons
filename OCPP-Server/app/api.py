@@ -774,7 +774,7 @@ def _parse_iso(value: Optional[str]) -> Optional[datetime]:
 
 
 @router.post("/external-charges")
-def create_external_charge(
+async def create_external_charge(
     body: ExternalChargeCreate,
     db: Session = Depends(get_db), user=Depends(get_current_user),
 ):
@@ -803,6 +803,10 @@ def create_external_charge(
     db.add(txn)
     db.commit()
     db.refresh(txn)
+    # Peut devenir la « dernière charge » la plus récente du véhicule côté MQTT
+    # (odomètre notamment, rarement connu au moment d'une charge OCPP réelle,
+    # mais souvent saisi ici pour une charge externe).
+    await mqtt_bridge.publish_vehicle_last_charge(vehicle.id)
     return {"id": txn.id}
 
 
@@ -852,7 +856,7 @@ def delete_session(session_id: int, db: Session = Depends(get_db), user=Depends(
 
 
 @router.put("/sessions/{session_id}")
-def update_session(
+async def update_session(
     session_id: int, body: SessionUpdate,
     db: Session = Depends(get_db), user=Depends(get_current_user),
 ):
@@ -895,6 +899,12 @@ def update_session(
         if "stop_time" in data:
             s.stop_time = _parse_iso(data["stop_time"])
     db.commit()
+    # L'odomètre (et parfois vehicle_id) est le plus souvent saisi ICI, après
+    # coup, pas au moment de StopTransaction : c'est ce chemin qui doit
+    # répercuter la mise à jour côté MQTT (odomètre, km depuis la charge
+    # précédente), sans quoi le capteur resterait figé à sa valeur d'origine.
+    if s.vehicle_id and ("odometer_km" in data or "vehicle_id" in data or "energy_kwh" in data or "cost" in data):
+        await mqtt_bridge.publish_vehicle_last_charge(s.vehicle_id)
     return {"status": "ok"}
 
 
@@ -1087,6 +1097,13 @@ async def create_vehicle(body: VehicleCreate, db: Session = Depends(get_db), use
     await mqtt_bridge.publish_vehicle_discovery(vehicle.id, vehicle.name)
     if vehicle.battery_capacity_kwh is not None:
         await mqtt_bridge.publish_vehicle_state(vehicle.id, battery_capacity_kwh=vehicle.battery_capacity_kwh)
+    # Valeurs par défaut immédiates (pas d'attente d'une reconnexion MQTT) :
+    # un véhicule tout juste créé n'a évidemment pas de session active. Sans
+    # ça, HA affiche « Inconnu » sur ces capteurs jusqu'à la première charge.
+    await mqtt_bridge.publish_vehicle_state(
+        vehicle.id, is_charging="OFF", charging_at="Aucune",
+        session_energy_wh=0, session_cost=0, session_duration_min=0,
+    )
     return {"id": vehicle.id}
 
 

@@ -79,15 +79,31 @@ def compute_light_target(mode, occupied: bool, fixed_value, auto_charge_value,
     d'accès base/réseau) pour rester testable sans borne réelle, sur le même
     principe que should_charge_now dans scheduler.py.
 
-    Retourne None si rien n'est à pousser automatiquement : le mode "fixed"
-    ne déclenche jamais de push automatique (le curseur manuel s'en charge
-    déjà), et le mode "auto" sans les deux valeurs configurées ne peut rien
-    calculer."""
-    if mode != "auto":
-        return None
-    if auto_charge_value is None or auto_free_value is None:
-        return None
-    base = auto_charge_value if occupied else auto_free_value
+    La réduction nocturne est indépendante du mode fixe/auto (voir échange
+    avec Thomas) : en mode "fixed", elle s'applique sur la valeur fixe elle-
+    même ; en mode "auto", par-dessus la valeur "en charge"/"libre" courante.
+
+    En mode fixe, tant qu'une valeur fixe est configurée, la fonction renvoie
+    toujours quelque chose (la valeur pleine hors fenêtre nocturne, réduite
+    pendant), même si night_enabled est désactivé (dans ce cas la réduction ne
+    s'applique simplement jamais, mais la valeur pleine est quand même
+    renvoyée). Ça permet à apply_light_intensity() de se resynchroniser tout
+    seul si la valeur réellement appliquée sur la borne a dérivé (ex. remise
+    à la valeur pleine juste après la fin de la fenêtre nocturne), sans jamais
+    solliciter la borne inutilement puisque apply_light_intensity() ne pousse
+    que si la cible diffère de la valeur déjà en cache.
+
+    Retourne None uniquement quand rien n'est calculable : mode "fixed" sans
+    aucune valeur fixe connue, ou mode "auto" sans les deux valeurs
+    configurées."""
+    if mode == "auto":
+        if auto_charge_value is None or auto_free_value is None:
+            return None
+        base = auto_charge_value if occupied else auto_free_value
+    else:
+        if fixed_value is None:
+            return None
+        base = fixed_value
     if night_enabled and night_reduction and _in_time_window(night_start, night_end, now):
         floor = 0 if zero_supported else 1
         return max(floor, base - night_reduction)
@@ -218,13 +234,10 @@ class LocalChargePoint(ChargePoint16):
         last_energy_wh = None
         last_cost = None
         last_vehicle_id = None
-        last_odometer_km = None
-        charger_label = None
         do_auto_start = False
         try:
             charger = self._get_or_create_charger(db)
             charger.last_seen = datetime.utcnow()
-            charger_label = charger.display_name or self.id
 
             entry = db.query(ConnectorStatus).filter(
                 ConnectorStatus.charger_id == self.id,
@@ -258,7 +271,6 @@ class LocalChargePoint(ChargePoint16):
                     freeze_transaction_cost(db, stale)
                     last_energy_wh = stale.energy_wh
                     last_cost = stale.cost
-                    last_odometer_km = stale.odometer_km
                     last_vehicle_id = stale.vehicle_id
 
             if connector_id != 0:
@@ -329,14 +341,8 @@ class LocalChargePoint(ChargePoint16):
                 # mise à jour ici aussi, même quand la transaction se termine
                 # par ce chemin (connecteur redevenu Available sans
                 # StopTransaction explicite) plutôt que via on_stop_transaction.
-                veh_updates = {"is_charging": "OFF", "charging_at": "Aucune", "last_session_charger": charger_label}
-                if last_energy_wh is not None:
-                    veh_updates["last_session_energy_wh"] = last_energy_wh
-                if last_cost is not None:
-                    veh_updates["last_session_cost"] = last_cost
-                if last_odometer_km is not None:
-                    veh_updates["odometer_km"] = last_odometer_km
-                await mqtt_bridge.publish_vehicle_state(last_vehicle_id, **veh_updates)
+                await mqtt_bridge.publish_vehicle_state(last_vehicle_id, is_charging="OFF", charging_at="Aucune")
+                await mqtt_bridge.publish_vehicle_last_charge(last_vehicle_id)
 
         if do_auto_start:
             asyncio.create_task(self._auto_start(connector_id))
@@ -464,8 +470,6 @@ class LocalChargePoint(ChargePoint16):
         last_energy_wh = None
         last_cost = None
         last_vehicle_id = None
-        last_odometer_km = None
-        charger_label = None
         try:
             txn = db.query(Transaction).filter(Transaction.id == transaction_id).first()
             if txn:
@@ -481,10 +485,7 @@ class LocalChargePoint(ChargePoint16):
                 db.commit()
                 last_energy_wh = txn.energy_wh
                 last_cost = txn.cost
-                last_odometer_km = txn.odometer_km
                 last_vehicle_id = txn.vehicle_id
-                charger_obj = db.query(Charger).filter(Charger.id == self.id).first()
-                charger_label = (charger_obj.display_name if charger_obj else None) or self.id
         finally:
             db.close()
 
@@ -500,14 +501,8 @@ class LocalChargePoint(ChargePoint16):
             if updates:
                 await mqtt_bridge.publish_connector_state(self.id, connector_id, **updates)
             if last_vehicle_id:
-                veh_updates = {"is_charging": "OFF", "charging_at": "Aucune", "last_session_charger": charger_label}
-                if last_energy_wh is not None:
-                    veh_updates["last_session_energy_wh"] = last_energy_wh
-                if last_cost is not None:
-                    veh_updates["last_session_cost"] = last_cost
-                if last_odometer_km is not None:
-                    veh_updates["odometer_km"] = last_odometer_km
-                await mqtt_bridge.publish_vehicle_state(last_vehicle_id, **veh_updates)
+                await mqtt_bridge.publish_vehicle_state(last_vehicle_id, is_charging="OFF", charging_at="Aucune")
+                await mqtt_bridge.publish_vehicle_last_charge(last_vehicle_id)
 
         # SSE : transaction terminée
         sse_notify("transaction_stopped", {
@@ -708,9 +703,13 @@ class LocalChargePoint(ChargePoint16):
 
     async def apply_light_intensity(self):
         """Recalcule et pousse, si nécessaire, la valeur LightIntensity cible
-        d'après le mode auto (occupation + réduction nocturne éventuelle). Ne
-        fait rien en mode fixe (le curseur manuel s'en charge déjà) ni si la
-        borne n'a pas cette clé. N'envoie un ChangeConfiguration que si la
+        (voir compute_light_target). Ne fait rien si la borne n'a pas cette
+        clé, ou si rien n'est calculable (mode fixe sans valeur fixe connue,
+        mode auto sans les deux valeurs). En mode fixe SANS réduction
+        nocturne, calcule quand même la valeur pleine à chaque appel : c'est
+        un no-op tant que la borne est déjà à cette valeur (comparaison avec
+        le cache avant tout envoi), mais permet de se resynchroniser tout
+        seul si elle a dérivé. N'envoie un ChangeConfiguration que si la
         cible diffère de la dernière valeur connue en cache, pour éviter de
         solliciter la borne à chaque appel (transition de connecteur, tick du
         planificateur, reconnexion)."""

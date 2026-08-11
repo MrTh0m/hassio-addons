@@ -164,7 +164,8 @@ async def publish_vehicle_discovery(vehicle_id: int, name: str):
         "last_session_energy_wh": {"name": "Dernière charge énergie", "unit": "Wh", "device_class": "energy"},
         "last_session_cost": {"name": "Dernière charge coût", "unit": "EUR", "device_class": "monetary"},
         "last_session_charger": {"name": "Dernière charge borne", "icon": "mdi:ev-station"},
-        "odometer_km": {"name": "Kilométrage", "unit": "km", "device_class": "distance"},
+        "odometer_km": {"name": "Odomètre (dernière charge)", "unit": "km", "device_class": "distance"},
+        "km_since_last": {"name": "Km depuis la charge précédente", "unit": "km", "device_class": "distance"},
         "battery_capacity_kwh": {"name": "Capacité batterie", "unit": "kWh", "device_class": "energy"},
     }
     for key, meta in sensors.items():
@@ -192,7 +193,7 @@ async def unpublish_vehicle_discovery(vehicle_id: int):
     for key in (
         "charging_at", "session_energy_wh", "session_cost", "session_duration_min",
         "session_start_time", "last_session_energy_wh", "last_session_cost",
-        "last_session_charger", "odometer_km", "battery_capacity_kwh",
+        "last_session_charger", "odometer_km", "km_since_last", "battery_capacity_kwh",
     ):
         await _client.publish(f"{DISCOVERY_PREFIX}/sensor/{v}_{key}/config", "", retain=True)
 
@@ -205,6 +206,65 @@ async def publish_vehicle_state(vehicle_id: int, **values):
         if value is None:
             continue
         await _client.publish(f"{BASE_TOPIC}/{v}/{key}", str(value), retain=True)
+
+
+async def publish_vehicle_last_charge(vehicle_id: int):
+    """Recalcule et republie le résumé « dernière charge » d'un véhicule
+    (énergie, coût, borne, odomètre, km depuis la charge précédente) à partir
+    de la base de données. Autonome (fait sa propre requête) pour pouvoir être
+    appelée aussi bien depuis csms_local.py (fin de session OCPP réelle) que
+    depuis api.py (édition manuelle a posteriori d'une session ou charge
+    externe) : l'odomètre en particulier n'est en général renseigné par
+    l'utilisateur qu'APRÈS coup, pas au moment même de StopTransaction, donc
+    ce deuxième appelant est le cas d'usage le plus fréquent en pratique."""
+    if _client is None:
+        return
+    from .db import SessionLocal
+    from .models import Transaction, Charger
+
+    db = SessionLocal()
+    try:
+        last = db.query(Transaction).filter(
+            Transaction.vehicle_id == vehicle_id,
+            Transaction.status == "completed",
+        ).order_by(Transaction.start_time.desc()).first()
+        if not last:
+            return
+        km_since_last = None
+        if last.odometer_km is not None and last.start_time:
+            prev = db.query(Transaction).filter(
+                Transaction.vehicle_id == vehicle_id,
+                Transaction.odometer_km.isnot(None),
+                Transaction.id != last.id,
+                Transaction.start_time.isnot(None),
+                Transaction.start_time < last.start_time,
+            ).order_by(Transaction.start_time.desc()).first()
+            if prev and prev.odometer_km is not None:
+                delta = last.odometer_km - prev.odometer_km
+                if delta > 0:
+                    km_since_last = round(delta, 1)
+        charger_label = None
+        if last.charger_id:
+            charger_obj = db.query(Charger).filter(Charger.id == last.charger_id).first()
+            charger_label = (charger_obj.display_name if charger_obj else None) or last.charger_id
+        elif last.is_external:
+            charger_label = last.location_label or "Externe"
+        values = {}
+        if last.energy_wh is not None:
+            values["last_session_energy_wh"] = last.energy_wh
+        if last.cost is not None:
+            values["last_session_cost"] = last.cost
+        if charger_label:
+            values["last_session_charger"] = charger_label
+        if last.odometer_km is not None:
+            values["odometer_km"] = last.odometer_km
+        if km_since_last is not None:
+            values["km_since_last"] = km_since_last
+    finally:
+        db.close()
+
+    if values:
+        await publish_vehicle_state(vehicle_id, **values)
 
 
 async def publish_state(charger_id: str, **values):
@@ -286,17 +346,25 @@ async def republish_all():
     (re)connexion au broker : la découverte n'est sinon publiée qu'au moment
     où une borne se connecte au WebSocket, ce qui peut être manqué si le
     client MQTT n'est pas encore prêt à cet instant précis. Republie aussi les
-    véhicules (appareils MQTT indépendants des bornes)."""
+    véhicules (appareils MQTT indépendants des bornes), avec leur vrai statut
+    de charge (pas juste la découverte) : sans ça, un véhicule qui n'a encore
+    jamais chargé depuis l'introduction de cette fonctionnalité resterait sur
+    « Inconnu » côté HA pour En charge/En charge sur/les compteurs de session,
+    même s'il ne charge de toute évidence pas."""
     from .db import SessionLocal
-    from .models import Charger, ConnectorStatus, Vehicle
+    from .models import Charger, ConnectorStatus, Vehicle, Transaction
 
     db = SessionLocal()
     try:
         chargers = db.query(Charger).all()
+        chargers_by_id = {c.id: c for c in chargers}
         connectors_by_charger: dict[str, list] = {}
         for cs in db.query(ConnectorStatus).all():
             connectors_by_charger.setdefault(cs.charger_id, []).append(cs)
         vehicles = db.query(Vehicle).filter(Vehicle.deleted_at.is_(None)).all()
+        active_by_vehicle: dict[int, Transaction] = {}
+        for txn in db.query(Transaction).filter(Transaction.status == "active", Transaction.vehicle_id.isnot(None)).all():
+            active_by_vehicle.setdefault(txn.vehicle_id, txn)
     finally:
         db.close()
 
@@ -314,6 +382,19 @@ async def republish_all():
         await publish_vehicle_discovery(vehicle.id, vehicle.name)
         if vehicle.battery_capacity_kwh is not None:
             await publish_vehicle_state(vehicle.id, battery_capacity_kwh=vehicle.battery_capacity_kwh)
+        active = active_by_vehicle.get(vehicle.id)
+        if active:
+            charger_obj = chargers_by_id.get(active.charger_id)
+            label = (charger_obj.display_name if charger_obj else None) or active.charger_id or "?"
+            await publish_vehicle_state(
+                vehicle.id, is_charging="ON",
+                charging_at=f"{label} / Connecteur {active.connector_id}",
+            )
+        else:
+            await publish_vehicle_state(
+                vehicle.id, is_charging="OFF", charging_at="Aucune",
+                session_energy_wh=0, session_cost=0, session_duration_min=0,
+            )
 
 
 async def run_mqtt_bridge():

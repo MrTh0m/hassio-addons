@@ -219,19 +219,27 @@ async def run_scheduler():
 
 
 async def _evaluate_light_once():
-    """Réévalue périodiquement le pilotage automatique de la luminosité (mode
-    auto), pour détecter le passage d'une borne dans/hors de la fenêtre de
-    réduction nocturne. Contrairement aux transitions d'occupation (gérées en
-    direct par csms_local sur StatusNotification), une heure qui défile ne
-    déclenche aucun événement OCPP : rien d'autre ne prévient le serveur du
-    passage de l'heure de début/fin de réduction sans ce tick périodique."""
+    """Réévalue périodiquement le pilotage automatique de la luminosité, pour
+    détecter le passage d'une borne dans/hors de la fenêtre de réduction
+    nocturne. Contrairement aux transitions d'occupation (gérées en direct par
+    csms_local sur StatusNotification), une heure qui défile ne déclenche
+    aucun événement OCPP : rien d'autre ne prévient le serveur du passage de
+    l'heure de début/fin de réduction sans ce tick périodique.
+
+    Concerne le mode "auto" (occupation + réduction nocturne éventuelle), MAIS
+    aussi le mode "fixed" dès que la réduction nocturne y est activée : elle
+    s'applique indépendamment du mode (voir compute_light_target dans
+    csms_local.py). Sans cette borne "fixed" + night_enabled dans le filtre,
+    la réduction ne se déclencherait jamais pour ces bornes-là, faute de
+    trigger périodique."""
+    from sqlalchemy import or_
     db = SessionLocal()
     try:
         charger_ids = [
             row[0] for row in db.query(Charger.id).filter(
                 Charger.mode == ChargerMode.local,
                 Charger.deleted_at.is_(None),
-                Charger.light_mode == "auto",
+                or_(Charger.light_mode == "auto", Charger.light_night_enabled.is_(True)),
             ).all()
         ]
     finally:
