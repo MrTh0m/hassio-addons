@@ -293,6 +293,7 @@ class LocalChargePoint(ChargePoint16):
                         do_auto_start = True
 
             mode_value = charger.mode.value
+            display_name = charger.display_name
             # Pilotage automatique de la luminosité : on ne déclenche un
             # recalcul que si l'occupation GLOBALE de la borne (au moins un
             # connecteur occupé, cf. _charger_occupied) vient de basculer, pas
@@ -323,7 +324,7 @@ class LocalChargePoint(ChargePoint16):
         if connector_id == 0:
             await mqtt_bridge.publish_state(self.id, status=status)
         else:
-            await mqtt_bridge.publish_connector_discovery(self.id, connector_id, mode_value)
+            await mqtt_bridge.publish_connector_discovery(self.id, connector_id, mode_value, display_name)
             await mqtt_bridge.publish_connector_state(self.id, connector_id, status=status)
             await mqtt_bridge.publish_charge_control_state(self.id, connector_id, status == "Charging")
             closed_updates = {}

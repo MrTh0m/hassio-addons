@@ -24,6 +24,11 @@
   - à la fin d'une session OCPP réelle (StopTransaction, et la fermeture automatique d'une transaction restée active) ;
   - **surtout** lors de la modification a posteriori d'une session (`PUT /api/sessions/{id}`) : l'odomètre est en pratique presque toujours saisi APRÈS la charge, pas au moment même de `StopTransaction`, et rien ne republiait le MQTT à ce moment-là jusqu'ici (point identifié mais laissé de côté lors de l'introduction initiale de cette fonctionnalité) ;
   - à la création d'une charge externe.
+- **Corrigé** : le nom de l'appareil MQTT d'une borne utilisait l'id technique brut (`Borne 4d1e481d-cbf1-...`) au lieu du nom d'affichage (`Borne maison`), ce qui générait des `entity_id` illisibles côté HA. Utilise maintenant `display_name` avec repli sur l'id technique si non défini. Republié immédiatement (borne + tous ses connecteurs) dès qu'on renomme une borne, sans attendre une reconnexion.
+  ⚠️ Renommer une borne déjà en prod avec ce correctif changera ses `entity_id` HA (ancien nom basé sur l'id technique → nouveau basé sur le nom d'affichage) : à refaire une fois si des cartes/automatisations référencent déjà les anciens noms.
+- **Amélioré** : nouveau resserrement de l'onglet Réglages de la modal borne :
+  - Nom d'affichage, Mode de pilotage, Autorisation de charge et Abonnement/tarif regroupés dans une seule carte (au lieu de flotter séparément sur la page), cohérente avec le traitement déjà appliqué à Luminosité.
+  - Espacements verticaux réduits dans les deux cartes (titre « Réglages » redondant avec l'onglet retiré, marges resserrées entre les champs).
 
 ## 0.19.20
 

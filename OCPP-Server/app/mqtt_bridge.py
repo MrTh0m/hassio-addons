@@ -24,23 +24,26 @@ def _slug(charger_id: str) -> str:
     return "".join(c if c.isalnum() else "_" for c in charger_id)
 
 
-def _device_info(charger_id: str) -> dict:
+def _device_info(charger_id: str, display_name: str | None = None) -> dict:
     slug = _slug(charger_id)
     return {
         "identifiers": [f"ocppserver_{slug}"],
-        "name": f"Borne {charger_id}",
+        "name": display_name or f"Borne {charger_id}",
         "manufacturer": "OCPP Backoffice Server",
     }
 
 
-async def publish_discovery(charger_id: str, mode: str):
+async def publish_discovery(charger_id: str, mode: str, display_name: str | None = None):
     """Publie le capteur de statut global de la borne (connecteur 0, la
-    borne elle-même au sens de la norme, pas un connecteur physique)."""
+    borne elle-même au sens de la norme, pas un connecteur physique).
+    `display_name` : nom convivial de la borne (ex. « Borne maison »), pour que
+    l'appareil côté HA porte ce nom plutôt que l'id technique brut. Repli sur
+    l'id technique si non fourni ou non encore défini."""
     if _client is None:
         return
     slug = _slug(charger_id)
     _slug_to_id[slug] = charger_id
-    device = _device_info(charger_id)
+    device = _device_info(charger_id, display_name)
 
     payload = {
         "name": "Statut borne",
@@ -59,10 +62,10 @@ async def publish_discovery(charger_id: str, mode: str):
     await _client.publish(f"{DISCOVERY_PREFIX}/switch/{slug}_charge_control/config", "", retain=True)
 
 
-async def publish_connector_discovery(charger_id: str, connector_id: int, mode: str):
+async def publish_connector_discovery(charger_id: str, connector_id: int, mode: str, display_name: str | None = None):
     """Publie les entités MQTT Discovery pour UN connecteur physique donné.
     Regroupées sous le même appareil que la borne, mais ce sont bien des
-    entités distinctes par connecteur.
+    entités distinctes par connecteur. `display_name` : voir publish_discovery.
 
     Deux familles d'entités énergie, à ne pas confondre :
     - energy_wh : le registre brut Energy.Active.Import.Register de la borne,
@@ -79,7 +82,7 @@ async def publish_connector_discovery(charger_id: str, connector_id: int, mode: 
         return
     slug = _slug(charger_id)
     _slug_to_id[slug] = charger_id
-    device = _device_info(charger_id)
+    device = _device_info(charger_id, display_name)
     c = f"connector{connector_id}"
 
     sensors = {
@@ -369,13 +372,13 @@ async def republish_all():
         db.close()
 
     for charger in chargers:
-        await publish_discovery(charger.id, charger.mode.value)
+        await publish_discovery(charger.id, charger.mode.value, charger.display_name)
         if charger.status:
             await publish_state(charger.id, status=charger.status)
         for cs in connectors_by_charger.get(charger.id, []):
             if cs.connector_id == 0:
                 continue
-            await publish_connector_discovery(charger.id, cs.connector_id, charger.mode.value)
+            await publish_connector_discovery(charger.id, cs.connector_id, charger.mode.value, charger.display_name)
             await publish_connector_state(charger.id, cs.connector_id, status=cs.status)
 
     for vehicle in vehicles:

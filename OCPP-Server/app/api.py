@@ -335,7 +335,7 @@ class DisplayNameUpdate(BaseModel):
 
 
 @router.put("/chargers/{charger_id}/display-name")
-def set_charger_display_name(
+async def set_charger_display_name(
     charger_id: str, body: DisplayNameUpdate,
     db: Session = Depends(get_db), user=Depends(require_admin),
 ):
@@ -346,6 +346,17 @@ def set_charger_display_name(
         raise HTTPException(status_code=404, detail="Borne inconnue")
     charger.display_name = body.display_name or None
     db.commit()
+    # Republie immédiatement la découverte MQTT (borne + tous ses connecteurs) :
+    # l'appareil côté HA doit suivre le renommage sans attendre une
+    # reconnexion ou le prochain redémarrage du pont MQTT.
+    connector_ids = [
+        row[0] for row in db.query(ConnectorStatus.connector_id).filter(
+            ConnectorStatus.charger_id == charger_id, ConnectorStatus.connector_id != 0
+        ).distinct().all()
+    ]
+    await mqtt_bridge.publish_discovery(charger_id, charger.mode.value, charger.display_name)
+    for cid in connector_ids:
+        await mqtt_bridge.publish_connector_discovery(charger_id, cid, charger.mode.value, charger.display_name)
     return {"status": "ok"}
 
 

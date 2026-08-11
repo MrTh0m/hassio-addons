@@ -207,10 +207,11 @@ async def ocpp_endpoint(websocket: WebSocket, charge_point_id: str):
             db.commit()
         mode = charger.mode
         relay_url = charger.relay_url
+        display_name = charger.display_name
     finally:
         db.close()
 
-    await mqtt_bridge.publish_discovery(charge_point_id, mode.value)
+    await mqtt_bridge.publish_discovery(charge_point_id, mode.value, display_name)
 
     try:
         if mode == ChargerMode.relay:
