@@ -1,3 +1,16 @@
+## 0.19.20
+
+- **Nouveau** : pilotage automatique de la luminosité (`LightIntensity`), en plus du curseur manuel existant. Choix exclusif par borne entre deux modes :
+  - **Fixe** (comportement historique) : le curseur unique manuel, rien d'automatique.
+  - **Auto** : deux valeurs distinctes, "en charge" (véhicule branché, quel que soit le connecteur sur une borne à plusieurs) et "libre" (aucun véhicule), poussées automatiquement à chaque changement d'occupation. Réduction nocturne optionnelle en points de pourcentage (pas un facteur) entre deux horaires, appliquée par-dessus la valeur active. Les valeurs des deux modes sont mémorisées indépendamment : basculer entre fixe et auto ne fait rien perdre.
+  - Apprentissage automatique et passif de la prise en charge de l'extinction totale (0%) par la borne (observé lors de tout essai réel, manuel ou automatique) : sert de plancher à la réduction nocturne, 1% tant que non confirmé, 0% si confirmé accepté.
+  - N'a d'effet que sur une borne possédant réellement la clé `LightIntensity`.
+  - ⚠️ Les horaires de réduction nocturne sont évalués en UTC (comme les heures creuses existantes) : à vérifier que le fuseau du conteneur correspond à l'heure locale souhaitée.
+
+## 0.19.19
+
+- **Corrigé** : quand une borne refuse une valeur de configuration OCPP (`Rejected`/`NotSupported`) ou que la requête échoue, le champ concerné (curseur de luminosité y compris) revient automatiquement à la dernière valeur réellement confirmée par la borne, au lieu de rester affiché sur la valeur refusée comme si elle avait été appliquée. S'applique à tous les champs de l'onglet Configuration OCPP, pas seulement à la luminosité.
+
 ## 0.19.18
 
 - **Amélioré** : le champ Luminosité (LED) devient un curseur (slider) par pas de 5 %, avec la valeur affichée en direct, au lieu d'un champ numérique à taper. L'enregistrement se déclenche au relâchement du curseur, sans bouton séparé.

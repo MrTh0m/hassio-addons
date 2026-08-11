@@ -211,7 +211,40 @@ async def run_scheduler():
             await _evaluate_once()
         except Exception:
             logger.warning("Erreur dans le planificateur de charge", exc_info=True)
+        try:
+            await _evaluate_light_once()
+        except Exception:
+            logger.warning("Erreur dans la réévaluation de la luminosité", exc_info=True)
         await asyncio.sleep(TICK_SECONDS)
+
+
+async def _evaluate_light_once():
+    """Réévalue périodiquement le pilotage automatique de la luminosité (mode
+    auto), pour détecter le passage d'une borne dans/hors de la fenêtre de
+    réduction nocturne. Contrairement aux transitions d'occupation (gérées en
+    direct par csms_local sur StatusNotification), une heure qui défile ne
+    déclenche aucun événement OCPP : rien d'autre ne prévient le serveur du
+    passage de l'heure de début/fin de réduction sans ce tick périodique."""
+    db = SessionLocal()
+    try:
+        charger_ids = [
+            row[0] for row in db.query(Charger.id).filter(
+                Charger.mode == ChargerMode.local,
+                Charger.deleted_at.is_(None),
+                Charger.light_mode == "auto",
+            ).all()
+        ]
+    finally:
+        db.close()
+
+    for charger_id in charger_ids:
+        cp = CONNECTED_CHARGERS.get(charger_id)
+        if not cp:
+            continue
+        try:
+            await cp.apply_light_intensity()
+        except Exception:
+            logger.debug("Réévaluation périodique de la luminosité échouée sur %s", charger_id, exc_info=True)
 
 
 def _get_active_conditions(db, charger, connector_id: int):

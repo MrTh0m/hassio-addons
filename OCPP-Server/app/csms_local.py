@@ -1,6 +1,6 @@
 import asyncio
 import logging
-from datetime import datetime
+from datetime import datetime, time as dtime
 
 from ocpp.routing import on
 from ocpp.v16 import ChargePoint as ChargePoint16
@@ -31,6 +31,67 @@ SMART_CHARGING_SUPPORT: dict[str, bool] = {}
 # dès qu'un nouveau BootNotification est reçu (elle vient de redémarrer,
 # pour quelque raison que ce soit) ou dès que le serveur redémarre.
 PENDING_REBOOT_KEYS: dict[str, set[str]] = {}
+
+# Statuts de connecteur considérés comme "occupés" (véhicule branché, quelle
+# que soit l'étape) pour le pilotage automatique de la luminosité. Mêmes
+# valeurs que celles utilisées par le planificateur (scheduler.py) pour
+# décider si un connecteur est "plugged".
+OCCUPIED_CONNECTOR_STATUSES = ("Preparing", "Charging", "SuspendedEV", "SuspendedEVSE", "Finishing")
+
+
+def _charger_occupied(db, charger_id: str) -> bool:
+    """Vrai si au moins un connecteur (hors pseudo-connecteur 0) de cette
+    borne est actuellement occupé. Pris en agrégat sur toute la borne, car
+    LightIntensity est une clé OCPP unique pour toute la borne, pas par
+    connecteur (voir discussion multi-connecteurs) : sur une borne à
+    plusieurs connecteurs, un seul connecteur occupé suffit à considérer la
+    borne "en charge" pour ce réglage."""
+    rows = db.query(ConnectorStatus.status).filter(
+        ConnectorStatus.charger_id == charger_id,
+        ConnectorStatus.connector_id != 0,
+    ).all()
+    return any(r[0] in OCCUPIED_CONNECTOR_STATUSES for r in rows)
+
+
+def _in_time_window(start: str | None, end: str | None, now: datetime) -> bool:
+    """Vrai si l'heure de `now` tombe dans la fenêtre [start, end) au format
+    "HH:MM". Gère le passage de minuit (ex. 22:00–06:00). Retourne False si
+    start/end sont absents ou mal formés, plutôt que de planter."""
+    if not start or not end:
+        return False
+    try:
+        sh, sm = (int(x) for x in start.split(":"))
+        eh, em = (int(x) for x in end.split(":"))
+        s, e = dtime(sh, sm), dtime(eh, em)
+    except (ValueError, AttributeError):
+        return False
+    t = now.time()
+    if s <= e:
+        return s <= t < e
+    return t >= s or t < e
+
+
+def compute_light_target(mode, occupied: bool, fixed_value, auto_charge_value,
+                         auto_free_value, night_enabled, night_reduction,
+                         night_start, night_end, zero_supported, now: datetime):
+    """Calcule la valeur LightIntensity (%) que la borne devrait avoir en ce
+    moment d'après les réglages de pilotage automatique. Fonction pure (pas
+    d'accès base/réseau) pour rester testable sans borne réelle, sur le même
+    principe que should_charge_now dans scheduler.py.
+
+    Retourne None si rien n'est à pousser automatiquement : le mode "fixed"
+    ne déclenche jamais de push automatique (le curseur manuel s'en charge
+    déjà), et le mode "auto" sans les deux valeurs configurées ne peut rien
+    calculer."""
+    if mode != "auto":
+        return None
+    if auto_charge_value is None or auto_free_value is None:
+        return None
+    base = auto_charge_value if occupied else auto_free_value
+    if night_enabled and night_reduction and _in_time_window(night_start, night_end, now):
+        floor = 0 if zero_supported else 1
+        return max(floor, base - night_reduction)
+    return base
 
 
 def _auth_mode_value(charger) -> str:
@@ -91,6 +152,9 @@ class LocalChargePoint(ChargePoint16):
             db.close()
 
         asyncio.create_task(self._detect_smart_charging())
+        # Reconnexion = bon moment pour resynchroniser la luminosité en mode
+        # auto (le réglage aurait pu dériver pendant la coupure).
+        asyncio.create_task(self.apply_light_intensity())
         # SSE : la borne vient de (re)connecter
         sse_notify("charger_connected", {"charger_id": self.id})
 
@@ -163,6 +227,7 @@ class LocalChargePoint(ChargePoint16):
             if not entry:
                 entry = ConnectorStatus(charger_id=self.id, connector_id=connector_id)
                 db.add(entry)
+            old_status = entry.status
             entry.status = status
             entry.error_code = kwargs.get("error_code")
             entry.updated_at = datetime.utcnow()
@@ -206,6 +271,22 @@ class LocalChargePoint(ChargePoint16):
                         do_auto_start = True
 
             mode_value = charger.mode.value
+            # Pilotage automatique de la luminosité : on ne déclenche un
+            # recalcul que si l'occupation GLOBALE de la borne (au moins un
+            # connecteur occupé, cf. _charger_occupied) vient de basculer, pas
+            # à chaque StatusNotification (ex. Preparing -> Charging reste
+            # "occupé" des deux côtés, aucune raison de repousser une valeur).
+            light_transition = False
+            if connector_id != 0:
+                other_rows = db.query(ConnectorStatus.status).filter(
+                    ConnectorStatus.charger_id == self.id,
+                    ConnectorStatus.connector_id != 0,
+                    ConnectorStatus.connector_id != connector_id,
+                ).all()
+                other_occupied = any(r[0] in OCCUPIED_CONNECTOR_STATUSES for r in other_rows)
+                occupied_before = other_occupied or (old_status in OCCUPIED_CONNECTOR_STATUSES)
+                occupied_after = other_occupied or (status in OCCUPIED_CONNECTOR_STATUSES)
+                light_transition = occupied_before != occupied_after
             db.commit()
         finally:
             db.close()
@@ -228,6 +309,9 @@ class LocalChargePoint(ChargePoint16):
 
         if do_auto_start:
             asyncio.create_task(self._auto_start(connector_id))
+
+        if light_transition:
+            asyncio.create_task(self.apply_light_intensity())
 
         return call_result.StatusNotification()
 
@@ -456,15 +540,36 @@ class LocalChargePoint(ChargePoint16):
         # borne), simplement pas encore appliquée à son comportement actif tant
         # qu'elle n'a pas redémarré. Le cache local doit donc suivre ce cas au
         # même titre qu'Accepted, contrairement à Rejected/NotSupported.
-        if response.status in (ConfigurationStatus.accepted, ConfigurationStatus.reboot_required):
+        accepted_like = response.status in (ConfigurationStatus.accepted, ConfigurationStatus.reboot_required)
+        if accepted_like or key == "LightIntensity":
             db = self._db()
             try:
-                entry = db.query(ConfigurationKey).filter(
-                    ConfigurationKey.charger_id == self.id,
-                    ConfigurationKey.key == key,
-                ).first()
-                if entry:
-                    entry.value = value
+                if accepted_like:
+                    entry = db.query(ConfigurationKey).filter(
+                        ConfigurationKey.charger_id == self.id,
+                        ConfigurationKey.key == key,
+                    ).first()
+                    if entry:
+                        entry.value = value
+                if key == "LightIntensity":
+                    charger = db.query(Charger).filter(Charger.id == self.id).first()
+                    if charger:
+                        # Apprentissage passif : la première fois qu'un essai à 0
+                        # (manuel ou automatique) obtient une réponse définitive,
+                        # on mémorise si cette borne accepte l'extinction totale.
+                        # Sert de plancher à la réduction nocturne.
+                        if value == "0":
+                            charger.light_zero_supported = accepted_like
+                        # La "dernière valeur fixe utilisée" ne doit suivre que
+                        # les poussées MANUELLES (mode fixed) : en mode auto,
+                        # push_configuration est appelé par apply_light_intensity
+                        # avec la valeur calculée (occupation/nuit), pas un choix
+                        # utilisateur à mémoriser comme réglage fixe.
+                        if accepted_like and (charger.light_mode or "fixed") != "auto":
+                            try:
+                                charger.light_fixed_value = int(value)
+                            except ValueError:
+                                pass
                 db.commit()
             finally:
                 db.close()
@@ -473,6 +578,45 @@ class LocalChargePoint(ChargePoint16):
         else:
             PENDING_REBOOT_KEYS.get(self.id, set()).discard(key)
         return response.status
+
+    async def apply_light_intensity(self):
+        """Recalcule et pousse, si nécessaire, la valeur LightIntensity cible
+        d'après le mode auto (occupation + réduction nocturne éventuelle). Ne
+        fait rien en mode fixe (le curseur manuel s'en charge déjà) ni si la
+        borne n'a pas cette clé. N'envoie un ChangeConfiguration que si la
+        cible diffère de la dernière valeur connue en cache, pour éviter de
+        solliciter la borne à chaque appel (transition de connecteur, tick du
+        planificateur, reconnexion)."""
+        db = self._db()
+        try:
+            charger = db.query(Charger).filter(Charger.id == self.id).first()
+            if not charger:
+                return
+            entry = db.query(ConfigurationKey).filter(
+                ConfigurationKey.charger_id == self.id,
+                ConfigurationKey.key == "LightIntensity",
+            ).first()
+            if not entry:
+                return  # borne sans cette clé : rien à automatiser
+            occupied = _charger_occupied(db, self.id)
+            target = compute_light_target(
+                charger.light_mode, occupied, charger.light_fixed_value,
+                charger.light_auto_charge_value, charger.light_auto_free_value,
+                bool(charger.light_night_enabled), charger.light_night_reduction,
+                charger.light_night_start, charger.light_night_end,
+                bool(charger.light_zero_supported), datetime.utcnow(),
+            )
+            current = entry.value
+        finally:
+            db.close()
+        if target is None:
+            return
+        if current is not None and str(target) == str(current):
+            return  # déjà à la bonne valeur, rien à pousser
+        try:
+            await self.push_configuration("LightIntensity", str(target))
+        except Exception:
+            logger.debug("Application automatique de LightIntensity échouée sur %s", self.id, exc_info=True)
 
     async def trigger_reset(self, reset_type: str = "Soft"):
         """Demande un redémarrage à la borne via OCPP (Reset.req). 'Soft' relance

@@ -1,6 +1,6 @@
 {
   "name": "OCPP Backoffice Server",
-  "version": "0.19.18",
+  "version": "0.19.20",
   "slug": "ocppserver",
   "description": "Serveur OCPP 1.6 auto-hébergé (CSMS) pour piloter une ou plusieurs bornes de recharge : démarrage/arrêt à distance, suivi des coûts par véhicule et par tarif, programmation de charge, multi-utilisateurs, et intégration Home Assistant via MQTT Discovery. Voir DOCS pour le détail des fonctionnalités.",
   "url": "https://github.com/MrTh0m/hassio-addons",

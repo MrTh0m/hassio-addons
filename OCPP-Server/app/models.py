@@ -105,6 +105,27 @@ class Charger(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     deleted_at = Column(DateTime, nullable=True)
 
+    # --- Pilotage automatique de la luminosité (clé OCPP LightIntensity,
+    # non standard mais observée chez plusieurs constructeurs dont Schneider).
+    # N'a d'effet que si la borne possède réellement cette clé ; sinon ces
+    # champs restent inertes. "fixed" (défaut) = comportement historique,
+    # réglage manuel uniquement, aucune automatisation. "auto" = la valeur est
+    # poussée automatiquement selon l'occupation du connecteur, avec une
+    # réduction nocturne optionnelle appliquée par-dessus dans les deux modes.
+    light_mode = Column(String, default="fixed", nullable=True)  # "fixed" | "auto"
+    light_fixed_value = Column(Integer, nullable=True)  # dernière valeur fixe utilisée (%)
+    light_auto_charge_value = Column(Integer, nullable=True)  # % quand connecteur occupé
+    light_auto_free_value = Column(Integer, nullable=True)  # % quand connecteur libre
+    light_night_enabled = Column(Boolean, default=False, nullable=True)
+    light_night_reduction = Column(Integer, nullable=True)  # points à soustraire (pas un facteur)
+    light_night_start = Column(String, nullable=True)  # "HH:MM"
+    light_night_end = Column(String, nullable=True)  # "HH:MM", peut être < start (traverse minuit)
+    # None = jamais testé, True/False = observé lors d'un ChangeConfiguration
+    # LightIntensity=0 réel (manuel ou automatique). Sert de plancher à la
+    # réduction nocturne : 0 si connu accepté, sinon 1 (valeur la plus basse
+    # qu'on sait acceptée par défaut) tant que ce n'est pas confirmé.
+    light_zero_supported = Column(Boolean, nullable=True)
+
     transactions = relationship("Transaction", back_populates="charger")
     meter_values = relationship("MeterValue", back_populates="charger")
     config_keys = relationship("ConfigurationKey", back_populates="charger")

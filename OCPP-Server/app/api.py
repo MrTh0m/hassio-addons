@@ -491,6 +491,75 @@ async def reset_charger(
     return {"status": result.status}
 
 
+class LightSettingsUpdate(BaseModel):
+    mode: str  # "fixed" | "auto"
+    auto_charge_value: Optional[int] = None
+    auto_free_value: Optional[int] = None
+    night_enabled: bool = False
+    night_reduction: Optional[int] = None
+    night_start: Optional[str] = None
+    night_end: Optional[str] = None
+
+
+@router.get("/chargers/{charger_id}/light-settings")
+def get_light_settings(charger_id: str, db: Session = Depends(get_db), user=Depends(get_current_user)):
+    """Réglages du pilotage de la clé OCPP LightIntensity (luminosité). N'a
+    d'effet que si la borne possède réellement cette clé ; ces valeurs
+    peuvent exister même sans que la clé soit détectée (réglage mémorisé par
+    avance ou pour une borne temporairement hors ligne)."""
+    charger = db.query(Charger).filter(Charger.id == charger_id).first()
+    if not charger:
+        raise HTTPException(status_code=404, detail="Borne inconnue")
+    return {
+        "mode": charger.light_mode or "fixed",
+        "fixed_value": charger.light_fixed_value,
+        "auto_charge_value": charger.light_auto_charge_value,
+        "auto_free_value": charger.light_auto_free_value,
+        "night_enabled": bool(charger.light_night_enabled),
+        "night_reduction": charger.light_night_reduction,
+        "night_start": charger.light_night_start,
+        "night_end": charger.light_night_end,
+        "zero_supported": charger.light_zero_supported,
+    }
+
+
+@router.put("/chargers/{charger_id}/light-settings")
+async def set_light_settings(
+    charger_id: str, body: LightSettingsUpdate,
+    db: Session = Depends(get_db), user=Depends(require_admin),
+):
+    """Configure le pilotage automatique de LightIntensity : mode "fixed"
+    (comportement historique, réglage manuel uniquement via le curseur, aucune
+    automatisation) ou "auto" (valeur poussée selon l'occupation du
+    connecteur, avec réduction nocturne optionnelle). La valeur fixe elle-même
+    n'est pas modifiée ici : elle continue de passer par le curseur existant
+    (PUT /config/LightIntensity), qui la mémorise automatiquement."""
+    charger = db.query(Charger).filter(Charger.id == charger_id).first()
+    if not charger:
+        raise HTTPException(status_code=404, detail="Borne inconnue")
+    if body.mode not in ("fixed", "auto"):
+        raise HTTPException(status_code=422, detail="mode doit être 'fixed' ou 'auto'")
+    charger.light_mode = body.mode
+    charger.light_auto_charge_value = body.auto_charge_value
+    charger.light_auto_free_value = body.auto_free_value
+    charger.light_night_enabled = body.night_enabled
+    charger.light_night_reduction = body.night_reduction
+    charger.light_night_start = body.night_start
+    charger.light_night_end = body.night_end
+    db.commit()
+    # Applique immédiatement si la borne est connectée, pour un retour visuel
+    # sans attendre la prochaine transition de connecteur ou le tick du
+    # planificateur. Le réglage reste enregistré même si la borne est hors
+    # ligne ou si cette application immédiate échoue.
+    cp = CONNECTED_CHARGERS.get(charger_id)
+    if cp:
+        try:
+            await cp.apply_light_intensity()
+        except Exception:
+            pass
+    return {"status": "ok"}
+
+
 @router.get("/chargers/{charger_id}/connectors")
 def list_connector_statuses(charger_id: str, db: Session = Depends(get_db), user=Depends(get_current_user)):
     entries = db.query(ConnectorStatus).filter(ConnectorStatus.charger_id == charger_id).order_by(

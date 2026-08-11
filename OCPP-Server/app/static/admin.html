@@ -810,6 +810,108 @@ function toggleOcppInfo(id) {
   if (el) el.style.display = el.style.display === "none" ? "block" : "none";
 }
 
+/* Section "Luminosité" de l'onglet Réglages : curseur unique en mode fixe,
+   ou deux curseurs (en charge / libre) + réduction nocturne optionnelle en
+   mode auto. `value` est la valeur LightIntensity actuelle de la borne
+   (pour le mode fixe), `s` le blob de réglages renvoyé par GET
+   /light-settings (pour le mode auto). */
+function renderLightSection(id, value, s) {
+  const isAuto = s.mode === "auto";
+  const chargeVal = s.auto_charge_value ?? 50;
+  const freeVal = s.auto_free_value ?? 20;
+  const nightReduction = s.night_reduction ?? 10;
+  const nightStart = s.night_start || "22:00";
+  const nightEnd = s.night_end || "06:00";
+  const modeBtn = (m, label) =>
+    `<button class="btn btn-sm ${s.mode === m ? "" : "btn-ghost"}" onclick="setLightMode('${id}','${m}')">${label}</button>`;
+
+  const fixedBlock = `
+    <div class="cluster center" style="gap:.6rem;margin-top:.5rem;flex-wrap:nowrap">
+      <input type="range" min="0" max="100" step="5" id="light-intensity-${id}" value="${esc(value)}" style="flex:1;min-width:0"
+        oninput="document.getElementById('light-intensity-${id}-val').textContent = this.value + '\u00a0%'"
+        onchange="saveOcppKey('${id}','LightIntensity','light-intensity-${id}')">
+      <span id="light-intensity-${id}-val" class="small" style="min-width:3.4em;text-align:right;flex:none">${esc(value)}\u00a0%</span>
+    </div>`;
+
+  const sliderRow = (label, fieldId, val) => `
+    <div style="margin-top:.5rem">
+      <div class="spread" style="margin-bottom:.15rem"><span class="tiny muted">${label}</span><span id="${fieldId}-val" class="tiny">${val}\u00a0%</span></div>
+      <input type="range" min="0" max="100" step="5" id="${fieldId}" value="${val}"
+        oninput="document.getElementById('${fieldId}-val').textContent = this.value + '\u00a0%'"
+        onchange="saveLightSettings('${id}')">
+    </div>`;
+
+  const autoBlock = `
+    ${sliderRow("En charge (véhicule branché)", `light-auto-charge-${id}`, chargeVal)}
+    ${sliderRow("Libre (aucun véhicule)", `light-auto-free-${id}`, freeVal)}
+    <label class="cluster center" style="gap:.4rem;margin-top:.6rem;font-size:.85rem;cursor:pointer">
+      <input type="checkbox" id="light-night-enabled-${id}" ${s.night_enabled ? "checked" : ""} onchange="saveLightSettings('${id}')">
+      Réduire la nuit
+    </label>
+    <div id="light-night-params-${id}" class="cluster center" style="gap:.4rem;margin-top:.4rem;flex-wrap:wrap;${s.night_enabled ? "" : "display:none"}">
+      <span class="tiny muted">de</span>
+      <input type="number" id="light-night-reduction-${id}" value="${nightReduction}" min="1" max="100" style="width:4.5em" onchange="saveLightSettings('${id}')">
+      <span class="tiny muted">points, entre</span>
+      <input type="time" id="light-night-start-${id}" value="${esc(nightStart)}" onchange="saveLightSettings('${id}')">
+      <span class="tiny muted">et</span>
+      <input type="time" id="light-night-end-${id}" value="${esc(nightEnd)}" onchange="saveLightSettings('${id}')">
+    </div>
+    ${s.zero_supported === false ? `<div class="tiny muted" style="margin-top:.3rem">Extinction totale (0%) refusée par cette borne lors d'un précédent essai : la réduction nocturne se limitera à 1%.</div>` : ""}`;
+
+  return `
+    <div style="max-width:340px; margin-bottom:.2rem">
+      <div class="cluster center" style="gap:.3rem">
+        <span style="font-size:.8rem;color:var(--text-muted);font-weight:550">Luminosité (LED)</span>
+        <button class="btn btn-icon btn-ghost" style="width:1.3rem;height:1.3rem;min-height:0;padding:0" title="Voir la description" onclick="toggleOcppInfo('light-intensity-${id}-info')"><svg style="width:.85em;height:.85em"><use href="#i-info"/></svg></button>
+      </div>
+      <div class="cluster center" style="gap:.3rem;margin-top:.4rem">
+        ${modeBtn("fixed", "Fixe")}
+        ${modeBtn("auto", "Auto")}
+      </div>
+      ${isAuto ? autoBlock : fixedBlock}
+    </div>
+    <div id="light-intensity-${id}-info" class="tiny muted" style="display:none;margin:.3rem 0 .8rem;max-width:340px;line-height:1.4">${esc(ocppKeyInfo("LightIntensity").desc)}</div>`;
+}
+
+async function setLightMode(chargerId, mode) {
+  const s = LIGHT_SETTINGS_CACHE[chargerId] || { mode: "fixed" };
+  s.mode = mode;
+  await pushLightSettings(chargerId, s);
+  // Reconstruit l'onglet pour basculer entre le curseur unique (fixe) et les
+  // deux curseurs + panneau nuit (auto) : plus simple et plus sûr qu'un
+  // basculement manuel de blocs DOM entiers.
+  openChargerConfigModal(chargerId, "settings");
+}
+
+async function saveLightSettings(chargerId) {
+  const s = LIGHT_SETTINGS_CACHE[chargerId] || { mode: "auto" };
+  const chargeEl = document.getElementById(`light-auto-charge-${chargerId}`);
+  const freeEl = document.getElementById(`light-auto-free-${chargerId}`);
+  const nightEnabledEl = document.getElementById(`light-night-enabled-${chargerId}`);
+  const nightReductionEl = document.getElementById(`light-night-reduction-${chargerId}`);
+  const nightStartEl = document.getElementById(`light-night-start-${chargerId}`);
+  const nightEndEl = document.getElementById(`light-night-end-${chargerId}`);
+  if (chargeEl) s.auto_charge_value = parseInt(chargeEl.value, 10);
+  if (freeEl) s.auto_free_value = parseInt(freeEl.value, 10);
+  if (nightEnabledEl) s.night_enabled = nightEnabledEl.checked;
+  if (nightReductionEl) s.night_reduction = parseInt(nightReductionEl.value, 10);
+  if (nightStartEl) s.night_start = nightStartEl.value;
+  if (nightEndEl) s.night_end = nightEndEl.value;
+  // Affiche/masque les paramètres de réduction nocturne sans tout recharger.
+  const paramsWrap = document.getElementById(`light-night-params-${chargerId}`);
+  if (paramsWrap) paramsWrap.style.display = s.night_enabled ? "" : "none";
+  await pushLightSettings(chargerId, s);
+}
+
+async function pushLightSettings(chargerId, s) {
+  LIGHT_SETTINGS_CACHE[chargerId] = s;
+  await apiCall(
+    `api/chargers/${chargerId}/light-settings`,
+    { method: "PUT", headers: jsonHeaders(), body: JSON.stringify(s) },
+    "Réglage de luminosité mis à jour"
+  );
+}
+
 let toastTimer = null;
 function toast(msg, kind) {
   const root = document.getElementById("toast-root");
@@ -1334,13 +1436,21 @@ async function openChargerConfigModal(id, activeTab) {
   // bandeau LED sur les bornes Schneider). N'apparaît que si la clé existe
   // vraiment sur cette borne précise et est modifiable.
   let friendlyLight = null;
+  let lightSettings = { mode: "fixed", auto_charge_value: null, auto_free_value: null,
+    night_enabled: false, night_reduction: null, night_start: null, night_end: null, zero_supported: null };
   if (isLocal && charger.connected) {
     try {
       const cfg = await fetch(`api/chargers/${id}/config`, { headers: authHeaders() }).then(r => r.json());
       const light = (cfg.keys || []).find(k => k.key === "LightIntensity");
       if (light && !light.readonly) friendlyLight = light.value;
     } catch (e) { /* borne injoignable : le réglage reste simplement absent */ }
+    if (friendlyLight != null) {
+      try {
+        lightSettings = await fetch(`api/chargers/${id}/light-settings`, { headers: authHeaders() }).then(r => r.json());
+      } catch (e) { /* pas grave : on retombe sur le mode fixe par défaut */ }
+    }
   }
+  LIGHT_SETTINGS_CACHE[id] = lightSettings;
 
   const condRows = conditions.length ? conditions.map(cd => `
     <div class="card" style="margin:.35rem 0; padding:.55rem .75rem">
@@ -1386,20 +1496,7 @@ async function openChargerConfigModal(id, activeTab) {
       <label class="field" style="max-width:340px; margin-bottom:.8rem"><span>Nom d'affichage (optionnel)</span>
         <input id="dispname-${id}" value="${esc(charger.display_name || "")}" placeholder="${esc(id)}">
       </label>
-      ${friendlyLight != null ? `
-      <div style="max-width:340px; margin-bottom:.2rem">
-        <div class="cluster center" style="gap:.3rem">
-          <span style="font-size:.8rem;color:var(--text-muted);font-weight:550">Luminosité (LED)</span>
-          <button class="btn btn-icon btn-ghost" style="width:1.3rem;height:1.3rem;min-height:0;padding:0" title="Voir la description" onclick="toggleOcppInfo('light-intensity-${id}-info')"><svg style="width:.85em;height:.85em"><use href="#i-info"/></svg></button>
-        </div>
-        <div class="cluster center" style="gap:.6rem;margin-top:.35rem;flex-wrap:nowrap">
-          <input type="range" min="0" max="100" step="5" id="light-intensity-${id}" value="${esc(friendlyLight)}" style="flex:1;min-width:0"
-            oninput="document.getElementById('light-intensity-${id}-val').textContent = this.value + '\u00a0%'"
-            onchange="saveOcppKey('${id}','LightIntensity','light-intensity-${id}')">
-          <span id="light-intensity-${id}-val" class="small" style="min-width:3.4em;text-align:right;flex:none">${esc(friendlyLight)}\u00a0%</span>
-        </div>
-      </div>
-      <div id="light-intensity-${id}-info" class="tiny muted" style="display:none;margin:0 0 .8rem;max-width:340px;line-height:1.4">${esc(ocppKeyInfo("LightIntensity").desc)}</div>` : ""}
+      ${friendlyLight != null ? renderLightSection(id, friendlyLight, lightSettings) : ""}
       <div class="grid-cards two">
         <div>
           <label class="field"><span>Mode de pilotage</span>
@@ -1560,10 +1657,33 @@ async function buildOcppConfigTab(chargerId, isLocal, connectors) {
   </div>`;
 }
 
+// Valeur de référence d'un champ de configuration OCPP : la dernière valeur
+// confirmée par la borne (dataset.lastGood, mis à jour à chaque succès), ou à
+// défaut la valeur initiale du rendu (attribut HTML d'origine, jamais modifié
+// par les affectations JS à .value). Pour un <select>, l'attribut HTML
+// `selected` d'origine sert d'équivalent (les <select> n'ont pas de
+// defaultValue natif).
+function _ocppFieldInitial(el) {
+  if (el.tagName === "SELECT") {
+    const opt = el.querySelector("option[selected]");
+    return opt ? opt.value : el.value;
+  }
+  return el.defaultValue !== undefined ? el.defaultValue : el.value;
+}
+// Remet visuellement un champ à une valeur donnée (ex. après un Rejected) :
+// remet aussi à jour l'affichage « -val » accolé s'il existe (cas du curseur
+// de luminosité, actuellement le seul champ avec ce label ; à généraliser le
+// jour où un second curseur avec une autre unité apparaîtrait).
+function _revertOcppField(el, previous) {
+  el.value = previous;
+  const label = document.getElementById(`${el.id}-val`);
+  if (label) label.textContent = previous + "\u00a0%";
+}
 async function saveOcppKey(chargerId, key, inputId) {
   const el = document.getElementById(inputId);
   if (!el) return;
   const value = el.value.trim();
+  const previous = el.dataset.lastGood !== undefined ? el.dataset.lastGood : _ocppFieldInitial(el);
   const btn = document.getElementById(`${inputId}-btn`);
   if (btn) { btn.disabled = true; btn.dataset.origText = btn.textContent; btn.textContent = "…"; }
   let ok, data;
@@ -1576,21 +1696,27 @@ async function saveOcppKey(chargerId, key, inputId) {
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = btn.dataset.origText || "OK"; }
   }
-  if (!ok) return;
+  if (!ok) { _revertOcppField(el, previous); return; }
   const status = data && data.status;
   if (status === "Accepted") {
     toast(`${key} mis à jour`, "ok");
     el.style.background = "var(--ok-soft)";
+    el.dataset.lastGood = value;
   } else if (status === "RebootRequired") {
     toast(`${key} enregistré : redémarrage de la borne requis pour l'appliquer`, "warn");
     el.style.background = "var(--warn-soft)";
+    // La borne a bien stocké la valeur (seul le comportement actif attend le
+    // reboot) : c'est la nouvelle référence, pas la précédente.
+    el.dataset.lastGood = value;
     // Rafraîchit l'onglet pour faire apparaître le badge et le bandeau de
     // redémarrage, cohérents avec l'état que le serveur suit désormais.
     openChargerConfigModal(chargerId, "ocpp");
   } else if (status === "Rejected") {
-    toast(`${key} refusé par la borne`, "err");
+    toast(`${key} refusé par la borne (reste à ${previous})`, "err");
+    _revertOcppField(el, previous);
   } else if (status === "NotSupported") {
     toast(`${key} non supporté par cette borne`, "err");
+    _revertOcppField(el, previous);
   } else {
     toast(`${key} : statut ${status || "inconnu"}`, "ok");
   }
@@ -1658,6 +1784,7 @@ async function saveChargerConfig(id) {
 
 /* --- Conditions de charge --- */
 let configConnectors = [];   // connecteurs détectés, pour la liste déroulante
+let LIGHT_SETTINGS_CACHE = {};   // derniers réglages LightIntensity connus, par charger_id
 function openConditionModal(chargerId) {
   const connOptions = `<option value="">Tous les connecteurs</option>` +
     configConnectors.map(cid => `<option value="${cid}">Connecteur ${cid}</option>`).join("");
