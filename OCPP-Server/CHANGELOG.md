@@ -1,3 +1,18 @@
+## 0.19.21
+
+- **Nouveau** : entités MQTT enrichies par connecteur, pour construire des cartes Lovelace complètes (état, charge, véhicule, coût) :
+  - `courant` (A) et `tension` (V), auparavant stockés en base mais jamais publiés en MQTT.
+  - `énergie totale` (renommé depuis `énergie`, aucun changement de valeur ni de `unique_id`) : c'est le registre `Energy.Active.Import.Register` brut de la borne, cumulatif à vie, à utiliser pour le tableau de bord Energy de Home Assistant.
+  - **`énergie session`** (nouveau) : énergie de la seule charge en cours (registre moins le relévé de départ de la transaction), repart de 0 à chaque nouvelle charge. ⚠️ à ne pas ajouter en plus de `énergie totale` au tableau de bord Energy, ce serait compter deux fois la même énergie.
+  - **`coût session`** (nouveau) : coût calculé en direct pendant la charge (réutilise la même logique de découpage tarifaire que le coût final).
+  - **`début de session`** (nouveau, horodatage) et **groupe « dernière charge »** (énergie, coût), publiés à l'arrêt d'une charge (aussi bien via `StopTransaction` que via la fermeture automatique d'une transaction restée active).
+  - Les compteurs de session (énergie, coût, durée) sont remis à zéro explicitement au démarrage de chaque nouvelle charge, pour ne pas laisser traîner les valeurs de la session précédente (les topics MQTT sont retenus).
+- **Nouveau** : chaque **véhicule** est désormais publié comme un appareil MQTT à part entière (pas un simple texte accroché à la borne), pour une carte Lovelace dédiée à la voiture, indépendante de la borne utilisée pour la recharger :
+  - `En charge` (oui/non), `En charge sur` (borne + connecteur), `début de session`, `énergie session`, `coût session`, `durée de charge` : reflètent en direct la charge en cours de ce véhicule, quelle que soit la borne.
+  - `Dernière charge énergie/coût/borne`, `Kilométrage`, `Capacité batterie`.
+  - Créé/mis à jour à la création ou l'édition d'un véhicule ; retiré côté HA uniquement sur suppression DÉFINITIVE (la désactivation, réversible, laisse les entités en place).
+  - Pas de test automatisé dédié pour cette fonctionnalité (nécessiterait de mocker un client MQTT, absent de la suite actuelle) : la logique de calcul réutilisée (`compute_session_cost`) est déjà couverte par ailleurs.
+
 ## 0.19.20
 
 - **Nouveau** : pilotage automatique de la luminosité (`LightIntensity`), en plus du curseur manuel existant. Choix exclusif par borne entre deux modes :

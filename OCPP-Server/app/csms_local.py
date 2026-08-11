@@ -13,7 +13,7 @@ from ocpp.v16.enums import (
 
 from .db import SessionLocal
 from .models import Charger, ChargerMode, Transaction, MeterValue, ConfigurationKey, ConnectorStatus, Vehicle
-from .pricing import freeze_transaction_cost
+from .pricing import freeze_transaction_cost, compute_session_cost, resolve_plan_for_charger
 from . import mqtt_bridge
 from . import ocpp_logs
 from .sse import sse_notify
@@ -215,10 +215,16 @@ class LocalChargePoint(ChargePoint16):
                          connector_id=connector_id)
         db = self._db()
         closed_duration_min = None
+        last_energy_wh = None
+        last_cost = None
+        last_vehicle_id = None
+        last_odometer_km = None
+        charger_label = None
         do_auto_start = False
         try:
             charger = self._get_or_create_charger(db)
             charger.last_seen = datetime.utcnow()
+            charger_label = charger.display_name or self.id
 
             entry = db.query(ConnectorStatus).filter(
                 ConnectorStatus.charger_id == self.id,
@@ -250,6 +256,10 @@ class LocalChargePoint(ChargePoint16):
                         closed_duration_min = round((stale.stop_time - stale.start_time).total_seconds() / 60, 1)
                     db.flush()
                     freeze_transaction_cost(db, stale)
+                    last_energy_wh = stale.energy_wh
+                    last_cost = stale.cost
+                    last_odometer_km = stale.odometer_km
+                    last_vehicle_id = stale.vehicle_id
 
             if connector_id != 0:
                 if status == "Available":
@@ -304,8 +314,29 @@ class LocalChargePoint(ChargePoint16):
             await mqtt_bridge.publish_connector_discovery(self.id, connector_id, mode_value)
             await mqtt_bridge.publish_connector_state(self.id, connector_id, status=status)
             await mqtt_bridge.publish_charge_control_state(self.id, connector_id, status == "Charging")
+            closed_updates = {}
             if closed_duration_min is not None:
-                await mqtt_bridge.publish_connector_state(self.id, connector_id, session_duration_min=closed_duration_min)
+                closed_updates["session_duration_min"] = closed_duration_min
+            if last_energy_wh is not None:
+                closed_updates["last_session_energy_wh"] = last_energy_wh
+            if last_cost is not None:
+                closed_updates["last_session_cost"] = last_cost
+            if closed_updates:
+                await mqtt_bridge.publish_connector_state(self.id, connector_id, **closed_updates)
+            if last_vehicle_id:
+                # Véhicule = appareil MQTT indépendant de la borne (voir
+                # publish_vehicle_discovery) : sa « dernière charge » doit être
+                # mise à jour ici aussi, même quand la transaction se termine
+                # par ce chemin (connecteur redevenu Available sans
+                # StopTransaction explicite) plutôt que via on_stop_transaction.
+                veh_updates = {"is_charging": "OFF", "charging_at": "Aucune", "last_session_charger": charger_label}
+                if last_energy_wh is not None:
+                    veh_updates["last_session_energy_wh"] = last_energy_wh
+                if last_cost is not None:
+                    veh_updates["last_session_cost"] = last_cost
+                if last_odometer_km is not None:
+                    veh_updates["odometer_km"] = last_odometer_km
+                await mqtt_bridge.publish_vehicle_state(last_vehicle_id, **veh_updates)
 
         if do_auto_start:
             asyncio.create_task(self._auto_start(connector_id))
@@ -323,8 +354,11 @@ class LocalChargePoint(ChargePoint16):
                          connector_id=connector_id)
         db = self._db()
         deferred_label = None
+        vehicle_id_for_mqtt = None
+        charger_label = None
         try:
             charger = db.query(Charger).filter(Charger.id == self.id).first()
+            charger_label = (charger.display_name if charger else None) or self.id
             pending_vehicle_id = PENDING_REMOTE_STARTS.pop((self.id, connector_id), None)
 
             if not _tag_is_authorized(db, charger, id_tag):
@@ -336,6 +370,7 @@ class LocalChargePoint(ChargePoint16):
             vehicle = db.query(Vehicle).filter(Vehicle.id_tag == id_tag).first() if id_tag else None
             if vehicle is None and pending_vehicle_id is not None:
                 vehicle = db.query(Vehicle).filter(Vehicle.id == pending_vehicle_id).first()
+            vehicle_id_for_mqtt = vehicle.id if vehicle else None
 
             # Départ différé : on vérifie si la charge peut commencer maintenant
             suspend_now = False
@@ -372,6 +407,29 @@ class LocalChargePoint(ChargePoint16):
             db.close()
 
         await mqtt_bridge.publish_charge_control_state(self.id, connector_id, True)
+        # Remise à zéro explicite des compteurs « de session » : sans ça, les
+        # anciennes valeurs de la session précédente resteraient affichées
+        # (retain=True) jusqu'au premier MeterValues de cette nouvelle charge.
+        await mqtt_bridge.publish_connector_state(
+            self.id, connector_id,
+            session_start_time=now_iso(),
+            session_energy_wh=0,
+            session_cost=0,
+            session_duration_min=0,
+        )
+        if vehicle_id_for_mqtt:
+            # Véhicule = appareil MQTT indépendant de la borne : la même
+            # information de « session en cours » y est reflétée, indépendamment
+            # d'où il est physiquement branché (utile s'il change de borne).
+            await mqtt_bridge.publish_vehicle_state(
+                vehicle_id_for_mqtt,
+                is_charging="ON",
+                charging_at=f"{charger_label} / Connecteur {connector_id}",
+                session_start_time=now_iso(),
+                session_energy_wh=0,
+                session_cost=0,
+                session_duration_min=0,
+            )
 
         if suspend_now:
             asyncio.create_task(self._suspend_for_schedule(connector_id))
@@ -403,6 +461,11 @@ class LocalChargePoint(ChargePoint16):
         db = self._db()
         duration_min = None
         connector_id = None
+        last_energy_wh = None
+        last_cost = None
+        last_vehicle_id = None
+        last_odometer_km = None
+        charger_label = None
         try:
             txn = db.query(Transaction).filter(Transaction.id == transaction_id).first()
             if txn:
@@ -416,13 +479,35 @@ class LocalChargePoint(ChargePoint16):
                 db.flush()
                 freeze_transaction_cost(db, txn)
                 db.commit()
+                last_energy_wh = txn.energy_wh
+                last_cost = txn.cost
+                last_odometer_km = txn.odometer_km
+                last_vehicle_id = txn.vehicle_id
+                charger_obj = db.query(Charger).filter(Charger.id == self.id).first()
+                charger_label = (charger_obj.display_name if charger_obj else None) or self.id
         finally:
             db.close()
 
         if connector_id is not None:
             await mqtt_bridge.publish_charge_control_state(self.id, connector_id, False)
+            updates = {}
             if duration_min is not None:
-                await mqtt_bridge.publish_connector_state(self.id, connector_id, session_duration_min=duration_min)
+                updates["session_duration_min"] = duration_min
+            if last_energy_wh is not None:
+                updates["last_session_energy_wh"] = last_energy_wh
+            if last_cost is not None:
+                updates["last_session_cost"] = last_cost
+            if updates:
+                await mqtt_bridge.publish_connector_state(self.id, connector_id, **updates)
+            if last_vehicle_id:
+                veh_updates = {"is_charging": "OFF", "charging_at": "Aucune", "last_session_charger": charger_label}
+                if last_energy_wh is not None:
+                    veh_updates["last_session_energy_wh"] = last_energy_wh
+                if last_cost is not None:
+                    veh_updates["last_session_cost"] = last_cost
+                if last_odometer_km is not None:
+                    veh_updates["odometer_km"] = last_odometer_km
+                await mqtt_bridge.publish_vehicle_state(last_vehicle_id, **veh_updates)
 
         # SSE : transaction terminée
         sse_notify("transaction_stopped", {
@@ -443,6 +528,7 @@ class LocalChargePoint(ChargePoint16):
                          connector_id=connector_id)
         db = self._db()
         mqtt_updates = {}
+        vehicle_id_for_mqtt = None
         try:
             # Le transaction_id reçu est l'identifiant OCPP interne de la borne,
             # pas notre id SQLite. On résout notre transaction active sur ce connecteur.
@@ -452,7 +538,9 @@ class LocalChargePoint(ChargePoint16):
                 Transaction.status == "active",
             ).order_by(Transaction.id.desc()).first()
             our_txn_id = our_txn.id if our_txn else None
+            vehicle_id_for_mqtt = our_txn.vehicle_id if our_txn else None
 
+            latest_register_wh = None
             for mv in meter_value:
                 for sv in mv.get("sampled_value", []):
                     try:
@@ -476,12 +564,42 @@ class LocalChargePoint(ChargePoint16):
                     ))
                     if measurand == "Power.Active.Import":
                         mqtt_updates["power_w"] = value
+                    elif measurand == "Current.Import":
+                        mqtt_updates["current_a"] = value
+                    elif measurand == "Voltage":
+                        mqtt_updates["voltage_v"] = value
                     elif measurand == "Energy.Active.Import.Register":
                         mqtt_updates["energy_wh"] = stored_value
+                        latest_register_wh = stored_value
 
-            if our_txn and our_txn.start_time:
-                elapsed_min = (datetime.utcnow() - our_txn.start_time).total_seconds() / 60
-                mqtt_updates["session_duration_min"] = round(elapsed_min, 1)
+            if our_txn:
+                if our_txn.start_time:
+                    elapsed_min = (datetime.utcnow() - our_txn.start_time).total_seconds() / 60
+                    mqtt_updates["session_duration_min"] = round(elapsed_min, 1)
+                # Énergie de la SEULE session en cours (à ne pas confondre avec
+                # energy_wh, le registre à vie) : registre actuel moins le
+                # relevé de départ de cette transaction.
+                if latest_register_wh is not None and our_txn.meter_start is not None:
+                    mqtt_updates["session_energy_wh"] = max(0.0, latest_register_wh - our_txn.meter_start)
+                # Coût en direct de la session en cours : même logique que le
+                # coût final (compute_session_cost), avec ignore_meter_stop=True
+                # puisque la session n'est pas terminée. db.flush() d'abord pour
+                # que les MeterValues qu'on vient d'ajouter soient visibles à
+                # la requête qui suit, sans attendre le commit.
+                try:
+                    db.flush()
+                    charger = db.query(Charger).filter(Charger.id == self.id).first()
+                    plan = resolve_plan_for_charger(db, charger)
+                    mv_rows = db.query(MeterValue).filter(
+                        MeterValue.transaction_id == our_txn.id,
+                        MeterValue.charger_id == self.id,
+                        MeterValue.connector_id == connector_id,
+                    ).all()
+                    result = compute_session_cost(our_txn, mv_rows, plan, ignore_meter_stop=True)
+                    if result["cost"] is not None:
+                        mqtt_updates["session_cost"] = result["cost"]
+                except Exception:
+                    logger.debug("Calcul du coût en direct échoué pour %s/%s", self.id, connector_id, exc_info=True)
 
             db.commit()
         finally:
@@ -489,6 +607,15 @@ class LocalChargePoint(ChargePoint16):
 
         if mqtt_updates and connector_id:
             await mqtt_bridge.publish_connector_state(self.id, connector_id, **mqtt_updates)
+            if vehicle_id_for_mqtt:
+                # Même trio « session en cours » reflété sur l'appareil véhicule,
+                # indépendamment de la borne utilisée (voir on_start_transaction).
+                veh_session_updates = {
+                    k: v for k, v in mqtt_updates.items()
+                    if k in ("session_energy_wh", "session_cost", "session_duration_min")
+                }
+                if veh_session_updates:
+                    await mqtt_bridge.publish_vehicle_state(vehicle_id_for_mqtt, **veh_session_updates)
 
         return call_result.MeterValues()
 

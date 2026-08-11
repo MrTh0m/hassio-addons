@@ -27,6 +27,7 @@ from .auth import (
 from .csms_local import (
     CONNECTED_CHARGERS, PENDING_REMOTE_STARTS, SMART_CHARGING_SUPPORT, PENDING_REBOOT_KEYS,
 )
+from . import mqtt_bridge
 
 
 def _to_csv_response(rows: list, filename: str) -> Response:
@@ -1064,7 +1065,7 @@ def _check_vehicle_name_unique(db: Session, name: str, exclude_id: Optional[int]
 
 
 @router.post("/vehicles")
-def create_vehicle(body: VehicleCreate, db: Session = Depends(get_db), user=Depends(get_current_user)):
+async def create_vehicle(body: VehicleCreate, db: Session = Depends(get_db), user=Depends(get_current_user)):
     _require_vehicle_permission(user, db)
     _check_vehicle_name_unique(db, body.name)
     if body.id_tag:
@@ -1082,11 +1083,15 @@ def create_vehicle(body: VehicleCreate, db: Session = Depends(get_db), user=Depe
         db.add(UserVehicle(user_id=uid, vehicle_id=vehicle.id))
     db.commit()
     db.refresh(vehicle)
+    # Véhicule = appareil MQTT à part entière (voir mqtt_bridge.publish_vehicle_discovery).
+    await mqtt_bridge.publish_vehicle_discovery(vehicle.id, vehicle.name)
+    if vehicle.battery_capacity_kwh is not None:
+        await mqtt_bridge.publish_vehicle_state(vehicle.id, battery_capacity_kwh=vehicle.battery_capacity_kwh)
     return {"id": vehicle.id}
 
 
 @router.put("/vehicles/{vehicle_id}")
-def update_vehicle(
+async def update_vehicle(
     vehicle_id: int, body: VehicleCreate,
     db: Session = Depends(get_db), user=Depends(get_current_user),
 ):
@@ -1109,6 +1114,10 @@ def update_vehicle(
     vehicle.id_tag = body.id_tag or None
     vehicle.battery_capacity_kwh = body.battery_capacity_kwh
     db.commit()
+    # Republie la découverte : le nom affiché de l'appareil MQTT doit suivre
+    # un éventuel renommage, et battery_capacity_kwh peut avoir changé.
+    await mqtt_bridge.publish_vehicle_discovery(vehicle.id, vehicle.name)
+    await mqtt_bridge.publish_vehicle_state(vehicle.id, battery_capacity_kwh=vehicle.battery_capacity_kwh)
     return {"status": "ok"}
 
 
@@ -1147,7 +1156,7 @@ def reactivate_vehicle(vehicle_id: int, db: Session = Depends(get_db), user=Depe
 
 
 @router.delete("/vehicles/{vehicle_id}/permanent")
-def hard_delete_vehicle(vehicle_id: int, db: Session = Depends(get_db), user=Depends(get_current_user)):
+async def hard_delete_vehicle(vehicle_id: int, db: Session = Depends(get_db), user=Depends(get_current_user)):
     """Suppression DÉFINITIVE et IRRÉVERSIBLE d'un véhicule ET de tout son
     historique de charge (sessions + MeterValues associées). Contrairement à
     la désactivation, ceci efface réellement les lignes en base. L'UI doit
@@ -1166,6 +1175,10 @@ def hard_delete_vehicle(vehicle_id: int, db: Session = Depends(get_db), user=Dep
     db.query(UserVehicle).filter(UserVehicle.vehicle_id == vehicle_id).delete(synchronize_session=False)
     db.delete(vehicle)
     db.commit()
+    # Suppression définitive uniquement (contrairement à la désactivation,
+    # réversible, qui laisse les entités MQTT en place) : l'appareil disparaît
+    # aussi côté HA.
+    await mqtt_bridge.unpublish_vehicle_discovery(vehicle_id)
     return {"status": "ok", "deleted_sessions": len(txn_ids)}
 
 

@@ -60,10 +60,21 @@ async def publish_discovery(charger_id: str, mode: str):
 
 
 async def publish_connector_discovery(charger_id: str, connector_id: int, mode: str):
-    """Publie les entités MQTT Discovery pour UN connecteur physique donné
-    (statut, puissance, énergie, durée de charge, et le switch de pilotage
-    si la borne est en mode local). Regroupées sous le même appareil que
-    la borne, mais ce sont bien des entités distinctes par connecteur."""
+    """Publie les entités MQTT Discovery pour UN connecteur physique donné.
+    Regroupées sous le même appareil que la borne, mais ce sont bien des
+    entités distinctes par connecteur.
+
+    Deux familles d'entités énergie, à ne pas confondre :
+    - energy_wh : le registre brut Energy.Active.Import.Register de la borne,
+      cumulatif à vie (ne redescend jamais sauf remplacement/reset physique
+      du compteur). C'est celui-ci qu'il faut ajouter au tableau de bord
+      Energy de Home Assistant.
+    - session_energy_wh : l'énergie de la SEULE session en cours (registre
+      actuel moins meter_start de la transaction), qui repart de 0 à chaque
+      nouvelle charge. Pratique pour une carte Lovelace ("combien a consommé
+      cette charge"), mais NE PAS l'ajouter en plus de energy_wh au tableau
+      de bord Energy : ce serait compter deux fois la même énergie.
+    """
     if _client is None or connector_id == 0:
         return
     slug = _slug(charger_id)
@@ -74,8 +85,15 @@ async def publish_connector_discovery(charger_id: str, connector_id: int, mode: 
     sensors = {
         "status": {"name": f"Connecteur {connector_id} statut", "icon": "mdi:ev-plug-type2"},
         "power_w": {"name": f"Connecteur {connector_id} puissance", "unit": "W", "device_class": "power", "state_class": "measurement"},
-        "energy_wh": {"name": f"Connecteur {connector_id} énergie", "unit": "Wh", "device_class": "energy", "state_class": "total_increasing"},
+        "current_a": {"name": f"Connecteur {connector_id} courant", "unit": "A", "device_class": "current", "state_class": "measurement"},
+        "voltage_v": {"name": f"Connecteur {connector_id} tension", "unit": "V", "device_class": "voltage", "state_class": "measurement"},
+        "energy_wh": {"name": f"Connecteur {connector_id} énergie totale", "unit": "Wh", "device_class": "energy", "state_class": "total_increasing"},
+        "session_energy_wh": {"name": f"Connecteur {connector_id} énergie session", "unit": "Wh", "device_class": "energy", "state_class": "total_increasing"},
+        "session_cost": {"name": f"Connecteur {connector_id} coût session", "unit": "EUR", "device_class": "monetary", "state_class": "total"},
         "session_duration_min": {"name": f"Connecteur {connector_id} durée de charge", "unit": "min", "icon": "mdi:timer-outline"},
+        "session_start_time": {"name": f"Connecteur {connector_id} début de session", "device_class": "timestamp"},
+        "last_session_energy_wh": {"name": f"Connecteur {connector_id} dernière charge énergie", "unit": "Wh", "device_class": "energy"},
+        "last_session_cost": {"name": f"Connecteur {connector_id} dernière charge coût", "unit": "EUR", "device_class": "monetary"},
     }
     for key, meta in sensors.items():
         payload = {
@@ -106,6 +124,87 @@ async def publish_connector_discovery(charger_id: str, connector_id: int, mode: 
         # switch resté d'un précédent mode local (payload vide = suppression
         # de l'entité côté HA, convention MQTT Discovery standard).
         await _client.publish(switch_topic, "", retain=True)
+
+
+def _vehicle_device_info(vehicle_id: int, name: str) -> dict:
+    return {
+        "identifiers": [f"ocppserver_vehicle_{vehicle_id}"],
+        "name": name,
+        "manufacturer": "OCPP Backoffice Server",
+        "model": "Véhicule",
+    }
+
+
+async def publish_vehicle_discovery(vehicle_id: int, name: str):
+    """Publie les entités MQTT Discovery d'UN véhicule, en tant qu'appareil HA
+    à part entière (pas de simples capteurs texte accrochés à la borne) : le
+    véhicule reste le même appareil quelle que soit la borne utilisée pour le
+    recharger, ce qui permet une carte Lovelace dédiée à la voiture."""
+    if _client is None:
+        return
+    device = _vehicle_device_info(vehicle_id, name)
+    v = f"vehicle{vehicle_id}"
+
+    payload = {
+        "name": "En charge",
+        "unique_id": f"ocppserver_{v}_is_charging",
+        "state_topic": f"{BASE_TOPIC}/{v}/is_charging",
+        "payload_on": "ON", "payload_off": "OFF",
+        "device_class": "battery_charging",
+        "device": device,
+    }
+    await _client.publish(f"{DISCOVERY_PREFIX}/binary_sensor/{v}_is_charging/config", json.dumps(payload), retain=True)
+
+    sensors = {
+        "charging_at": {"name": "En charge sur", "icon": "mdi:ev-station"},
+        "session_energy_wh": {"name": "Énergie session", "unit": "Wh", "device_class": "energy", "state_class": "total_increasing"},
+        "session_cost": {"name": "Coût session", "unit": "EUR", "device_class": "monetary", "state_class": "total"},
+        "session_duration_min": {"name": "Durée de charge", "unit": "min", "icon": "mdi:timer-outline"},
+        "session_start_time": {"name": "Début de session", "device_class": "timestamp"},
+        "last_session_energy_wh": {"name": "Dernière charge énergie", "unit": "Wh", "device_class": "energy"},
+        "last_session_cost": {"name": "Dernière charge coût", "unit": "EUR", "device_class": "monetary"},
+        "last_session_charger": {"name": "Dernière charge borne", "icon": "mdi:ev-station"},
+        "odometer_km": {"name": "Kilométrage", "unit": "km", "device_class": "distance"},
+        "battery_capacity_kwh": {"name": "Capacité batterie", "unit": "kWh", "device_class": "energy"},
+    }
+    for key, meta in sensors.items():
+        payload = {
+            "name": meta["name"],
+            "unique_id": f"ocppserver_{v}_{key}",
+            "state_topic": f"{BASE_TOPIC}/{v}/{key}",
+            "device": device,
+        }
+        for opt in ("unit", "device_class", "state_class", "icon"):
+            if opt in meta:
+                payload["unit_of_measurement" if opt == "unit" else opt] = meta[opt]
+        await _client.publish(f"{DISCOVERY_PREFIX}/sensor/{v}_{key}/config", json.dumps(payload), retain=True)
+
+
+async def unpublish_vehicle_discovery(vehicle_id: int):
+    """Retire toutes les entités MQTT d'un véhicule (payload vide = suppression
+    côté HA, même convention que le nettoyage d'entités obsolètes des bornes).
+    À appeler uniquement sur une suppression DÉFINITIVE : une simple
+    désactivation (réversible) laisse les entités en place."""
+    if _client is None:
+        return
+    v = f"vehicle{vehicle_id}"
+    await _client.publish(f"{DISCOVERY_PREFIX}/binary_sensor/{v}_is_charging/config", "", retain=True)
+    for key in (
+        "charging_at", "session_energy_wh", "session_cost", "session_duration_min",
+        "session_start_time", "last_session_energy_wh", "last_session_cost",
+        "last_session_charger", "odometer_km", "battery_capacity_kwh",
+    ):
+        await _client.publish(f"{DISCOVERY_PREFIX}/sensor/{v}_{key}/config", "", retain=True)
+
+
+async def publish_vehicle_state(vehicle_id: int, **values):
+    if _client is None:
+        return
+    v = f"vehicle{vehicle_id}"
+    for key, value in values.items():
+        if value is None:
+            continue
+        await _client.publish(f"{BASE_TOPIC}/{v}/{key}", str(value), retain=True)
 
 
 async def publish_state(charger_id: str, **values):
@@ -186,9 +285,10 @@ async def republish_all():
     connecteur) pour tout ce qui est déjà en base. Appelé à chaque
     (re)connexion au broker : la découverte n'est sinon publiée qu'au moment
     où une borne se connecte au WebSocket, ce qui peut être manqué si le
-    client MQTT n'est pas encore prêt à cet instant précis."""
+    client MQTT n'est pas encore prêt à cet instant précis. Republie aussi les
+    véhicules (appareils MQTT indépendants des bornes)."""
     from .db import SessionLocal
-    from .models import Charger, ConnectorStatus
+    from .models import Charger, ConnectorStatus, Vehicle
 
     db = SessionLocal()
     try:
@@ -196,6 +296,7 @@ async def republish_all():
         connectors_by_charger: dict[str, list] = {}
         for cs in db.query(ConnectorStatus).all():
             connectors_by_charger.setdefault(cs.charger_id, []).append(cs)
+        vehicles = db.query(Vehicle).filter(Vehicle.deleted_at.is_(None)).all()
     finally:
         db.close()
 
@@ -208,6 +309,11 @@ async def republish_all():
                 continue
             await publish_connector_discovery(charger.id, cs.connector_id, charger.mode.value)
             await publish_connector_state(charger.id, cs.connector_id, status=cs.status)
+
+    for vehicle in vehicles:
+        await publish_vehicle_discovery(vehicle.id, vehicle.name)
+        if vehicle.battery_capacity_kwh is not None:
+            await publish_vehicle_state(vehicle.id, battery_capacity_kwh=vehicle.battery_capacity_kwh)
 
 
 async def run_mqtt_bridge():
