@@ -1787,6 +1787,63 @@ def export_logs(
     return _to_csv_response(entries, "ocpp-logs.csv")
 
 
+# ============================ JOURNAL SERVEUR (live) ============================
+# Même principe que le journal OCPP ci-dessus, mais capture les logs Python
+# applicatifs (mqtt-bridge, ocpp-server, exceptions non gérées...) plutôt que
+# les seuls échanges protocolaires. Voir server_logs.py. Réservé admin, même
+# règle de visibilité côté UI (mode débug) que le journal OCPP.
+
+from . import server_logs
+
+
+@router.get("/server-logs")
+def get_server_logs(
+    logger: Optional[str] = None, level: Optional[str] = None,
+    since_id: int = 0, limit: int = 500,
+    user=Depends(require_admin),
+):
+    return {
+        "capture_access_logs": server_logs.is_capturing_access_logs(),
+        "entries": server_logs.get_entries(
+            logger=logger, level=level, since_id=since_id, limit=limit,
+        ),
+    }
+
+
+@router.get("/server-logs/loggers")
+def get_server_logs_loggers(user=Depends(require_admin)):
+    """Loggers ayant produit au moins une entrée (pour alimenter le filtre)."""
+    return server_logs.known_loggers()
+
+
+class ServerLogSettings(BaseModel):
+    capture_access_logs: bool
+
+
+@router.put("/server-logs/settings")
+def set_server_logs_settings(body: ServerLogSettings, user=Depends(require_admin)):
+    """Active/désactive la capture des logs d'accès HTTP (très bruyants : une
+    ligne par requête, y compris le polling de l'interface elle-même)."""
+    server_logs.set_capture_access_logs(body.capture_access_logs)
+    return {"capture_access_logs": server_logs.is_capturing_access_logs()}
+
+
+@router.delete("/server-logs")
+def clear_server_logs(user=Depends(require_admin)):
+    server_logs.clear()
+    return {"status": "ok"}
+
+
+@router.get("/server-logs/export")
+def export_server_logs(
+    logger: Optional[str] = None, level: Optional[str] = None, limit: int = 2000,
+    user=Depends(require_admin),
+):
+    """Export CSV du journal serveur en mémoire, mêmes filtres que /server-logs."""
+    entries = server_logs.get_entries(logger=logger, level=level, since_id=0, limit=limit)
+    return _to_csv_response(entries, "logs-serveur.csv")
+
+
 # ============================ DANGER ZONE ============================
 
 @router.delete("/history/all")

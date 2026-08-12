@@ -19,12 +19,14 @@ from .csms_local import LocalChargePoint, CONNECTED_CHARGERS
 from .relay import run_relay
 from .scheduler import run_scheduler
 from . import mqtt_bridge
+from . import server_logs
 from .sse import sse_stream
 from .auth import get_current_user, oauth2_scheme
 from fastapi import Depends
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("ocpp-server")
+server_logs.install()
 
 app = FastAPI(title="OCPP Server")
 app.include_router(api_router)
@@ -147,7 +149,7 @@ async def on_startup():
     asyncio.create_task(run_scheduler())
 
 
-APP_VERSION = "0.19.22"
+APP_VERSION = "0.19.23"
 
 
 @app.get("/healthz")

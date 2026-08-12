@@ -1,3 +1,7 @@
+## 0.19.23
+
+- **Nouveau** : onglet **Logs serveur**, à côté de **Logs OCPP** (renommé pour clarifier). Capture les logs applicatifs (serveur, pont MQTT, exceptions non gérées), en complément du journal OCPP existant qui ne couvre que les échanges protocolaires — exactement ce qui manquait pour diagnostiquer l'incident MQTT de la 0.19.22 sans sortir de l'appli. Filtres logger/niveau, bascule « en direct », export CSV, même accès réservé (admin + mode debug) que Logs OCPP.
+
 ## 0.19.22
 
 - **Corrigé (critique)** : une panne MQTT temporaire pouvait faire déconnecter une borne en boucle (exception non rattrapée dans les gestionnaires OCPP). Toutes les publications MQTT passent maintenant par une fonction unique qui absorbe systématiquement les pannes du broker. Tests dédiés (`test_mqtt_resilience.py`).

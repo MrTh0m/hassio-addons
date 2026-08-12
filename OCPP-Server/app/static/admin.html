@@ -370,6 +370,7 @@
     <symbol id="i-upload" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21V9"/><path d="m7 14 5-5 5 5"/><path d="M5 3h14"/></symbol>
     <symbol id="i-logs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 6h11M8 12h11M8 18h11"/><path d="M4 6h.01M4 12h.01M4 18h.01"/></symbol>
     <symbol id="i-database" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v6c0 1.66 3.58 3 8 3s8-1.34 8-3V5"/><path d="M4 11v6c0 1.66 3.58 3 8 3s8-1.34 8-3v-6"/></symbol>
+    <symbol id="i-terminal" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="m7 9 3 3-3 3"/><path d="M13 15h4"/></symbol>
   </defs>
 </svg>
 
@@ -411,7 +412,8 @@
     <button class="navitem" data-nav="vehicles" onclick="switchView('vehicles')"><svg><use href="#i-car"/></svg><span class="navlabel">Véhicules</span><span class="navlabel-mobile">Autos</span></button>
     <button class="navitem" data-nav="tariffs" onclick="switchView('tariffs')"><svg><use href="#i-tariff"/></svg><span class="navlabel">Abo. électrique</span><span class="navlabel-mobile">Abo.</span></button>
     <button class="navitem" data-nav="history" onclick="switchView('history')"><svg><use href="#i-history"/></svg><span class="navlabel">Historique</span><span class="navlabel-mobile">Histo.</span></button>
-    <button class="navitem" data-nav="logs" onclick="switchView('logs')"><svg><use href="#i-logs"/></svg><span class="navlabel">Logs</span><span class="navlabel-mobile">Logs</span></button>
+    <button class="navitem" data-nav="logs" onclick="switchView('logs')"><svg><use href="#i-logs"/></svg><span class="navlabel">Logs OCPP</span><span class="navlabel-mobile">Logs OCPP</span></button>
+    <button class="navitem" data-nav="server-logs" onclick="switchView('server-logs')"><svg><use href="#i-terminal"/></svg><span class="navlabel">Logs serveur</span><span class="navlabel-mobile">Serveur</span></button>
     <button class="navitem" data-nav="dbaudit" onclick="switchView('dbaudit')"><svg><use href="#i-database"/></svg><span class="navlabel">Base de données</span><span class="navlabel-mobile">BDD</span></button>
     <div class="nav-spacer"></div>
     <button class="navitem logout" onclick="logout()"><svg><use href="#i-logout"/></svg><span class="navlabel">Déconnexion</span></button>
@@ -556,6 +558,41 @@
         </div>
       </section>
 
+      <!-- LOGS SERVEUR -->
+      <section class="view" id="view-server-logs">
+        <div class="card">
+          <div class="cluster center" style="justify-content:space-between">
+            <div class="cluster center" style="gap:.6rem">
+              <label class="field"><span>Logger</span>
+                <select id="slog-logger-filter" onchange="loadServerLogs(true)"><option value="">Tous</option></select></label>
+              <label class="field"><span>Niveau</span>
+                <select id="slog-level-filter" onchange="loadServerLogs(true)">
+                  <option value="">Tous</option>
+                  <option value="DEBUG">DEBUG</option>
+                  <option value="INFO">INFO</option>
+                  <option value="WARNING">WARNING</option>
+                  <option value="ERROR">ERROR</option>
+                  <option value="CRITICAL">CRITICAL</option>
+                </select></label>
+            </div>
+            <div class="cluster center" style="gap:.8rem">
+              <label class="cluster center" style="gap:.4rem; font-size:.85rem; cursor:pointer">
+                <input type="checkbox" id="slog-live" checked onchange="onServerLogsLiveToggle()"> En direct
+              </label>
+              <label class="cluster center" style="gap:.4rem; font-size:.85rem; cursor:pointer" title="Une ligne par requête HTTP, y compris le polling de l'interface elle-même ; désactivé par défaut">
+                <input type="checkbox" id="slog-access" onchange="onAccessLogsToggle()"> Accès HTTP
+              </label>
+              <button class="btn btn-sm" onclick="exportServerLogsCsv()"><svg><use href="#i-download"/></svg>Exporter (CSV)</button>
+              <button class="btn btn-sm" onclick="clearServerLogs()"><svg><use href="#i-trash"/></svg>Vider</button>
+            </div>
+          </div>
+        </div>
+        <div class="card" style="margin-top:.8rem">
+          <div class="tiny muted" style="margin-bottom:.5rem">Journal applicatif en mémoire (non conservé au redémarrage) : messages du serveur, du pont MQTT, et exceptions non gérées. Complète le journal Logs OCPP ci-dessus, qui ne couvre que les échanges protocolaires.</div>
+          <div id="server-logs-list"><div class="empty">Aucun message pour l'instant.</div></div>
+        </div>
+      </section>
+
       <section class="view" id="view-dbaudit">
         <div class="card">
           <p class="small muted" style="margin:.1rem 0 .8rem">Vue en lecture seule du contenu de la base, pour vérifier la cohérence des données (ex. confirmer que des MeterValues sont bien enregistrées pendant une charge). Aucune modification possible depuis cette page.</p>
@@ -658,14 +695,17 @@ async function loadCurrentUser() {
 }
 function isAdmin() { return currentUser.role === "admin"; }
 function hasPerm(p) { return isAdmin() || !!(currentUser.permissions && currentUser.permissions[p]); }
-// Base de données ET Logs partagent la même condition : réservé admin, et
-// seulement si le réglage « Mode débug » (Réglages → Avancé) est activé.
+// Base de données ET les deux vues Logs partagent la même condition :
+// réservé admin, et seulement si le réglage « Mode débug » (Réglages → Avancé)
+// est activé.
 function debugToolsVisible() { return isAdmin() && !!currentUser.debug_mode; }
 // Affiche/masque les éléments selon le rôle
 function applyRoleUI() {
-  // Onglet Logs (réservé admin + mode débug, comme Base de données)
+  // Onglets Logs OCPP et Logs serveur (réservés admin + mode débug, comme Base de données)
   const logBtn = document.querySelector(".navitem[data-nav='logs']");
   if (logBtn) logBtn.style.display = debugToolsVisible() ? "" : "none";
+  const slogBtn = document.querySelector(".navitem[data-nav='server-logs']");
+  if (slogBtn) slogBtn.style.display = debugToolsVisible() ? "" : "none";
   // Onglet Abo. électrique
   const tariffBtn = document.querySelector(".navitem[data-nav='tariffs']");
   if (tariffBtn) tariffBtn.style.display = hasPerm("can_manage_tariffs") ? "" : "none";
@@ -677,6 +717,7 @@ function applyRoleUI() {
   if (vehAdd) vehAdd.style.display = hasPerm("can_manage_vehicles") ? "" : "none";
   // Si la vue actuelle n'est plus accessible, rediriger vers l'accueil
   if (currentView === "logs" && !debugToolsVisible()) switchView("home");
+  if (currentView === "server-logs" && !debugToolsVisible()) switchView("home");
   if (currentView === "tariffs" && !hasPerm("can_manage_tariffs")) switchView("home");
   if (currentView === "dbaudit" && !debugToolsVisible()) switchView("home");
 }
@@ -988,11 +1029,12 @@ function logout() {
 
 /* ---------- Navigation ---------- */
 let currentView = "home";
-const viewTitles = { home: "Accueil", chargers: "Bornes", vehicles: "Véhicules", tariffs: "Abo. électrique", history: "Historique", logs: "Logs", dbaudit: "Base de données" };
+const viewTitles = { home: "Accueil", chargers: "Bornes", vehicles: "Véhicules", tariffs: "Abo. électrique", history: "Historique", logs: "Logs OCPP", "server-logs": "Logs serveur", dbaudit: "Base de données" };
 const viewLoaded = {};
 function switchView(name) {
   // Garde : on redirige vers l'accueil si la vue est interdite au user
   if (name === "logs" && !debugToolsVisible()) name = "home";
+  if (name === "server-logs" && !debugToolsVisible()) name = "home";
   if (name === "tariffs" && !hasPerm("can_manage_tariffs")) name = "home";
   if (name === "dbaudit" && !debugToolsVisible()) name = "home";
   currentView = name;
@@ -1002,16 +1044,17 @@ function switchView(name) {
   document.getElementById("view-title").textContent = viewTitles[name];
   const td = document.getElementById("view-title-desktop"); if (td) td.textContent = viewTitles[name];
   if (name !== "logs") stopLogsPolling();
-  const loaders = { home: loadHome, chargers: loadChargers, vehicles: loadVehicles, tariffs: loadTariffs, history: () => { populateVehicleFilter(); loadHistory(); }, logs: initLogsView, dbaudit: initDbAuditView };
+  if (name !== "server-logs") stopServerLogsPolling();
+  const loaders = { home: loadHome, chargers: loadChargers, vehicles: loadVehicles, tariffs: loadTariffs, history: () => { populateVehicleFilter(); loadHistory(); }, logs: initLogsView, "server-logs": initServerLogsView, dbaudit: initDbAuditView };
   if (name === "home" || name === "chargers") loaders[name]();
-  else if (name === "logs") loaders[name]();
+  else if (name === "logs" || name === "server-logs") loaders[name]();
   else if (!viewLoaded[name]) { loaders[name](); viewLoaded[name] = true; }
   // Pour les vues rechargées à chaque visite (sauf home/chargers déjà gérés)
   else if (name === "history") { populateVehicleFilter(); loadHistory(); }
   else if (name === "dbaudit") { viewLoaded[name] = false; initDbAuditView(); viewLoaded[name] = true; }
 }
 function refreshCurrentView() {
-  const loaders = { home: loadHome, chargers: loadChargers, vehicles: loadVehicles, tariffs: loadTariffs, history: loadHistory, logs: () => loadLogs(true), dbaudit: () => loadDbTableRows(dbAuditState.page) };
+  const loaders = { home: loadHome, chargers: loadChargers, vehicles: loadVehicles, tariffs: loadTariffs, history: loadHistory, logs: () => loadLogs(true), "server-logs": () => loadServerLogs(true), dbaudit: () => loadDbTableRows(dbAuditState.page) };
   (loaders[currentView] || (() => {}))();
   toast("Rafraîchi", "ok");
 }
@@ -2816,6 +2859,108 @@ async function clearLogs() {
   if (!confirm("Vider le journal en mémoire ?")) return;
   await fetch("api/logs", { method: "DELETE", headers: authHeaders() });
   loadLogs(true);
+}
+
+/* ========================= LOGS SERVEUR (journal applicatif live) ========================= */
+// Même principe que le journal OCPP ci-dessus (voir server_logs.py côté
+// serveur), mais capture les logs Python applicatifs (mqtt-bridge,
+// ocpp-server, exceptions non gérées...) plutôt que les seuls échanges
+// protocolaires : c'est ce qui a permis de diagnostiquer l'incident MQTT
+// corrigé en 0.19.22, jusque-là visible uniquement dans le journal brut du
+// conteneur (Supervisor Home Assistant), pas dans l'appli.
+let serverLogEntries = [];
+let serverLogMaxId = 0;
+let serverLogsPollTimer = null;
+const SLOG_LEVEL_CLASS = { DEBUG: "off", INFO: "accent", WARNING: "warn", ERROR: "danger", CRITICAL: "danger" };
+
+async function initServerLogsView() {
+  await refreshServerLogLoggerFilter();
+  await loadServerLogs(true);
+  startServerLogsPolling();
+}
+async function refreshServerLogLoggerFilter() {
+  try {
+    const loggers = await fetch("api/server-logs/loggers", { headers: authHeaders() }).then(r => r.json());
+    const sel = document.getElementById("slog-logger-filter");
+    const cur = sel.value;
+    sel.innerHTML = `<option value="">Tous</option>` + loggers.map(l => `<option value="${esc(l)}">${esc(l)}</option>`).join("");
+    if (loggers.includes(cur)) sel.value = cur;
+  } catch (e) {}
+}
+function serverLogFilters() {
+  return {
+    logger: document.getElementById("slog-logger-filter").value,
+    level: document.getElementById("slog-level-filter").value,
+  };
+}
+async function loadServerLogs(reset) {
+  if (reset) { serverLogEntries = []; serverLogMaxId = 0; }
+  const f = serverLogFilters();
+  const params = new URLSearchParams();
+  if (f.logger) params.set("logger", f.logger);
+  if (f.level) params.set("level", f.level);
+  params.set("since_id", reset ? 0 : serverLogMaxId);
+  params.set("limit", "500");
+  let data;
+  try { data = await fetch("api/server-logs?" + params.toString(), { headers: authHeaders() }).then(r => r.json()); }
+  catch (e) { return; }
+  // Refléter l'état réel de l'interrupteur accès HTTP (partagé serveur).
+  const acc = document.getElementById("slog-access");
+  if (acc) acc.checked = !!data.capture_access_logs;
+  const fresh = data.entries || [];
+  if (fresh.length) {
+    serverLogMaxId = Math.max(serverLogMaxId, ...fresh.map(e => e.id));
+    serverLogEntries = fresh.concat(serverLogEntries).slice(0, 1000);
+  }
+  renderServerLogs();
+}
+function renderServerLogs() {
+  const el = document.getElementById("server-logs-list");
+  if (!serverLogEntries.length) { el.innerHTML = `<div class="empty">Aucun message pour l'instant.</div>`; return; }
+  el.innerHTML = serverLogEntries.map(e => {
+    const t = formatLogTime(e.ts);
+    const cls = SLOG_LEVEL_CLASS[e.level] || "off";
+    const oneLine = (e.message || "").split("\n")[0];
+    const hasMore = (e.message || "").includes("\n");
+    return `<div class="logrow" ${hasMore ? `onclick="toggleServerLogDetail(${e.id})" style="cursor:pointer; padding:.4rem .2rem; border-bottom:1px solid var(--border)"` : `style="padding:.4rem .2rem; border-bottom:1px solid var(--border)"`}>
+      <div class="cluster center" style="gap:.5rem; flex-wrap:nowrap">
+        <span class="tiny muted" style="white-space:nowrap; font-family:ui-monospace,monospace">${t}</span>
+        <span class="badge ${cls}" style="white-space:nowrap">${esc(e.level)}</span>
+        <b style="white-space:nowrap">${esc(e.logger)}</b>
+        <span class="tiny muted" style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap">${esc(oneLine)}</span>
+      </div>
+      ${hasMore ? `<pre id="slogdetail-${e.id}" style="display:none; margin:.4rem 0 .2rem; padding:.5rem .6rem; background:var(--surface-2); border-radius:var(--r-sm); overflow-x:auto; font-size:.8rem; white-space:pre-wrap">${esc(e.message)}</pre>` : ""}
+    </div>`;
+  }).join("");
+}
+function toggleServerLogDetail(id) {
+  const el = document.getElementById("slogdetail-" + id);
+  if (el) el.style.display = el.style.display === "none" ? "block" : "none";
+}
+function startServerLogsPolling() {
+  stopServerLogsPolling();
+  if (!document.getElementById("slog-live").checked) return;
+  serverLogsPollTimer = setInterval(() => { loadServerLogs(false); refreshServerLogLoggerFilter(); }, 3000);
+}
+function stopServerLogsPolling() { if (serverLogsPollTimer) { clearInterval(serverLogsPollTimer); serverLogsPollTimer = null; } }
+function onServerLogsLiveToggle() { document.getElementById("slog-live").checked ? startServerLogsPolling() : stopServerLogsPolling(); }
+async function onAccessLogsToggle() {
+  const on = document.getElementById("slog-access").checked;
+  await apiCall("api/server-logs/settings", { method: "PUT", headers: jsonHeaders(), body: JSON.stringify({ capture_access_logs: on }) },
+    on ? "Capture des accès HTTP activée" : "Capture des accès HTTP désactivée");
+}
+async function clearServerLogs() {
+  if (!confirm("Vider le journal serveur en mémoire ?")) return;
+  await fetch("api/server-logs", { method: "DELETE", headers: authHeaders() });
+  loadServerLogs(true);
+}
+function exportServerLogsCsv() {
+  const params = new URLSearchParams();
+  const loggerVal = document.getElementById("slog-logger-filter")?.value;
+  const levelVal = document.getElementById("slog-level-filter")?.value;
+  if (loggerVal) params.set("logger", loggerVal);
+  if (levelVal) params.set("level", levelVal);
+  downloadFile(`api/server-logs/export?${params.toString()}`, "logs-serveur.csv");
 }
 
 /* ---------- Base de données (diagnostic, lecture seule) ---------- */
