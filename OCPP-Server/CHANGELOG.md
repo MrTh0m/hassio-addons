@@ -1,3 +1,7 @@
+## 0.19.24
+
+- **Corrigé (critique)** : une borne pouvait rejouer un backlog de relevés `MeterValues` bufferisés (datés de plusieurs jours dans le passé, `transactionId` différent) EN PLEIN MILIEU d'une vraie session, ce qui écrasait régulièrement la progression réelle de l'énergie (kWh figs à 0 alors que la charge avançait vraiment). Observé en prod sur une Schneider après un redémarrage : elle a rejoué 5 jours de relevés bufferisés (`transactionId=0`) intercalés avec les vrais relevés de la session en cours. Un relevé `MeterValues` n'est désormais rattaché à la session active que si le `transactionId` annoncé par la borne correspond réellement (reste stocké sinon, juste détaché, rien n'est perdu). Compatible avec les bornes qui n'envoient pas ce champ du tout. Tests dédiés (`test_meter_values_transaction_id.py`), dont une reproduction directe de l'incident.
+
 ## 0.19.23
 
 - **Nouveau** : onglet **Logs serveur**, à côté de **Logs OCPP** (renommé pour clarifier). Capture les logs applicatifs (serveur, pont MQTT, exceptions non gérées), en complément du journal OCPP existant qui ne couvre que les échanges protocolaires — exactement ce qui manquait pour diagnostiquer l'incident MQTT de la 0.19.22 sans sortir de l'appli. Filtres logger/niveau, bascule « en direct », export CSV, même accès réservé (admin + mode debug) que Logs OCPP.

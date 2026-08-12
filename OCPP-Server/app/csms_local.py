@@ -533,6 +533,20 @@ class LocalChargePoint(ChargePoint16):
                 Transaction.connector_id == connector_id,
                 Transaction.status == "active",
             ).order_by(Transaction.id.desc()).first()
+            # Le transactionId annoncé par la borne doit correspondre à notre id
+            # interne (celui qu'on lui a nous-mêmes renvoyé à l'acceptation du
+            # StartTransaction). Une borne peut rejouer un backlog de relevés
+            # bufferisés avec un ancien/autre transactionId (souvent 0) : observé
+            # en prod, une Schneider a rejoué 5 jours de relevés bufferisés en
+            # pleine session réelle, ce qui écrasait régulièrement la progression
+            # d'énergie de la vraie session avec une valeur figée proche du
+            # relevé de départ (delta retombant à 0 à chaque relevé rejoué). On
+            # ignore ces relevés pour la session active (mais on les stocke quand
+            # même, juste sans les y rattacher, pour ne rien perdre du
+            # diagnostic) ; ne casse pas la compatibilité avec les bornes qui
+            # n'envoient pas transactionId du tout (nos simulateurs par exemple).
+            if our_txn is not None and transaction_id is not None and transaction_id != our_txn.id:
+                our_txn = None
             our_txn_id = our_txn.id if our_txn else None
             vehicle_id_for_mqtt = our_txn.vehicle_id if our_txn else None
 
