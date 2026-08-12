@@ -1,34 +1,17 @@
+## 0.19.22
+
+- **Corrigé (critique)** : une panne MQTT temporaire pouvait faire déconnecter une borne en boucle (exception non rattrapée dans les gestionnaires OCPP). Toutes les publications MQTT passent maintenant par une fonction unique qui absorbe systématiquement les pannes du broker. Tests dédiés (`test_mqtt_resilience.py`).
+
 ## 0.19.21
 
-- **Nouveau** : entités MQTT enrichies par connecteur, pour construire des cartes Lovelace complètes (état, charge, véhicule, coût) :
-  - `courant` (A) et `tension` (V), auparavant stockés en base mais jamais publiés en MQTT.
-  - `énergie totale` (renommé depuis `énergie`, aucun changement de valeur ni de `unique_id`) : c'est le registre `Energy.Active.Import.Register` brut de la borne, cumulatif à vie, à utiliser pour le tableau de bord Energy de Home Assistant.
-  - **`énergie session`** (nouveau) : énergie de la seule charge en cours (registre moins le relévé de départ de la transaction), repart de 0 à chaque nouvelle charge. ⚠️ à ne pas ajouter en plus de `énergie totale` au tableau de bord Energy, ce serait compter deux fois la même énergie.
-  - **`coût session`** (nouveau) : coût calculé en direct pendant la charge (réutilise la même logique de découpage tarifaire que le coût final).
-  - **`début de session`** (nouveau, horodatage) et **groupe « dernière charge »** (énergie, coût), publiés à l'arrêt d'une charge (aussi bien via `StopTransaction` que via la fermeture automatique d'une transaction restée active).
-  - Les compteurs de session (énergie, coût, durée) sont remis à zéro explicitement au démarrage de chaque nouvelle charge, pour ne pas laisser traîner les valeurs de la session précédente (les topics MQTT sont retenus).
-- **Nouveau** : chaque **véhicule** est désormais publié comme un appareil MQTT à part entière (pas un simple texte accroché à la borne), pour une carte Lovelace dédiée à la voiture, indépendante de la borne utilisée pour la recharger :
-  - `En charge` (oui/non), `En charge sur` (borne + connecteur), `début de session`, `énergie session`, `coût session`, `durée de charge` : reflètent en direct la charge en cours de ce véhicule, quelle que soit la borne.
-  - `Dernière charge énergie/coût/borne`, `Kilométrage`, `Capacité batterie`.
-  - Créé/mis à jour à la création ou l'édition d'un véhicule ; retiré côté HA uniquement sur suppression DÉFINITIVE (la désactivation, réversible, laisse les entités en place).
-  - Pas de test automatisé dédié pour cette fonctionnalité (nécessiterait de mocker un client MQTT, absent de la suite actuelle) : la logique de calcul réutilisée (`compute_session_cost`) est déjà couverte par ailleurs.
-- **Corrigé** : la réduction nocturne de luminosité (introduite en 0.19.20) ne s'appliquait qu'en mode Auto alors qu'elle devait être indépendante du mode (sur la valeur fixe elle-même en mode Fixe). `compute_light_target` gère maintenant les deux cas ; le planificateur réévalue aussi les bornes en mode Fixe dès que la réduction nocturne y est activée (pas seulement le mode Auto), y compris pour restaurer automatiquement la valeur pleine une fois la fenêtre nocturne terminée. Tests dédiés ajoutés (`test_light_intensity.py`, jamais déposé sur E: lors de son introduction en 0.19.20 malgré avoir été validé en local à l'époque, corrigé au passage).
-- **Amélioré** : refonte de la section **Luminosité** de l'onglet Réglages (maquette validée au préalable) :
-  - Encadrée dans une carte pleine largeur, cohérente avec le reste du formulaire (ne détonne plus dans une colonne étroite à 340px).
-  - « Réduire la nuit » sorti du bloc Auto : réglage partagé affiché sous les deux modes, avec la précision « (s'applique en Fixe comme en Auto) ».
-  - Panneau nuit redessiné en grille (Réduction sur sa ligne, Début/Fin côte à côte) au lieu d'une ligne qui débordait sur deux lignes.
-  - Le curseur du mode Fixe suit le même schéma visuel que ceux du mode Auto (libellé + valeur au-dessus, curseur en dessous).
-  - Retrait de « (optionnel) » sur le champ Nom d'affichage.
-- **Corrigé** : un véhicule sans historique de charge affichait « Inconnu » sur tous ses capteurs MQTT de session (En charge, En charge sur, énergie/coût/durée de session), faute d'une quelconque valeur jamais publiée sur ces topics. Désormais des valeurs par défaut cohérentes (pas en charge, compteurs à 0) sont publiées à la création d'un véhicule, et republiées à chaque reconnexion MQTT en interrogeant s'il a une session active (au lieu de rester silencieux comme avant) — corrige aussi rétroactivement les véhicules existants dès la prochaine reconnexion.
-- **Corrigé/amélioré** : le capteur « Kilométrage » du véhicule prêtait à confusion (odomètre brut à la dernière charge, pas les km parcourus depuis la charge précédente). Renommé en « Odomètre (dernière charge) », et ajout d'un nouveau capteur séparé **« Km depuis la charge précédente »** (delta, même calcul que celui déjà utilisé dans l'historique). Au passage, nouvelle fonction centrale `publish_vehicle_last_charge` (recalcule le résumé « dernière charge » à partir de la base, plutôt que de propager des valeurs au coup par coup) appelée :
-  - à la fin d'une session OCPP réelle (StopTransaction, et la fermeture automatique d'une transaction restée active) ;
-  - **surtout** lors de la modification a posteriori d'une session (`PUT /api/sessions/{id}`) : l'odomètre est en pratique presque toujours saisi APRÈS la charge, pas au moment même de `StopTransaction`, et rien ne republiait le MQTT à ce moment-là jusqu'ici (point identifié mais laissé de côté lors de l'introduction initiale de cette fonctionnalité) ;
-  - à la création d'une charge externe.
-- **Corrigé** : le nom de l'appareil MQTT d'une borne utilisait l'id technique brut (`Borne 4d1e481d-cbf1-...`) au lieu du nom d'affichage (`Borne maison`), ce qui générait des `entity_id` illisibles côté HA. Utilise maintenant `display_name` avec repli sur l'id technique si non défini. Republié immédiatement (borne + tous ses connecteurs) dès qu'on renomme une borne, sans attendre une reconnexion.
-  ⚠️ Renommer une borne déjà en prod avec ce correctif changera ses `entity_id` HA (ancien nom basé sur l'id technique → nouveau basé sur le nom d'affichage) : à refaire une fois si des cartes/automatisations référencent déjà les anciens noms.
-- **Amélioré** : nouveau resserrement de l'onglet Réglages de la modal borne :
-  - Nom d'affichage, Mode de pilotage, Autorisation de charge et Abonnement/tarif regroupés dans une seule carte (au lieu de flotter séparément sur la page), cohérente avec le traitement déjà appliqué à Luminosité.
-  - Espacements verticaux réduits dans les deux cartes (titre « Réglages » redondant avec l'onglet retiré, marges resserrées entre les champs).
+- MQTT : nouvelles entités par connecteur — courant, tension, énergie session, coût session, début de session, dernière charge (énergie/coût). `énergie` renommée `énergie totale` (registre à vie, à utiliser pour le tableau de bord Energy ; ne pas y ajouter `énergie session` en plus, double comptage).
+- MQTT : chaque véhicule est maintenant son propre appareil HA (état de charge, session en cours, dernière charge, odomètre, km depuis la charge précédente, capacité batterie), plutôt que des capteurs accrochés à la borne.
+- MQTT : le nom de l'appareil d'une borne suit son nom d'affichage au lieu de l'id technique brut. ⚠️ Renommer une borne déjà en prod change ses `entity_id` HA.
+- Luminosité : la réduction nocturne s'applique aussi en mode Fixe (ne fonctionnait qu'en Auto).
+- Luminosité : section Réglages redessinée (carte pleine largeur, réduction nocturne partagée Fixe/Auto, panneau nuit en grille).
+- Réglages borne : champs regroupés dans une seule carte, espacements resserrés.
+- Véhicule : capteurs de session affichent des valeurs par défaut (pas en charge, 0) au lieu de « Inconnu » avant la première charge.
+- Véhicule : « Kilométrage » renommé « Odomètre (dernière charge) », nouveau capteur « Km depuis la charge précédente ».
 
 ## 0.19.20
 
@@ -45,7 +28,7 @@
 
 ## 0.19.18
 
-- **Amélioré** : le champ Luminosité (LED) devient un curseur (slider) par pas de 5 %, avec la valeur affichée en direct, au lieu d'un champ numérique à taper. L'enregistrement se déclenche au relâchement du curseur, sans bouton séparé.
+- **Amélioré** : le champ Luminosité (LED) devient un curseur (slider) par pas de 5 %, avec la valeur affichée en direct, au lieu d'un champ numérique à taper. L'enregistrement se déclenche au relâchement du curseur, sans bouton séparé.
 
 ## 0.19.17
 

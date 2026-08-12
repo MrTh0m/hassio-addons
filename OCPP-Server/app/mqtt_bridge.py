@@ -20,6 +20,27 @@ _client: aiomqtt.Client | None = None
 _slug_to_id: dict[str, str] = {}
 
 
+async def _safe_publish(topic: str, payload: str, retain: bool = True):
+    """Enveloppe UNIQUE autour de _client.publish() : ne laisse JAMAIS une panne
+    MQTT (broker indisponible, timeout, etc.) remonter jusqu'à l'appelant.
+
+    Point critique : ces publications sont déclenchées depuis les gestionnaires
+    de messages OCPP eux-mêmes (StatusNotification, MeterValues, StartTransaction,
+    ...). Constaté en prod : une simple panne MQTT temporaire a fait échouer un
+    _client.publish() non protégé, l'exception n'était rattrapée nulle part, ce
+    qui a fait planter la boucle de traitement OCPP et déconnecté en boucle la
+    borne physique tant que le broker n'était pas revenu. Côté Home Assistant,
+    une entité qui reste brièvement périmée est sans conséquence ; couper la
+    connexion à une vraie borne en charge, si. La publication MQTT doit donc
+    rester strictement « best effort » du point de vue du protocole OCPP."""
+    if _client is None:
+        return
+    try:
+        await _client.publish(topic, payload, retain=retain)
+    except Exception:
+        logger.debug("Publication MQTT échouée sur %s (ignorée, ne doit jamais impacter l'OCPP)", topic, exc_info=True)
+
+
 def _slug(charger_id: str) -> str:
     return "".join(c if c.isalnum() else "_" for c in charger_id)
 
@@ -52,14 +73,14 @@ async def publish_discovery(charger_id: str, mode: str, display_name: str | None
         "device": device,
         "icon": "mdi:ev-station",
     }
-    await _client.publish(f"{DISCOVERY_PREFIX}/sensor/{slug}_status/config", json.dumps(payload), retain=True)
+    await _safe_publish(f"{DISCOVERY_PREFIX}/sensor/{slug}_status/config", json.dumps(payload), retain=True)
 
     # Nettoyage d'une entité obsolète : jusqu'en 0.7.0, le switch de pilotage
     # était publié au niveau de la borne (ocppserver_{slug}_charge_control).
     # Depuis 0.8.0 il est publié par connecteur ; l'ancienne entité reste
     # "fantôme" côté HA tant qu'on ne la retire pas explicitement (le
     # discovery MQTT est retenu sur le broker). Payload vide = suppression.
-    await _client.publish(f"{DISCOVERY_PREFIX}/switch/{slug}_charge_control/config", "", retain=True)
+    await _safe_publish(f"{DISCOVERY_PREFIX}/switch/{slug}_charge_control/config", "", retain=True)
 
 
 async def publish_connector_discovery(charger_id: str, connector_id: int, mode: str, display_name: str | None = None):
@@ -108,7 +129,7 @@ async def publish_connector_discovery(charger_id: str, connector_id: int, mode: 
         for opt in ("unit", "device_class", "state_class", "icon"):
             if opt in meta:
                 payload["unit_of_measurement" if opt == "unit" else opt] = meta[opt]
-        await _client.publish(f"{DISCOVERY_PREFIX}/sensor/{slug}_{c}_{key}/config", json.dumps(payload), retain=True)
+        await _safe_publish(f"{DISCOVERY_PREFIX}/sensor/{slug}_{c}_{key}/config", json.dumps(payload), retain=True)
 
     switch_topic = f"{DISCOVERY_PREFIX}/switch/{slug}_{c}_charge_control/config"
     if mode == "local":
@@ -121,12 +142,12 @@ async def publish_connector_discovery(charger_id: str, connector_id: int, mode: 
             "payload_off": "OFF",
             "device": device,
         }
-        await _client.publish(switch_topic, json.dumps(payload), retain=True)
+        await _safe_publish(switch_topic, json.dumps(payload), retain=True)
     else:
         # Mode relais : pas de pilotage possible, on retire un éventuel
         # switch resté d'un précédent mode local (payload vide = suppression
         # de l'entité côté HA, convention MQTT Discovery standard).
-        await _client.publish(switch_topic, "", retain=True)
+        await _safe_publish(switch_topic, "", retain=True)
 
 
 def _vehicle_device_info(vehicle_id: int, name: str) -> dict:
@@ -156,7 +177,7 @@ async def publish_vehicle_discovery(vehicle_id: int, name: str):
         "device_class": "battery_charging",
         "device": device,
     }
-    await _client.publish(f"{DISCOVERY_PREFIX}/binary_sensor/{v}_is_charging/config", json.dumps(payload), retain=True)
+    await _safe_publish(f"{DISCOVERY_PREFIX}/binary_sensor/{v}_is_charging/config", json.dumps(payload), retain=True)
 
     sensors = {
         "charging_at": {"name": "En charge sur", "icon": "mdi:ev-station"},
@@ -181,7 +202,7 @@ async def publish_vehicle_discovery(vehicle_id: int, name: str):
         for opt in ("unit", "device_class", "state_class", "icon"):
             if opt in meta:
                 payload["unit_of_measurement" if opt == "unit" else opt] = meta[opt]
-        await _client.publish(f"{DISCOVERY_PREFIX}/sensor/{v}_{key}/config", json.dumps(payload), retain=True)
+        await _safe_publish(f"{DISCOVERY_PREFIX}/sensor/{v}_{key}/config", json.dumps(payload), retain=True)
 
 
 async def unpublish_vehicle_discovery(vehicle_id: int):
@@ -192,13 +213,13 @@ async def unpublish_vehicle_discovery(vehicle_id: int):
     if _client is None:
         return
     v = f"vehicle{vehicle_id}"
-    await _client.publish(f"{DISCOVERY_PREFIX}/binary_sensor/{v}_is_charging/config", "", retain=True)
+    await _safe_publish(f"{DISCOVERY_PREFIX}/binary_sensor/{v}_is_charging/config", "", retain=True)
     for key in (
         "charging_at", "session_energy_wh", "session_cost", "session_duration_min",
         "session_start_time", "last_session_energy_wh", "last_session_cost",
         "last_session_charger", "odometer_km", "km_since_last", "battery_capacity_kwh",
     ):
-        await _client.publish(f"{DISCOVERY_PREFIX}/sensor/{v}_{key}/config", "", retain=True)
+        await _safe_publish(f"{DISCOVERY_PREFIX}/sensor/{v}_{key}/config", "", retain=True)
 
 
 async def publish_vehicle_state(vehicle_id: int, **values):
@@ -208,7 +229,7 @@ async def publish_vehicle_state(vehicle_id: int, **values):
     for key, value in values.items():
         if value is None:
             continue
-        await _client.publish(f"{BASE_TOPIC}/{v}/{key}", str(value), retain=True)
+        await _safe_publish(f"{BASE_TOPIC}/{v}/{key}", str(value), retain=True)
 
 
 async def publish_vehicle_last_charge(vehicle_id: int):
@@ -277,7 +298,7 @@ async def publish_state(charger_id: str, **values):
     for key, value in values.items():
         if value is None:
             continue
-        await _client.publish(f"{BASE_TOPIC}/{slug}/{key}", str(value), retain=True)
+        await _safe_publish(f"{BASE_TOPIC}/{slug}/{key}", str(value), retain=True)
 
 
 async def publish_connector_state(charger_id: str, connector_id: int, **values):
