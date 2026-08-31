@@ -1,5 +1,6 @@
 import os
 from datetime import datetime, timedelta
+from typing import Optional
 
 import bcrypt
 import jwt
@@ -22,9 +23,9 @@ def verify_password(password: str, password_hash: str) -> bool:
     return bcrypt.checkpw(password.encode(), password_hash.encode())
 
 
-def create_access_token(username: str, role: str) -> str:
+def create_access_token(user_id: int, username: str, role: str) -> str:
     expire = datetime.utcnow() + timedelta(hours=TOKEN_EXPIRE_HOURS)
-    payload = {"sub": username, "role": role, "exp": expire}
+    payload = {"sub": username, "uid": user_id, "role": role, "exp": expire}
     return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
 
 
@@ -39,6 +40,7 @@ def decode_token(token: str) -> dict:
 
 
 def get_current_user(token: str = Depends(oauth2_scheme)) -> dict:
+    """Renvoie le payload du JWT : {sub, uid, role, exp}."""
     return decode_token(token)
 
 
@@ -46,3 +48,11 @@ def require_admin(user: dict = Depends(get_current_user)) -> dict:
     if user.get("role") != "admin":
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Réservé aux administrateurs")
     return user
+
+
+def is_admin(user: dict) -> bool:
+    return user.get("role") == "admin"
+
+
+def get_user_id(user: dict) -> Optional[int]:
+    return user.get("uid")

@@ -30,6 +30,7 @@ COPY requirements.txt .
 RUN pip install --break-system-packages --no-cache-dir -r requirements.txt
 
 COPY app ./app
+COPY resolve_config.py .
 
 EXPOSE 8000
 
