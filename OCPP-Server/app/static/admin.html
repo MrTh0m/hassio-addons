@@ -1888,11 +1888,21 @@ async function openConnectorModal(chargerId, connectorId, silent, displayName) {
     fetch(`api/chargers/${chargerId}/sessions?connector_id=${connectorId}`, { headers: authHeaders() }).then(r => r.json()),
     fetch(`api/chargers/${chargerId}/metervalues?connector_id=${connectorId}&limit=10`, { headers: authHeaders() }).then(r => r.json()),
   ]);
+  const latestSession = sessions[0];
+  const powerHistory = latestSession
+    ? await fetch(`api/chargers/${chargerId}/sessions/${latestSession.id}/power-history`, { headers: authHeaders() }).then(r => r.json()).catch(() => null)
+    : null;
 
   let html = `<div class="modal-head"><h2>${esc(displayName || chargerId)} · Conn. ${connectorId}</h2>
     <button class="btn btn-icon btn-ghost" onclick="closeModal()"><svg><use href="#i-close"/></svg></button></div>`;
 
   html += `<p class="small muted" style="margin:0 0 .6rem">Pour démarrer ou arrêter une charge, utilisez la page <b>Accueil</b> (bornes disponibles / charge en cours).</p>`;
+
+  if (powerHistory && powerHistory.points.length >= 2) {
+    const label = latestSession.status === "active" ? "charge en cours" : "dernière charge";
+    html += `<div class="section-title">Occupation de l'abonnement · ${esc(label)}</div>`;
+    html += renderOccupancyChart(powerHistory);
+  }
 
   html += `<div class="section-title">Sessions récentes</div><div class="table-wrap"><table><thead><tr>
     <th>#</th><th>Début</th><th>Fin</th><th>kWh</th><th>P. max</th><th>Coût</th><th>Statut</th></tr></thead><tbody>
@@ -1905,6 +1915,44 @@ async function openConnectorModal(chargerId, connectorId, silent, displayName) {
   </tbody></table></div>`;
 
   openModal(html);
+}
+
+/* Graphique de progression de l'occupation de l'abonnement pendant une
+   session : puissance délivrée (Power.Active.Import) rapportée à la
+   puissance souscrite, dans le temps. Mini SVG maison plutôt qu'une
+   librairie externe, cohérent avec le fonctionnement hors-ligne de la PWA
+   (pas de dépendance CDN). */
+function renderOccupancyChart(data) {
+  const { points, subscribed_power_kva, plan_name } = data;
+  if (!subscribed_power_kva) {
+    return `<div class="card"><div class="empty">Puissance souscrite non renseignée sur l'abonnement appliqué (${esc(plan_name || "aucun")}).</div></div>`;
+  }
+  const t0 = new Date(points[0].timestamp).getTime();
+  const xy = points.map(p => ({
+    x: (new Date(p.timestamp).getTime() - t0) / 60000,
+    y: p.occupancy_percent ?? 0,
+  }));
+  const yMax = Math.max(100, ...xy.map(p => p.y)) * 1.05;
+  const w = 600, h = 130, pad = { l: 36, r: 10, t: 10, b: 22 };
+  const xMax = Math.max(xy[xy.length - 1].x, 0.01);
+  const sx = x => pad.l + (x / xMax) * (w - pad.l - pad.r);
+  const sy = y => h - pad.b - (y / yMax) * (h - pad.t - pad.b);
+  const path = xy.map((p, i) => `${i === 0 ? "M" : "L"} ${sx(p.x).toFixed(1)} ${sy(p.y).toFixed(1)}`).join(" ");
+  const last = xy[xy.length - 1];
+  const lastColor = last.y >= 100 ? "var(--danger)" : last.y >= 90 ? "var(--warn)" : "var(--accent)";
+  return `<div class="card">
+    <svg viewBox="0 0 ${w} ${h}" style="width:100%;height:${h}px;display:block">
+      <line x1="${pad.l}" x2="${w - pad.r}" y1="${sy(100).toFixed(1)}" y2="${sy(100).toFixed(1)}" stroke="var(--danger)" stroke-dasharray="4 3" stroke-width="1"/>
+      <text x="${w - pad.r}" y="${(sy(100) - 3).toFixed(1)}" font-size="9" fill="var(--danger)" text-anchor="end">100 %</text>
+      <line x1="${pad.l}" x2="${w - pad.r}" y1="${h - pad.b}" y2="${h - pad.b}" stroke="var(--border)"/>
+      <path d="${path}" fill="none" stroke="${lastColor}" stroke-width="2"/>
+      <circle cx="${sx(last.x).toFixed(1)}" cy="${sy(last.y).toFixed(1)}" r="3" fill="${lastColor}"/>
+      <text x="${pad.l}" y="12" font-size="10" fill="var(--text-muted)">Occupation (%)</text>
+      <text x="${pad.l}" y="${h - 6}" font-size="9" fill="var(--text-muted)">0 min</text>
+      <text x="${w - pad.r}" y="${h - 6}" font-size="9" fill="var(--text-muted)" text-anchor="end">${xMax.toFixed(0)} min</text>
+    </svg>
+    <div class="tiny muted" style="margin-top:.2rem">${esc(plan_name || "")} · ${subscribed_power_kva} kVA souscrits · dernier point : <b>${last.y.toFixed(1)} %</b></div>
+  </div>`;
 }
 
 /* --- Fiche & statistiques d'une borne --- */

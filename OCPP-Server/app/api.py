@@ -1005,6 +1005,43 @@ def list_meter_values(
     ]
 
 
+@router.get("/chargers/{charger_id}/sessions/{transaction_id}/power-history")
+def session_power_history(
+    charger_id: str, transaction_id: int,
+    db: Session = Depends(get_db), user=Depends(get_current_user),
+):
+    """Historique de la puissance délivrée (Power.Active.Import) d'une session,
+    avec le taux d'occupation de l'abonnement à chaque point (même formule que
+    /occupancy, mais dans le temps plutôt qu'à l'instant T). Sert au graphique
+    de progression affiché dans le détail d'un connecteur, pour la session
+    active ou la dernière session terminée."""
+    txn = db.query(Transaction).filter(
+        Transaction.id == transaction_id, Transaction.charger_id == charger_id,
+    ).first()
+    if not txn:
+        raise HTTPException(status_code=404, detail="Session inconnue")
+    charger = db.query(Charger).filter(Charger.id == charger_id).first()
+    plan = resolve_plan_for_charger(db, charger) if charger else None
+    sub_w = (plan.subscribed_power_kva or 0) * 1000.0 if plan else 0.0
+    values = db.query(MeterValue).filter(
+        MeterValue.transaction_id == transaction_id,
+        MeterValue.measurand == "Power.Active.Import",
+    ).order_by(MeterValue.timestamp.asc()).all()
+    points = [
+        {
+            "timestamp": v.timestamp.isoformat(),
+            "power_w": v.value,
+            "occupancy_percent": round(v.value / sub_w * 100, 1) if sub_w > 0 else None,
+        }
+        for v in values
+    ]
+    return {
+        "plan_name": plan.name if plan else None,
+        "subscribed_power_kva": plan.subscribed_power_kva if plan else None,
+        "points": points,
+    }
+
+
 # --- Véhicules ---
 
 class VehicleCreate(BaseModel):

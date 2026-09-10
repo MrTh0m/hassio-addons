@@ -1,3 +1,7 @@
+## 0.19.26
+
+- **Nouveau** : graphique de progression de l'occupation de l'abonnement électrique (puissance délivrée / puissance souscrite dans le temps) affiché dans le détail d'un connecteur, pour la charge en cours ou la dernière charge terminée. S'appuie sur les relevés `Power.Active.Import` déjà stockés, pas de nouvelle collecte. Ligne pointillée à 100 % pour repérer visuellement une session qui a talonné ou dépassé la puissance souscrite (nouvel endpoint `/api/chargers/{id}/sessions/{transaction_id}/power-history`).
+
 ## 0.19.25
 
 - **Nouveau** : bouton d'export CSV des clés de configuration OCPP dans l'onglet **Configuration OCPP**, à côté du bouton de rechargement. Même mécanisme que les exports existants (historique, logs, tables DB). Utile pour garder une trace ou comparer avant/après la modification d'une clé (ex. `TICMode`, seuils de courant).
