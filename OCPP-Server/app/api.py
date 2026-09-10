@@ -475,6 +475,24 @@ async def get_configuration(charger_id: str, db: Session = Depends(get_db), user
     return {"keys": keys, "pending_reboot_keys": pending}
 
 
+@router.get("/chargers/{charger_id}/config/export")
+async def export_configuration(
+    charger_id: str, db: Session = Depends(get_db), user=Depends(require_admin),
+):
+    """Export CSV de toutes les clés de configuration OCPP d'une borne (telles
+    qu'affichées dans l'onglet Configuration OCPP), pour archivage ou
+    comparaison avant/après une modification."""
+    data = await get_configuration(charger_id, db, user)
+    charger = db.query(Charger).filter(Charger.id == charger_id).first()
+    rows = [
+        {"cle": k["key"], "valeur": k["value"], "lecture_seule": "oui" if k["readonly"] else "non"}
+        for k in data["keys"]
+    ]
+    label = (charger.display_name if charger else None) or charger_id
+    filename = f"config-ocpp-{label}.csv".replace(" ", "_")
+    return _to_csv_response(rows, filename)
+
+
 @router.put("/chargers/{charger_id}/config/{key}")
 async def set_configuration(
     charger_id: str, key: str, body: ConfigValueUpdate,

@@ -1531,7 +1531,7 @@ async function openChargerConfigModal(id, activeTab) {
 
   // Onglet Configuration OCPP : chargé à la demande
   const ocppTabContent = activeTab === "ocpp"
-    ? await buildOcppConfigTab(id, isLocal, connectors)
+    ? await buildOcppConfigTab(id, isLocal, connectors, charger.display_name || id)
     : `<div id="ocpp-tab-placeholder"><div class="empty">Cliquez sur l'onglet pour charger la configuration.</div></div>`;
 
   const tabBtn = (key, label) =>
@@ -1597,7 +1597,7 @@ async function openChargerConfigModal(id, activeTab) {
   openModal(html);
 }
 
-async function buildOcppConfigTab(chargerId, isLocal, connectors) {
+async function buildOcppConfigTab(chargerId, isLocal, connectors, displayName) {
   if (!isLocal) return `<div class="empty">Indisponible en mode relais.</div>`;
   let payload;
   try {
@@ -1686,6 +1686,7 @@ async function buildOcppConfigTab(chargerId, isLocal, connectors) {
     <div class="spread" style="align-items:flex-start; gap:.6rem; margin-bottom:.5rem">
       <p class="small muted" style="margin:0">Les clés <span style="color:var(--accent)">colorées</span> sont importantes pour les données temps réel.
         <span class="badge warn" style="font-size:.62rem"><svg style="width:.8em;height:.8em;vertical-align:-.1em"><use href="#i-clock"/></svg> reboot</span> signale une valeur qui attend un redémarrage pour s'appliquer.</p>
+      <button class="btn btn-icon btn-ghost" title="Exporter les clés en CSV" onclick="exportOcppConfig('${chargerId}','${esc(displayName)}')"><svg><use href="#i-download"/></svg></button>
       <button class="btn btn-icon btn-ghost" title="Recharger la configuration en direct" onclick="openChargerConfigModal('${chargerId}','ocpp')"><svg><use href="#i-refresh"/></svg></button>
     </div>
     ${banner}
@@ -2648,6 +2649,10 @@ async function downloadFile(url, fallbackFilename) {
     URL.revokeObjectURL(objUrl);
     toast("Export téléchargé", "ok");
   } catch (e) { toast("Export impossible", "err"); }
+}
+
+function exportOcppConfig(chargerId, displayName) {
+  downloadFile(`api/chargers/${chargerId}/config/export`, `config-ocpp-${displayName || chargerId}.csv`);
 }
 
 function exportDbTableCsv() {
