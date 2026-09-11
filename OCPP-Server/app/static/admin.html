@@ -1187,6 +1187,8 @@ async function renderHomeCurrent(active, chargers, condByCharger) {
           </div>
           <div class="metrics">
             <span>Depuis <b>${formatDuration(s.duration_min)}</b></span>
+            ${(s.charging_duration_min != null && s.duration_min != null && (s.duration_min - s.charging_duration_min) > 0.5)
+              ? `<span class="warn" style="color:var(--warn)">Charge effective <b>${formatDuration(s.charging_duration_min)}</b></span>` : ""}
             <span><b>${kWh(s.energy_wh)}</b> kWh</span>
             <span><b>${eur(s.cost)}</b></span>
             ${recharge}

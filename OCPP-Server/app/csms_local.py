@@ -254,6 +254,25 @@ class LocalChargePoint(ChargePoint16):
             if connector_id == 0:
                 charger.status = status
 
+            # Suivi du temps de charge EFFECTIF (voir commentaire sur
+            # Transaction.charging_seconds) : uniquement sur une vraie
+            # transition touchant "Charging", jamais sur un renvoi redondant du
+            # même statut (une borne peut resignaler périodiquement le même
+            # statut, ce qui ne doit pas réinitialiser charging_since).
+            if connector_id != 0 and status != old_status:
+                active_txn = db.query(Transaction).filter(
+                    Transaction.charger_id == self.id,
+                    Transaction.connector_id == connector_id,
+                    Transaction.status == "active",
+                ).order_by(Transaction.id.desc()).first()
+                if active_txn:
+                    now = datetime.utcnow()
+                    if status == "Charging":
+                        active_txn.charging_since = now
+                    elif old_status == "Charging" and active_txn.charging_since:
+                        active_txn.charging_seconds = (active_txn.charging_seconds or 0.0) + (now - active_txn.charging_since).total_seconds()
+                        active_txn.charging_since = None
+
             if status == "Available" and connector_id != 0:
                 stale = db.query(Transaction).filter(
                     Transaction.charger_id == self.id,
@@ -479,6 +498,13 @@ class LocalChargePoint(ChargePoint16):
                 txn.stop_time = datetime.utcnow()
                 txn.status = "completed"
                 txn.deferred_until = None
+                # Filet de sécurité : si un StopTransaction arrive alors que le
+                # connecteur était encore signalé "Charging" (pas de transition
+                # StatusNotification intermédiaire vue avant l'arrêt), on clôt
+                # quand même la période de charge en cours au lieu de la perdre.
+                if txn.charging_since:
+                    txn.charging_seconds = (txn.charging_seconds or 0.0) + (txn.stop_time - txn.charging_since).total_seconds()
+                    txn.charging_since = None
                 if txn.start_time:
                     duration_min = round((txn.stop_time - txn.start_time).total_seconds() / 60, 1)
                 db.flush()

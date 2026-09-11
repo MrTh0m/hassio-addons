@@ -226,14 +226,35 @@ async def ocpp_endpoint(websocket: WebSocket, charge_point_id: str):
         else:
             connection = StarletteWebSocketAdapter(websocket)
             cp = LocalChargePoint(charge_point_id, connection)
+            old_cp = CONNECTED_CHARGERS.get(charge_point_id)
+            if old_cp is not None and old_cp is not cp:
+                # Une connexion précédente existe encore pour cette borne (ex.
+                # coupure réseau brève : la borne rouvre une nouvelle connexion
+                # avant que le serveur ait détecté que l'ancienne était morte).
+                # Sans ça, l'ancienne tâche peut encore tenter d'envoyer sur son
+                # socket au même moment où celui-ci se ferme, ce qui plantait
+                # avec "Unexpected ASGI message 'websocket.send', after sending
+                # 'websocket.close'" (observé en prod, plusieurs reconnexions
+                # rapprochées en l'espace d'une minute). On ferme explicitement
+                # l'ancien socket pour qu'elle se termine proprement à la place
+                # (WebSocketDisconnect, déjà géré plus bas).
+                try:
+                    await old_cp._connection._ws.close()
+                except Exception:
+                    pass
             CONNECTED_CHARGERS[charge_point_id] = cp
             try:
                 asyncio.create_task(_refresh_connector_statuses(cp, charge_point_id))
                 await cp.start()
             finally:
-                CONNECTED_CHARGERS.pop(charge_point_id, None)
-                from .sse import sse_notify
-                sse_notify("charger_disconnected", {"charger_id": charge_point_id})
+                # Ne retire l'entrée que si c'est bien CETTE connexion qui y est
+                # encore : sinon, la connexion qui vient de se terminer est
+                # l'ancienne (cf. ci-dessus) et retirer l'entrée effacerait à
+                # tort la borne comme déconnectée alors que la nouvelle tourne.
+                if CONNECTED_CHARGERS.get(charge_point_id) is cp:
+                    CONNECTED_CHARGERS.pop(charge_point_id, None)
+                    from .sse import sse_notify
+                    sse_notify("charger_disconnected", {"charger_id": charge_point_id})
     except (ConnectionError, WebSocketDisconnect):
         logger.info("Borne %s déconnectée", charge_point_id)
     except Exception:

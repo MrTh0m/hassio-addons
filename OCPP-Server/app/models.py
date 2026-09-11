@@ -151,6 +151,16 @@ class Transaction(Base):
     stop_time = Column(DateTime, nullable=True)
     status = Column(String, default="active")  # active | completed
 
+    # Temps de charge EFFECTIF (statut connecteur = "Charging"), à distinguer
+    # de start_time/stop_time qui donnent la durée totale de la session y
+    # compris les périodes de suspension (SuspendedEV/SuspendedEVSE, ex.
+    # délestage TIC). charging_seconds cumule les périodes déjà terminées ;
+    # charging_since marque le début de la période de charge en cours (None si
+    # le connecteur n'est pas actuellement en "Charging"). Mis à jour dans
+    # on_status_notification/on_stop_transaction (csms_local.py).
+    charging_seconds = Column(Float, default=0.0, nullable=True)
+    charging_since = Column(DateTime, nullable=True)
+
     is_external = Column(Boolean, default=False)
     location_label = Column(String, nullable=True)
 

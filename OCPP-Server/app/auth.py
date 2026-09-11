@@ -10,7 +10,8 @@ from fastapi.security import OAuth2PasswordBearer
 
 SECRET_KEY = os.environ.get("OCPP_SECRET_KEY", "change-me-in-production")
 ALGORITHM = "HS256"
-TOKEN_EXPIRE_HOURS = 24
+TOKEN_EXPIRE_HOURS = 24 * 30  # 30 jours : usage familial sur réseau privé, pas
+# de raison de forcer une reconnexion quotidienne comme sur un service exposé.
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
 

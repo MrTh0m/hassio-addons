@@ -666,6 +666,18 @@ def _serialize_session(s: Transaction, db: Session, prev_odometer: Optional[floa
         end = s.stop_time or datetime.utcnow()
         duration_min = round((end - s.start_time).total_seconds() / 60, 1)
 
+    # Temps de charge EFFECTIF (statut "Charging" uniquement), à distinguer de
+    # duration_min ci-dessus qui inclut les périodes de suspension (voir
+    # Transaction.charging_seconds/charging_since). None tant qu'aucune vraie
+    # période de charge n'a encore été observée (ex. charge externe, ou toute
+    # vieille session créée avant l'introduction de ce suivi).
+    charging_duration_min = None
+    if s.charging_seconds is not None or s.charging_since is not None:
+        total_s = s.charging_seconds or 0.0
+        if s.charging_since and s.status == "active":
+            total_s += (datetime.utcnow() - s.charging_since).total_seconds()
+        charging_duration_min = round(total_s / 60, 1)
+
     power_max_w = None if s.is_external else _session_power_max_w(db, s)
 
     # --- Indicateurs dérivés ------------------------------------------------
@@ -698,6 +710,7 @@ def _serialize_session(s: Transaction, db: Session, prev_odometer: Optional[floa
         "start_time": s.start_time.isoformat() if s.start_time else None,
         "stop_time": s.stop_time.isoformat() if s.stop_time else None,
         "status": s.status, "duration_min": duration_min,
+        "charging_duration_min": charging_duration_min,
         "energy_wh": energy_wh_known, "cost": cost,
         "tariff_plan_name": tariff_plan_name,
         "odometer_km": s.odometer_km,
