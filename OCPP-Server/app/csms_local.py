@@ -273,7 +273,16 @@ class LocalChargePoint(ChargePoint16):
                         active_txn.charging_seconds = (active_txn.charging_seconds or 0.0) + (now - active_txn.charging_since).total_seconds()
                         active_txn.charging_since = None
 
-            if status == "Available" and connector_id != 0:
+            # "Preparing" ne peut physiquement survenir que depuis un
+            # connecteur déjà libre (câble qu'on vient de brancher sur un
+            # connecteur au repos) : au même titre qu'"Available", c'est donc
+            # un signal fiable qu'une transaction encore marquée "active" ici
+            # est en réalité obsolète (ex. StopTransaction perdu lors d'une
+            # coupure réseau). Sans ce filet, une transaction fantôme peut
+            # rester ouverte des heures (observé en prod : 37h), et surtout
+            # bloque à tort la vérification has_active ci-dessous, empêchant
+            # le démarrage automatique d'une VRAIE nouvelle charge.
+            if status in ("Available", "Preparing") and connector_id != 0:
                 stale = db.query(Transaction).filter(
                     Transaction.charger_id == self.id,
                     Transaction.connector_id == connector_id,

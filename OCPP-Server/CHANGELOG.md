@@ -1,3 +1,10 @@
+## 0.19.27
+
+- **Corrigé** : la durée de vie du token de connexion passe de 24h à 30 jours. Usage familial sur réseau privé, aucune raison de forcer une reconnexion quotidienne.
+- **Nouveau** : suivi du temps de charge EFFECTIF (statut `Charging` uniquement), distinct du temps total depuis le branchement. Affiché en "Charge effective" sur la carte "Charge en cours" dès qu'il y a un vrai écart avec la durée totale (ex. charge suspendue par le délestage TIC).
+- **Corrigé** : une course entre deux connexions WebSocket pour la même borne (reconnexion rapide suite à une coupure réseau brève) pouvait faire planter le serveur (`websocket.send` après `websocket.close`) et, dans certains cas, faire perdre le suivi du statut "connectée" de la borne. L'ancienne connexion est maintenant explicitement fermée avant que la nouvelle prenne le relais.
+- **Corrigé** : une transaction encore marquée active en base pouvait rester ouverte pendant des heures si le `StopTransaction` correspondant s'était perdu (ex. pendant l'incident réseau ci-dessus), faussant l'affichage (session de plusieurs dizaines d'heures, session fantôme à 0 kWh juste après) et bloquant à tort le démarrage automatique d'une vraie nouvelle charge. Une transaction active est désormais aussi clôturée automatiquement quand le connecteur repasse à `Preparing` (pas seulement `Available`).
+
 ## 0.19.26
 
 - **Nouveau** : graphique de progression de l'occupation de l'abonnement électrique (puissance délivrée / puissance souscrite dans le temps) affiché dans le détail d'un connecteur, pour la charge en cours ou la dernière charge terminée. S'appuie sur les relevés `Power.Active.Import` déjà stockés, pas de nouvelle collecte. Ligne pointillée à 100 % pour repérer visuellement une session qui a talonné ou dépassé la puissance souscrite (nouvel endpoint `/api/chargers/{id}/sessions/{transaction_id}/power-history`).
