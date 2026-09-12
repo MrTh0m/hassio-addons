@@ -62,7 +62,7 @@ jobs:
     permissions:
       contents: read # checkout
       id-token: write # signature Cosign (token OIDC)
-      packages: write # push vers GHCR (seulement depuis main, voir push ci-dessous)
+      packages: write # push vers GHCR (seulement depuis dev, voir push ci-dessous)
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.init.outputs.matrix) }}
@@ -76,17 +76,17 @@ jobs:
           image: ${{ matrix.image }}
           image-tags: |
             ${{ needs.version.outputs.version }}
-          # Sur dev : build de validation uniquement (catch les erreurs de
-          # Dockerfile/dépendances avant merge), jamais publié. Seul un push
-          # sur main publie réellement l'image sur GHCR.
-          push: ${{ github.ref_name == 'main' }}
+          # App en bêta : dev est la branche réellement publiée/installée.
+          # main sert de validation seulement pour l'instant (peu de commits
+          # dessus tant que l'app n'est pas stabilisée).
+          push: ${{ github.ref_name == 'dev' }}
           version: ${{ needs.version.outputs.version }}
           context: ${{ env.APP_DIR }}
 
   manifest:
     name: Publier le manifeste multi-arch
     needs: [version, init, build]
-    if: github.ref_name == 'main'
+    if: github.ref_name == 'dev'
     runs-on: ubuntu-latest
     permissions:
       id-token: write # signature Cosign (token OIDC)
