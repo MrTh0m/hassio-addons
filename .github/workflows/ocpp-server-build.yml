@@ -1,0 +1,99 @@
+name: Build & publish OCPP-Server
+
+# Construit et publie l'image multi-arch (amd64 + aarch64) de l'add-on
+# OCPP-Server sur GHCR, pour que Home Assistant fasse un simple `docker pull`
+# au lieu de reconstruire l'image en local à chaque mise à jour.
+#
+# armhf/armv7/i386 ne sont volontairement pas inclus : la tooling officielle
+# home-assistant/builder (v2026.06.0) ne supporte que amd64/aarch64 en natif
+# (plus de QEMU comme dans l'ancienne action dépréciée). Sans objet ici de
+# toute façon, la Home Assistant réelle tourne en aarch64 (rpi4-64).
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "OCPP-Server/**"
+  workflow_dispatch: {}
+
+env:
+  ARCHITECTURES: '["amd64", "aarch64"]'
+  IMAGE_NAME: ocppserver
+  APP_DIR: OCPP-Server
+  # ghcr.io/${{ github.repository_owner }} donnerait "ghcr.io/MrTh0m/..."
+  # (casse préservée), invalide pour un nom d'image Docker/OCI (doit être
+  # tout en minuscules). D'où le préfixe explicite ci-dessous.
+  REGISTRY_PREFIX: ghcr.io/mrth0m
+
+permissions:
+  contents: read
+
+jobs:
+  version:
+    name: Lire la version de l'add-on
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v6
+      - id: version
+        run: echo "version=$(jq -r .version ${{ env.APP_DIR }}/config.json)" >> "$GITHUB_OUTPUT"
+
+  init:
+    name: Préparer la matrice de build
+    needs: version
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.matrix.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v6
+      - name: Get build matrix
+        id: matrix
+        uses: home-assistant/builder/actions/prepare-multi-arch-matrix@2026.06.0
+        with:
+          architectures: ${{ env.ARCHITECTURES }}
+          image-name: ${{ env.IMAGE_NAME }}
+          registry-prefix: ${{ env.REGISTRY_PREFIX }}
+
+  build:
+    name: Build ${{ matrix.arch }}
+    needs: [version, init]
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read # checkout
+      id-token: write # signature Cosign (token OIDC)
+      packages: write # push vers GHCR
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.init.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v6
+      - name: Build image
+        uses: home-assistant/builder/actions/build-image@2026.06.0
+        with:
+          arch: ${{ matrix.arch }}
+          container-registry-password: ${{ secrets.GITHUB_TOKEN }}
+          image: ${{ matrix.image }}
+          image-tags: |
+            ${{ needs.version.outputs.version }}
+          push: "true"
+          version: ${{ needs.version.outputs.version }}
+          context: ${{ env.APP_DIR }}
+
+  manifest:
+    name: Publier le manifeste multi-arch
+    needs: [version, init, build]
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write # signature Cosign (token OIDC)
+      packages: write # push du manifeste vers GHCR
+    steps:
+      - name: Publish multi-arch manifest
+        uses: home-assistant/builder/actions/publish-multi-arch-manifest@2026.06.0
+        with:
+          architectures: ${{ env.ARCHITECTURES }}
+          container-registry-password: ${{ secrets.GITHUB_TOKEN }}
+          image-name: ${{ env.IMAGE_NAME }}
+          image-tags: |
+            ${{ needs.version.outputs.version }}
+          registry-prefix: ${{ env.REGISTRY_PREFIX }}

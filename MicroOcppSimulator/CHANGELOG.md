@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.2.1
+
+- Fix : les données persistantes (dont evPlugged/evReady/evseReady et la config WebSocket) étaient perdues à chaque redémarrage. Le lien symbolique vers `/data` était créé sur `/mo_store` (racine), alors que le simulateur écrit en réalité dans `./mo_store` (chemin RELATIF figé par `MO_FILENAME_PREFIX` dans le `CMakeLists.txt` du dépôt officiel), résolu depuis son répertoire de travail `/opt/microocppsimulator`. Le lien symbolique cible désormais `/opt/microocppsimulator/mo_store`, le bon emplacement.
+
 ## 1.2.0
 
 - Fix : la configuration (dont l'URL du serveur OCPP) était perdue à chaque recréation du conteneur, car le simulateur écrit toujours dans `/mo_store` (chemin absolu figé en dur dans son code source), qui n'était pas relié au stockage persistant `/data` de l'add-on. `/mo_store` pointe maintenant vers `/data/mo_store` via un lien symbolique créé au démarrage.
