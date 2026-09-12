@@ -11,7 +11,7 @@ name: Build & publish OCPP-Server
 
 on:
   push:
-    branches: [main]
+    branches: [main, dev]
     paths:
       - "OCPP-Server/**"
   workflow_dispatch: {}
@@ -62,7 +62,7 @@ jobs:
     permissions:
       contents: read # checkout
       id-token: write # signature Cosign (token OIDC)
-      packages: write # push vers GHCR
+      packages: write # push vers GHCR (seulement depuis main, voir push ci-dessous)
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.init.outputs.matrix) }}
@@ -76,13 +76,17 @@ jobs:
           image: ${{ matrix.image }}
           image-tags: |
             ${{ needs.version.outputs.version }}
-          push: "true"
+          # Sur dev : build de validation uniquement (catch les erreurs de
+          # Dockerfile/dépendances avant merge), jamais publié. Seul un push
+          # sur main publie réellement l'image sur GHCR.
+          push: ${{ github.ref_name == 'main' }}
           version: ${{ needs.version.outputs.version }}
           context: ${{ env.APP_DIR }}
 
   manifest:
     name: Publier le manifeste multi-arch
     needs: [version, init, build]
+    if: github.ref_name == 'main'
     runs-on: ubuntu-latest
     permissions:
       id-token: write # signature Cosign (token OIDC)
