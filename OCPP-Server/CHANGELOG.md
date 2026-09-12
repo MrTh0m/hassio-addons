@@ -1,3 +1,7 @@
+## 0.19.28
+
+- **Nouveau** : l'add-on est désormais publié en image préconstruite multi-arch (amd64/aarch64) sur GHCR (`ghcr.io/mrth0m/ocppserver`) au lieu d'être reconstruit localement à chaque mise à jour. Les mises à jour deviennent un simple téléchargement, avec une vraie barre de progression côté Home Assistant, au lieu d'un rebuild silencieux sur le Raspberry Pi.
+
 ## 0.19.27
 
 - **Corrigé** : la durée de vie du token de connexion passe de 24h à 30 jours. Usage familial sur réseau privé, aucune raison de forcer une reconnexion quotidienne.
