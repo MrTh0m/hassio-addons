@@ -1,3 +1,7 @@
+## 0.19.29
+
+- **Corrigé** : le workflow CI publiait l'image sur `main` alors que c'est `dev` la branche réellement installée (app en bêta, peu de commits sur `main` pour l'instant). La 0.19.28 avait été buildée sans jamais être poussée sur GHCR, d'où l'échec de mise à jour ("manifest unknown"). Un push sur `dev` publie désormais réellement l'image ; `main` reste en build de validation seulement.
+
 ## 0.19.28
 
 - **Nouveau** : l'add-on est désormais publié en image préconstruite multi-arch (amd64/aarch64) sur GHCR (`ghcr.io/mrth0m/ocppserver`) au lieu d'être reconstruit localement à chaque mise à jour. Les mises à jour deviennent un simple téléchargement, avec une vraie barre de progression côté Home Assistant, au lieu d'un rebuild silencieux sur le Raspberry Pi.
