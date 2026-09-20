@@ -412,16 +412,14 @@
     <button class="navitem" data-nav="vehicles" onclick="switchView('vehicles')"><svg><use href="#i-car"/></svg><span class="navlabel">Véhicules</span><span class="navlabel-mobile">Autos</span></button>
     <button class="navitem" data-nav="tariffs" onclick="switchView('tariffs')"><svg><use href="#i-tariff"/></svg><span class="navlabel">Abo. électrique</span><span class="navlabel-mobile">Abo.</span></button>
     <button class="navitem" data-nav="history" onclick="switchView('history')"><svg><use href="#i-history"/></svg><span class="navlabel">Historique</span><span class="navlabel-mobile">Histo.</span></button>
-    <button class="navitem" data-nav="logs" onclick="switchView('logs')"><svg><use href="#i-logs"/></svg><span class="navlabel">Logs OCPP</span><span class="navlabel-mobile">Logs OCPP</span></button>
-    <button class="navitem" data-nav="server-logs" onclick="switchView('server-logs')"><svg><use href="#i-terminal"/></svg><span class="navlabel">Logs serveur</span><span class="navlabel-mobile">Serveur</span></button>
-    <button class="navitem" data-nav="dbaudit" onclick="switchView('dbaudit')"><svg><use href="#i-database"/></svg><span class="navlabel">Base de données</span><span class="navlabel-mobile">BDD</span></button>
+    <button class="navitem" data-nav="debug" onclick="switchView('debug')"><svg><use href="#i-terminal"/></svg><span class="navlabel">Débug</span><span class="navlabel-mobile">Débug</span></button>
     <div class="nav-spacer"></div>
     <button class="navitem logout" onclick="logout()"><svg><use href="#i-logout"/></svg><span class="navlabel">Déconnexion</span></button>
   </aside>
 
   <div class="main-col">
     <div class="topbar">
-      <div class="brand-mobile"><img src="icon.svg" alt=""><h1 id="view-title">Accueil</h1></div>
+      <div class="brand-mobile"><img src="icon.svg" alt=""><div><h1 id="view-title">Accueil</h1><div class="tiny muted" id="topbar-version" style="line-height:1"></div></div></div>
       <h1 id="view-title-desktop" style="display:none">Accueil</h1>
       <div class="cluster center" style="gap:.4rem; margin-left:auto">
         <button class="btn btn-icon btn-ghost" id="refresh-btn" title="Rafraîchir" onclick="refreshCurrentView()"><svg><use href="#i-refresh"/></svg></button>
@@ -526,6 +524,11 @@
 
       <!-- LOGS -->
       <section class="view" id="view-logs">
+        <div class="cluster center debug-tabs" style="gap:.1rem; border-bottom:1px solid var(--border); margin-bottom:.9rem">
+          <button class="tab-btn debug-subtab" data-nav="logs" onclick="switchView('logs')">Logs OCPP</button>
+          <button class="tab-btn debug-subtab" data-nav="server-logs" onclick="switchView('server-logs')">Logs serveur</button>
+          <button class="tab-btn debug-subtab" data-nav="dbaudit" onclick="switchView('dbaudit')">Base de données</button>
+        </div>
         <div class="card">
           <div class="cluster center" style="justify-content:space-between">
             <div class="cluster center" style="gap:.6rem">
@@ -560,6 +563,11 @@
 
       <!-- LOGS SERVEUR -->
       <section class="view" id="view-server-logs">
+        <div class="cluster center debug-tabs" style="gap:.1rem; border-bottom:1px solid var(--border); margin-bottom:.9rem">
+          <button class="tab-btn debug-subtab" data-nav="logs" onclick="switchView('logs')">Logs OCPP</button>
+          <button class="tab-btn debug-subtab" data-nav="server-logs" onclick="switchView('server-logs')">Logs serveur</button>
+          <button class="tab-btn debug-subtab" data-nav="dbaudit" onclick="switchView('dbaudit')">Base de données</button>
+        </div>
         <div class="card">
           <div class="cluster center" style="justify-content:space-between">
             <div class="cluster center" style="gap:.6rem">
@@ -594,6 +602,11 @@
       </section>
 
       <section class="view" id="view-dbaudit">
+        <div class="cluster center debug-tabs" style="gap:.1rem; border-bottom:1px solid var(--border); margin-bottom:.9rem">
+          <button class="tab-btn debug-subtab" data-nav="logs" onclick="switchView('logs')">Logs OCPP</button>
+          <button class="tab-btn debug-subtab" data-nav="server-logs" onclick="switchView('server-logs')">Logs serveur</button>
+          <button class="tab-btn debug-subtab" data-nav="dbaudit" onclick="switchView('dbaudit')">Base de données</button>
+        </div>
         <div class="card">
           <p class="small muted" style="margin:.1rem 0 .8rem">Vue en lecture seule du contenu de la base, pour vérifier la cohérence des données (ex. confirmer que des MeterValues sont bien enregistrées pendant une charge). Aucune modification possible depuis cette page.</p>
           <div class="cluster center" style="justify-content:space-between; gap:.6rem; flex-wrap:wrap">
@@ -679,7 +692,7 @@ function toggleTheme() {
 
 /* ---------- Version ---------- */
 fetch("api/version").then(r => r.json()).then(d => {
-  ["login-version", "side-version", "app-version"].forEach(id => {
+  ["login-version", "side-version", "app-version", "topbar-version"].forEach(id => {
     const el = document.getElementById(id); if (el) el.textContent = "v" + d.version;
   });
 }).catch(() => {});
@@ -701,17 +714,13 @@ function hasPerm(p) { return isAdmin() || !!(currentUser.permissions && currentU
 function debugToolsVisible() { return isAdmin() && !!currentUser.debug_mode; }
 // Affiche/masque les éléments selon le rôle
 function applyRoleUI() {
-  // Onglets Logs OCPP et Logs serveur (réservés admin + mode débug, comme Base de données)
-  const logBtn = document.querySelector(".navitem[data-nav='logs']");
-  if (logBtn) logBtn.style.display = debugToolsVisible() ? "" : "none";
-  const slogBtn = document.querySelector(".navitem[data-nav='server-logs']");
-  if (slogBtn) slogBtn.style.display = debugToolsVisible() ? "" : "none";
+  // Onglet Débug (fusion Logs OCPP / Logs serveur / Base de données),
+  // réservé admin + mode débug (Réglages -> Avancé)
+  const debugBtn = document.querySelector(".navitem[data-nav='debug']");
+  if (debugBtn) debugBtn.style.display = debugToolsVisible() ? "" : "none";
   // Onglet Abo. électrique
   const tariffBtn = document.querySelector(".navitem[data-nav='tariffs']");
   if (tariffBtn) tariffBtn.style.display = hasPerm("can_manage_tariffs") ? "" : "none";
-  // Onglet Base de données (admin + mode débug activé dans Réglages)
-  const dbBtn = document.querySelector(".navitem[data-nav='dbaudit']");
-  if (dbBtn) dbBtn.style.display = debugToolsVisible() ? "" : "none";
   // Formulaire ajout de véhicule
   const vehAdd = document.getElementById("veh-add-card");
   if (vehAdd) vehAdd.style.display = hasPerm("can_manage_vehicles") ? "" : "none";
@@ -1029,18 +1038,28 @@ function logout() {
 
 /* ---------- Navigation ---------- */
 let currentView = "home";
+// Dernier sous-onglet consulté dans "Débug" (Logs OCPP / Logs serveur / Base
+// de données) : switchView('debug') depuis le menu y redirige, pour rouvrir
+// là où on était plutôt que toujours sur Logs OCPP.
+let lastDebugSubTab = "logs";
+const DEBUG_SUBTABS = ["logs", "server-logs", "dbaudit"];
 const viewTitles = { home: "Accueil", chargers: "Bornes", vehicles: "Véhicules", tariffs: "Abo. électrique", history: "Historique", logs: "Logs OCPP", "server-logs": "Logs serveur", dbaudit: "Base de données" };
 const viewLoaded = {};
 function switchView(name) {
   // Garde : on redirige vers l'accueil si la vue est interdite au user
+  if (name === "debug") name = lastDebugSubTab;
   if (name === "logs" && !debugToolsVisible()) name = "home";
   if (name === "server-logs" && !debugToolsVisible()) name = "home";
   if (name === "tariffs" && !hasPerm("can_manage_tariffs")) name = "home";
   if (name === "dbaudit" && !debugToolsVisible()) name = "home";
+  if (DEBUG_SUBTABS.includes(name)) lastDebugSubTab = name;
   currentView = name;
   document.querySelectorAll(".view").forEach(v => v.classList.remove("active"));
   document.getElementById("view-" + name).classList.add("active");
-  document.querySelectorAll(".navitem[data-nav]").forEach(b => b.classList.toggle("active", b.dataset.nav === name));
+  document.querySelectorAll(".navitem[data-nav], .debug-subtab[data-nav]").forEach(b => {
+    const isDebugNavItem = b.dataset.nav === "debug" && DEBUG_SUBTABS.includes(name);
+    b.classList.toggle("active", b.dataset.nav === name || isDebugNavItem);
+  });
   document.getElementById("view-title").textContent = viewTitles[name];
   const td = document.getElementById("view-title-desktop"); if (td) td.textContent = viewTitles[name];
   if (name !== "logs") stopLogsPolling();
@@ -1128,13 +1147,20 @@ async function renderHomeCurrent(active, chargers, condByCharger) {
   const el = document.getElementById("home-current");
   if (!active.length) { el.innerHTML = `<div class="card"><div class="empty">Aucune charge en cours.</div></div>`; return; }
   const vehicles = await fetch("api/vehicles", { headers: authHeaders() }).then(r => r.json());
-  // Statuts connecteurs pour repérer un délestage (SuspendedEVSE / SuspendedEV).
+  // Statuts connecteurs pour repérer un délestage (SuspendedEVSE / SuspendedEV),
+  // et historique de puissance pour le graphique d'occupation (même endpoint
+  // que le détail connecteur, cf. renderOccupancyChart), plus accessible ici
+  // pendant une charge en cours que niché dans Bornes -> Détails.
   const statusMap = {};
+  const powerHistoryMap = {};
   await Promise.all(active.map(async s => {
     if (!s.charger_id) return;
     const conns = await fetch(`api/chargers/${s.charger_id}/connectors`, { headers: authHeaders() }).then(r => r.json()).catch(() => []);
     const c = conns.find(x => x.connector_id === s.connector_id);
     if (c) statusMap[`${s.charger_id}:${s.connector_id}`] = c.status;
+    if (!s.deferred_until) {
+      powerHistoryMap[s.id] = await fetch(`api/chargers/${s.charger_id}/sessions/${s.id}/power-history`, { headers: authHeaders() }).then(r => r.json()).catch(() => null);
+    }
   }));
 
   el.innerHTML = active.map(s => {
@@ -1193,6 +1219,7 @@ async function renderHomeCurrent(active, chargers, condByCharger) {
             <span><b>${eur(s.cost)}</b></span>
             ${recharge}
           </div>
+          ${powerHistoryMap[s.id] && powerHistoryMap[s.id].points.length >= 2 ? renderOccupancyChart(powerHistoryMap[s.id]) : ""}
         </div>
         ${stopBtn}
       </div>

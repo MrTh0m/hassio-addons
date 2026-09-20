@@ -1,3 +1,11 @@
+## 0.19.30
+
+- **Corrigé** : une session fermée via le filet de sécurité (StopTransaction perdu, `meter_stop` replié sur `meter_start`) affichait 0.00 kWh alors que le coût et P. Max restaient corrects. Le calcul d'énergie totale utilise désormais la même somme de paliers croissants que le calcul de coût, au lieu d'un dernier-moins-premier sensible à ce cas.
+- **Corrigé** : le graphique d'occupation d'une session pouvait afficher un axe des temps aberrant (relevé d'une autre session ayant hérité du même `transaction_id` après réutilisation d'id SQLite). Même filtrage défensif (borne + connecteur + fenêtre temporelle) que le calcul de coût désormais appliqué à ce graphique.
+- **Nouveau** : le graphique d'occupation de l'abonnement est désormais aussi affiché directement sur **Accueil**, dans la carte "Charge en cours", en plus du détail connecteur.
+- **Nouveau** : les onglets "Logs OCPP", "Logs serveur" et "Base de données" sont regroupés dans un onglet unique **Débug** (toujours conditionné au mode débug), avec une barre de sous-onglets pour naviguer entre les trois.
+- **Corrigé** : le numéro de version n'était pas visible en affichage mobile (menu en bas d'écran). Il apparaît maintenant sous le titre de la vue, dans la barre du haut.
+
 ## 0.19.29
 
 - **Corrigé** : le workflow CI publiait l'image sur `main` alors que c'est `dev` la branche réellement installée (app en bêta, peu de commits sur `main` pour l'instant). La 0.19.28 avait été buildée sans jamais être poussée sur GHCR, d'où l'échec de mise à jour ("manifest unknown"). Un push sur `dev` publie désormais réellement l'image ; `main` reste en build de validation seulement.

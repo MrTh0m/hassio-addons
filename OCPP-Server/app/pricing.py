@@ -90,7 +90,21 @@ def compute_session_cost(transaction, meter_values, plan, ignore_meter_stop: boo
     if len(points) < 2:
         return {"cost": None, "energy_wh": 0.0}
 
-    total_wh = max(0.0, points[-1][1] - points[0][1])
+    # Somme des paliers d'énergie CROISSANTS entre relevés consécutifs, pas
+    # un simple dernier moins premier : un relevé de repli erroné à une des
+    # deux extrémités (ex. meter_stop forcé à meter_start faute de vrai
+    # StopTransaction, voir la fermeture de secours d'une session bloquée
+    # dans csms_local.py/main.py) ne doit pas faire disparaître toute
+    # l'énergie réellement mesurée entre temps. Observé en prod : une session
+    # avec ~2h de charge réelle affichait 0.00 kWh (mais un coût et un P.
+    # Max corrects, calculés eux via cette même logique de paliers). Même
+    # principe de robustesse que la boucle de coût ci-dessous (qui ignore
+    # déjà les deltas négatifs), gardé cohérent avec elle.
+    total_wh = 0.0
+    for (t1, e1), (t2, e2) in zip(points, points[1:]):
+        delta = e2 - e1
+        if delta > 0:
+            total_wh += delta
 
     if plan is None:
         return {"cost": None, "energy_wh": total_wh}

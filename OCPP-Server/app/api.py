@@ -1036,10 +1036,28 @@ def session_power_history(
     charger = db.query(Charger).filter(Charger.id == charger_id).first()
     plan = resolve_plan_for_charger(db, charger) if charger else None
     sub_w = (plan.subscribed_power_kva or 0) * 1000.0 if plan else 0.0
-    values = db.query(MeterValue).filter(
+    # Même filtrage défensif que compute_session_cost/freeze_transaction_cost :
+    # filtrer aussi par charger_id + connector_id (pas seulement
+    # transaction_id) et écarter tout relevé hors de la fenêtre temporelle
+    # réelle de la session. Sans ça, un MeterValue d'une AUTRE session ayant
+    # hérité du même transaction_id (réutilisation d'id SQLite après
+    # suppression) fausse complètement le graphique (observé en prod : un axe
+    # des temps étiré sur 64458 minutes pour une session de quelques heures).
+    from datetime import timedelta as _timedelta
+    MARGIN = _timedelta(minutes=10)
+    window_start = txn.start_time - MARGIN if txn.start_time else None
+    window_end = (txn.stop_time + MARGIN) if txn.stop_time else datetime.utcnow()
+    query = db.query(MeterValue).filter(
         MeterValue.transaction_id == transaction_id,
+        MeterValue.charger_id == charger_id,
+        MeterValue.connector_id == txn.connector_id,
         MeterValue.measurand == "Power.Active.Import",
-    ).order_by(MeterValue.timestamp.asc()).all()
+    )
+    if window_start:
+        query = query.filter(MeterValue.timestamp >= window_start)
+    if window_end:
+        query = query.filter(MeterValue.timestamp <= window_end)
+    values = query.order_by(MeterValue.timestamp.asc()).all()
     points = [
         {
             "timestamp": v.timestamp.isoformat(),

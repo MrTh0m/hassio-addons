@@ -18,7 +18,7 @@ Le planificateur ne fait qu'APPLIQUER une intention (« cette charge doit-elle
 """
 import asyncio
 import logging
-from datetime import datetime, time as dtime
+from datetime import datetime, time as dtime, timedelta
 
 from .db import SessionLocal
 from .models import (
@@ -31,6 +31,14 @@ from .csms_local import CONNECTED_CHARGERS, SMART_CHARGING_SUPPORT
 logger = logging.getLogger("scheduler")
 
 TICK_SECONDS = 60
+
+# "Finishing" est censé être transitoire (quelques secondes entre la fin
+# d'une charge et le retour à "Available"), quel que soit le mode
+# d'autorisation. Un connecteur qui y reste bloqué plus longtemps ne s'en
+# sort parfois jamais tout seul (observé en prod : une borne y est restée
+# plusieurs heures après un démarrage local refusé pendant une coupure
+# réseau, cf. l'incident du 18/09).
+STUCK_FINISHING_THRESHOLD_S = 180
 
 
 def _parse_hhmm(s: str) -> dtime:
@@ -215,6 +223,10 @@ async def run_scheduler():
             await _evaluate_light_once()
         except Exception:
             logger.warning("Erreur dans la réévaluation de la luminosité", exc_info=True)
+        try:
+            await _evaluate_stuck_finishing_once()
+        except Exception:
+            logger.warning("Erreur dans la détection de connecteur bloqué sur Finishing", exc_info=True)
         await asyncio.sleep(TICK_SECONDS)
 
 
@@ -253,6 +265,46 @@ async def _evaluate_light_once():
             await cp.apply_light_intensity()
         except Exception:
             logger.debug("Réévaluation périodique de la luminosité échouée sur %s", charger_id, exc_info=True)
+
+
+async def _evaluate_stuck_finishing_once():
+    """Détecte les connecteurs restés sur "Finishing" anormalement longtemps
+    (voir STUCK_FINISHING_THRESHOLD_S) et leur redemande leur statut réel via
+    TriggerMessage. Deux issues possibles : soit la borne se resynchronise
+    toute seule (elle était en fait déjà revenue à Available sans qu'un
+    StatusNotification ne nous soit jamais parvenu), soit elle est vraiment
+    coincée et ça redevient visible tout de suite plutôt qu'après un
+    débranchement/rebranchement manuel. Si la borne répond quoi que ce soit,
+    on_status_notification rafraîchit updated_at et cette fonction se
+    retaira naturellement le temps du prochain seuil, sans throttle
+    supplémentaire nécessaire."""
+    from ocpp.v16 import call
+    from ocpp.v16.enums import MessageTrigger
+
+    cutoff = datetime.utcnow() - timedelta(seconds=STUCK_FINISHING_THRESHOLD_S)
+    db = SessionLocal()
+    try:
+        stuck = db.query(ConnectorStatus).filter(
+            ConnectorStatus.status == "Finishing",
+            ConnectorStatus.connector_id != 0,
+            ConnectorStatus.updated_at < cutoff,
+        ).all()
+        targets = [(row.charger_id, row.connector_id) for row in stuck]
+    finally:
+        db.close()
+
+    for charger_id, connector_id in targets:
+        cp = CONNECTED_CHARGERS.get(charger_id)
+        if not cp:
+            continue
+        try:
+            await cp.call(call.TriggerMessage(
+                requested_message=MessageTrigger.status_notification, connector_id=connector_id
+            ))
+            logger.info("Connecteur %s/%s bloqué sur Finishing depuis plus de %ds, statut redemandé",
+                       charger_id, connector_id, STUCK_FINISHING_THRESHOLD_S)
+        except Exception:
+            logger.debug("TriggerMessage de déblocage échoué sur %s/%s", charger_id, connector_id, exc_info=True)
 
 
 def _get_active_conditions(db, charger, connector_id: int):
