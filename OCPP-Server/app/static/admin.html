@@ -105,10 +105,15 @@
   .btn-sm { padding: .32rem .6rem; font-size: .85rem; }
   .btn-icon { padding: .45rem; border-radius: var(--r-sm); }
   .btn[disabled] { opacity: .5; cursor: not-allowed; }
-  .linkbtn {
+  .health-card { background: var(--surface-2); border-radius: var(--r); padding: .7rem .85rem; cursor: pointer; border-left: 3px solid transparent; }
+  .health-card.warn { border-left-color: var(--warn); }
+  .health-card.danger { border-left-color: var(--danger); }
+  .health-card-detail { display: none; margin-top: .5rem; padding-top: .5rem; border-top: 1px solid var(--border); font-size: .78rem; color: var(--text-muted); line-height: 1.5; }
+  .health-card.open .health-card-detail { display: block; }
   .tab-btn { background:none; border:none; padding:.4rem .85rem; cursor:pointer; color:var(--muted); border-bottom:2px solid transparent; font-size:.9rem; margin-bottom:-1px; }
   .tab-btn.active { color:var(--accent); border-bottom-color:var(--accent); font-weight:600; }
   .tab-btn:hover:not(.active) { color:var(--fg); }
+  .linkbtn {
     background: none; border: none; padding: 0; cursor: pointer; font: inherit;
     color: var(--primary-strong); font-weight: 550;
   }
@@ -522,14 +527,25 @@
         </div>
       </section>
 
-      <!-- LOGS -->
-      <section class="view" id="view-logs">
+      <!-- ÉTAT DE SANTÉ -->
+      <section class="view" id="view-health">
         <div class="cluster center debug-tabs" style="gap:.1rem; border-bottom:1px solid var(--border); margin-bottom:.9rem">
+          <button class="tab-btn debug-subtab" data-nav="health" onclick="switchView('health')">État de santé</button>
           <button class="tab-btn debug-subtab" data-nav="logs" onclick="switchView('logs')">Logs OCPP</button>
           <button class="tab-btn debug-subtab" data-nav="server-logs" onclick="switchView('server-logs')">Logs serveur</button>
           <button class="tab-btn debug-subtab" data-nav="dbaudit" onclick="switchView('dbaudit')">Base de données</button>
         </div>
         <div class="card health-banner"></div>
+      </section>
+
+      <!-- LOGS -->
+      <section class="view" id="view-logs">
+        <div class="cluster center debug-tabs" style="gap:.1rem; border-bottom:1px solid var(--border); margin-bottom:.9rem">
+          <button class="tab-btn debug-subtab" data-nav="health" onclick="switchView('health')">État de santé</button>
+          <button class="tab-btn debug-subtab" data-nav="logs" onclick="switchView('logs')">Logs OCPP</button>
+          <button class="tab-btn debug-subtab" data-nav="server-logs" onclick="switchView('server-logs')">Logs serveur</button>
+          <button class="tab-btn debug-subtab" data-nav="dbaudit" onclick="switchView('dbaudit')">Base de données</button>
+        </div>
         <div class="card">
           <div class="cluster center" style="justify-content:space-between">
             <div class="cluster center" style="gap:.6rem">
@@ -565,11 +581,11 @@
       <!-- LOGS SERVEUR -->
       <section class="view" id="view-server-logs">
         <div class="cluster center debug-tabs" style="gap:.1rem; border-bottom:1px solid var(--border); margin-bottom:.9rem">
+          <button class="tab-btn debug-subtab" data-nav="health" onclick="switchView('health')">État de santé</button>
           <button class="tab-btn debug-subtab" data-nav="logs" onclick="switchView('logs')">Logs OCPP</button>
           <button class="tab-btn debug-subtab" data-nav="server-logs" onclick="switchView('server-logs')">Logs serveur</button>
           <button class="tab-btn debug-subtab" data-nav="dbaudit" onclick="switchView('dbaudit')">Base de données</button>
         </div>
-        <div class="card health-banner"></div>
         <div class="card">
           <div class="cluster center" style="justify-content:space-between">
             <div class="cluster center" style="gap:.6rem">
@@ -605,11 +621,11 @@
 
       <section class="view" id="view-dbaudit">
         <div class="cluster center debug-tabs" style="gap:.1rem; border-bottom:1px solid var(--border); margin-bottom:.9rem">
+          <button class="tab-btn debug-subtab" data-nav="health" onclick="switchView('health')">État de santé</button>
           <button class="tab-btn debug-subtab" data-nav="logs" onclick="switchView('logs')">Logs OCPP</button>
           <button class="tab-btn debug-subtab" data-nav="server-logs" onclick="switchView('server-logs')">Logs serveur</button>
           <button class="tab-btn debug-subtab" data-nav="dbaudit" onclick="switchView('dbaudit')">Base de données</button>
         </div>
-        <div class="card health-banner"></div>
         <div class="card">
           <p class="small muted" style="margin:.1rem 0 .8rem">Vue en lecture seule du contenu de la base, pour vérifier la cohérence des données (ex. confirmer que des MeterValues sont bien enregistrées pendant une charge). Aucune modification possible depuis cette page.</p>
           <div class="cluster center" style="justify-content:space-between; gap:.6rem; flex-wrap:wrap">
@@ -1041,16 +1057,17 @@ function logout() {
 
 /* ---------- Navigation ---------- */
 let currentView = "home";
-// Dernier sous-onglet consulté dans "Débug" (Logs OCPP / Logs serveur / Base
-// de données) : switchView('debug') depuis le menu y redirige, pour rouvrir
-// là où on était plutôt que toujours sur Logs OCPP.
-let lastDebugSubTab = "logs";
-const DEBUG_SUBTABS = ["logs", "server-logs", "dbaudit"];
-const viewTitles = { home: "Accueil", chargers: "Bornes", vehicles: "Véhicules", tariffs: "Abo. électrique", history: "Historique", logs: "Logs OCPP", "server-logs": "Logs serveur", dbaudit: "Base de données" };
+// Dernier sous-onglet consulté dans "Débug" (État de santé / Logs OCPP / Logs
+// serveur / Base de données) : switchView('debug') depuis le menu y
+// redirige, pour rouvrir là où on était plutôt que toujours sur le même.
+let lastDebugSubTab = "health";
+const DEBUG_SUBTABS = ["health", "logs", "server-logs", "dbaudit"];
+const viewTitles = { home: "Accueil", chargers: "Bornes", vehicles: "Véhicules", tariffs: "Abo. électrique", history: "Historique", health: "État de santé", logs: "Logs OCPP", "server-logs": "Logs serveur", dbaudit: "Base de données" };
 const viewLoaded = {};
 function switchView(name) {
   // Garde : on redirige vers l'accueil si la vue est interdite au user
   if (name === "debug") name = lastDebugSubTab;
+  if (name === "health" && !debugToolsVisible()) name = "home";
   if (name === "logs" && !debugToolsVisible()) name = "home";
   if (name === "server-logs" && !debugToolsVisible()) name = "home";
   if (name === "tariffs" && !hasPerm("can_manage_tariffs")) name = "home";
@@ -1067,7 +1084,7 @@ function switchView(name) {
   const td = document.getElementById("view-title-desktop"); if (td) td.textContent = viewTitles[name];
   if (name !== "logs") stopLogsPolling();
   if (name !== "server-logs") stopServerLogsPolling();
-  const loaders = { home: loadHome, chargers: loadChargers, vehicles: loadVehicles, tariffs: loadTariffs, history: () => { populateVehicleFilter(); loadHistory(); }, logs: initLogsView, "server-logs": initServerLogsView, dbaudit: initDbAuditView };
+  const loaders = { home: loadHome, chargers: loadChargers, vehicles: loadVehicles, tariffs: loadTariffs, history: () => { populateVehicleFilter(); loadHistory(); }, health: () => {}, logs: initLogsView, "server-logs": initServerLogsView, dbaudit: initDbAuditView };
   if (name === "home" || name === "chargers") loaders[name]();
   else if (name === "logs" || name === "server-logs") loaders[name]();
   else if (!viewLoaded[name]) { loaders[name](); viewLoaded[name] = true; }
@@ -1076,9 +1093,12 @@ function switchView(name) {
   else if (name === "dbaudit") { viewLoaded[name] = false; initDbAuditView(); viewLoaded[name] = true; }
 }
 
-/* Bandeau "État de santé" de l'onglet Débug : petites puces colorées par
-   indicateur (voir GET /api/diagnostics/health), dupliqué identique en haut
-   des 3 sous-onglets (chacun est une section indépendante, cf. plus haut). */
+/* Page "État de santé" de l'onglet Débug (voir GET /api/diagnostics/health) :
+   les anomalies (warn/danger) ressortent en cartes cliquables, les
+   indicateurs sans souci se replient dans une simple liste de puces pour ne
+   pas noyer l'œil. Dupliqué identique dans les 4 sous-onglets Débug (chacun
+   est une section indépendante, cf. plus haut), rendu recalculé à chaque
+   fois depuis la même donnée (healthData). */
 let healthData = null;
 async function loadHealthBanner() {
   const containers = document.querySelectorAll(".health-banner");
@@ -1090,27 +1110,37 @@ async function loadHealthBanner() {
 }
 function renderHealthBannerInto(container) {
   if (!healthData) { container.innerHTML = `<div class="tiny muted">État de santé indisponible.</div>`; return; }
-  const sevClass = { ok: "ok", warn: "warn", danger: "danger", unknown: "off" };
-  container.innerHTML = `<div class="section-title" style="margin-top:0">État de santé</div>` +
-    `<div class="cluster" style="gap:.35rem;flex-wrap:wrap">` +
-    healthData.map(h => {
-      const label = h.count > 0 ? `${esc(h.label)} (${h.count})` : esc(h.label);
-      return `<button class="badge ${sevClass[h.severity] || "off"}" style="cursor:pointer;border:none" onclick="toggleHealthDetail('${h.key}')" title="${esc(h.detail || "")}">${label}</button>`;
-    }).join("") +
-    `</div><div class="tiny health-detail" style="margin-top:.5rem"></div>`;
-}
-function toggleHealthDetail(key) {
-  const item = healthData && healthData.find(h => h.key === key);
-  document.querySelectorAll(".health-detail").forEach(box => {
-    if (!item) { box.innerHTML = ""; return; }
-    if (!item.items.length) { box.innerHTML = `<span class="muted">Rien à signaler côté ${esc(item.label)}.</span>`; return; }
-    box.innerHTML = `<b>${esc(item.label)}</b><ul style="margin:.3rem 0 0 1.1rem;padding:0">` +
-      item.items.slice(0, 20).map(it => `<li>${esc(Object.values(it).filter(v => v !== null && v !== undefined).join(" · "))}</li>`).join("") +
-      `</ul>`;
-  });
+  const issues = healthData.filter(h => h.severity !== "ok");
+  const okOnes = healthData.filter(h => h.severity === "ok");
+  let html = "";
+  if (!issues.length) {
+    html += `<div class="cluster center" style="gap:.5rem"><span style="width:10px;height:10px;border-radius:50%;background:var(--ok);display:inline-block;flex:none"></span><b>Aucune anomalie</b><span class="tiny muted">sur ${healthData.length} indicateurs</span></div>`;
+  } else {
+    const dotColor = issues.some(h => h.severity === "danger") ? "var(--danger)" : "var(--warn)";
+    html += `<div class="cluster center" style="gap:.5rem;margin-bottom:1rem"><span style="width:10px;height:10px;border-radius:50%;background:${dotColor};display:inline-block;flex:none"></span><b>${issues.length} point${issues.length > 1 ? "s" : ""} à surveiller</b><span class="tiny muted">sur ${healthData.length} indicateurs</span></div>`;
+    html += `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:.6rem;margin-bottom:1rem">` +
+      issues.map(h => {
+        const detail = h.items.slice(0, 6).map(it => esc(Object.values(it).filter(v => v !== null && v !== undefined).join(" · "))).join("<br>");
+        return `<div class="health-card ${h.severity === "danger" ? "danger" : "warn"}" onclick="this.classList.toggle('open')">
+          <div class="cluster center" style="justify-content:space-between;gap:.5rem">
+            <span class="tiny muted">${esc(h.label)}</span>
+            <b style="font-size:1.25rem">${h.count}</b>
+          </div>
+          ${detail ? `<div class="health-card-detail">${detail}</div>` : ""}
+        </div>`;
+      }).join("") +
+      `</div>`;
+  }
+  if (okOnes.length) {
+    html += `<div style="border-top:1px solid var(--border);padding-top:.7rem">
+      <div class="tiny muted" style="margin-bottom:.5rem">${okOnes.length} autre${okOnes.length > 1 ? "s" : ""} indicateur${okOnes.length > 1 ? "s" : ""}, rien à signaler</div>
+      <div class="cluster" style="gap:.4rem;flex-wrap:wrap">${okOnes.map(h => `<span class="badge ok" style="cursor:default">${esc(h.label)}</span>`).join("")}</div>
+    </div>`;
+  }
+  container.innerHTML = html;
 }
 function refreshCurrentView() {
-  const loaders = { home: loadHome, chargers: loadChargers, vehicles: loadVehicles, tariffs: loadTariffs, history: loadHistory, logs: () => loadLogs(true), "server-logs": () => loadServerLogs(true), dbaudit: () => loadDbTableRows(dbAuditState.page) };
+  const loaders = { home: loadHome, chargers: loadChargers, vehicles: loadVehicles, tariffs: loadTariffs, history: loadHistory, health: loadHealthBanner, logs: () => loadLogs(true), "server-logs": () => loadServerLogs(true), dbaudit: () => loadDbTableRows(dbAuditState.page) };
   (loaders[currentView] || (() => {}))();
   toast("Rafraîchi", "ok");
 }

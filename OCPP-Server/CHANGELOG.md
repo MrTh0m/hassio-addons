@@ -1,3 +1,8 @@
+## 0.19.32
+
+- **Amélioré** : l'onglet "État de santé" devient un sous-onglet Débug à part entière (point d'entrée par défaut de Débug), avec une vraie mise en page : les anomalies ressortent en cartes cliquables (détail au clic), les indicateurs sans souci se replient en simples puces plutôt que d'encombrer l'écran. Plus de bandeau dupliqué en haut des 3 autres sous-onglets.
+- **Corrigé** : les règles CSS `.tab-btn` étaient mal placées à l'intérieur des accolades de `.linkbtn` (bug préexistant, sans impact visible constaté).
+
 ## 0.19.31
 
 - **Nouveau** : bandeau "État de santé" en haut de l'onglet Débug, avec 12 indicateurs (connecteurs bloqués/en défaut, sessions fantômes, sessions à 0 kWh malgré un coût réel, sessions de durée quasi nulle, bourrasques de reconnexion réseau, coupures MQTT, erreurs serveur, anti-tripping suivi d'un défaut, démarrages refusés à répétition, clés de config en attente de redémarrage, consommation kWh/100km hors norme, bornes hors ligne). Nouvel endpoint `GET /api/diagnostics/health`.
