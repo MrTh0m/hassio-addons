@@ -140,6 +140,17 @@ def set_debug_mode(body: DebugModeUpdate, db: Session = Depends(get_db), user=De
     return {"debug_mode": body.enabled}
 
 
+@router.get("/diagnostics/health")
+def diagnostics_health(user=Depends(require_admin)):
+    """Bandeau état de santé de l'onglet Débug : détecte des anomalies passées
+    ou en cours (statuts bloqués, sessions fantômes, instabilité réseau,
+    démarrages refusés, etc.) à partir de ce qui est déjà en base ou dans les
+    journaux en mémoire, sans nouvelle collecte de données. Voir
+    diagnostics.py pour le détail de chaque contrôle."""
+    from . import diagnostics
+    return diagnostics.compute_health()
+
+
 @router.get("/diagnostics/packages")
 def list_installed_packages(user=Depends(require_admin)):
     """Liste les paquets Python réellement installés dans le conteneur, avec
@@ -471,7 +482,7 @@ async def get_configuration(charger_id: str, db: Session = Depends(get_db), user
         ]
     # Clés dont la borne a accepté la nouvelle valeur mais qui attendent un
     # redémarrage pour être réellement appliquées (voir push_configuration).
-    pending = sorted(PENDING_REBOOT_KEYS.get(charger_id, set()))
+    pending = sorted(PENDING_REBOOT_KEYS.get(charger_id, {}))
     return {"keys": keys, "pending_reboot_keys": pending}
 
 

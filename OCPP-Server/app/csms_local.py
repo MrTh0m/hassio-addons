@@ -29,8 +29,10 @@ SMART_CHARGING_SUPPORT: dict[str, bool] = {}
 # effectivement appliquées (la borne a répondu RebootRequired à un
 # ChangeConfiguration). Purement en mémoire, remis à zéro pour une borne
 # dès qu'un nouveau BootNotification est reçu (elle vient de redémarrer,
-# pour quelque raison que ce soit) ou dès que le serveur redémarre.
-PENDING_REBOOT_KEYS: dict[str, set[str]] = {}
+# pour quelque raison que ce soit) ou dès que le serveur redémarre. La date
+# est conservée (pas juste le nom de la clé) pour pouvoir signaler dans le
+# bandeau de santé une clé en attente depuis anormalement longtemps.
+PENDING_REBOOT_KEYS: dict[str, dict[str, datetime]] = {}
 
 # Statuts de connecteur considérés comme "occupés" (véhicule branché, quelle
 # que soit l'étape) pour le pilotage automatique de la luminosité. Mêmes
@@ -397,6 +399,10 @@ class LocalChargePoint(ChargePoint16):
             pending_vehicle_id = PENDING_REMOTE_STARTS.pop((self.id, connector_id), None)
 
             if not _tag_is_authorized(db, charger, id_tag):
+                ocpp_logs.record(self.id, "out", "StartTransaction.conf",
+                                 summary=f"conn {connector_id} -> Blocked (idTag={id_tag})",
+                                 payload={"connectorId": connector_id, "status": "Blocked"},
+                                 connector_id=connector_id)
                 return call_result.StartTransaction(
                     transaction_id=0,
                     id_tag_info={"status": AuthorizationStatus.blocked},
@@ -477,6 +483,10 @@ class LocalChargePoint(ChargePoint16):
             "deferred": suspend_now,
         })
 
+        ocpp_logs.record(self.id, "out", "StartTransaction.conf",
+                         summary=f"conn {connector_id} -> Accepted (txn {txn_id})",
+                         payload={"connectorId": connector_id, "status": "Accepted", "transactionId": txn_id},
+                         connector_id=connector_id)
         return call_result.StartTransaction(
             transaction_id=txn_id,
             id_tag_info={"status": AuthorizationStatus.accepted},
@@ -671,9 +681,14 @@ class LocalChargePoint(ChargePoint16):
                          summary=f"conn {connector_id}, idTag={id_tag}",
                          payload={"connectorId": connector_id, "idTag": id_tag},
                          connector_id=connector_id)
-        return await self.call(call.RemoteStartTransaction(
+        resp = await self.call(call.RemoteStartTransaction(
             connector_id=connector_id, id_tag=id_tag
         ))
+        ocpp_logs.record(self.id, "in", "RemoteStartTransaction.conf",
+                         summary=f"conn {connector_id} -> {resp.status}",
+                         payload={"connectorId": connector_id, "status": resp.status},
+                         connector_id=connector_id)
+        return resp
 
     async def _auto_start(self, connector_id: int):
         try:
@@ -746,9 +761,9 @@ class LocalChargePoint(ChargePoint16):
             finally:
                 db.close()
         if response.status == ConfigurationStatus.reboot_required:
-            PENDING_REBOOT_KEYS.setdefault(self.id, set()).add(key)
+            PENDING_REBOOT_KEYS.setdefault(self.id, {})[key] = datetime.utcnow()
         else:
-            PENDING_REBOOT_KEYS.get(self.id, set()).discard(key)
+            PENDING_REBOOT_KEYS.get(self.id, {}).pop(key, None)
         return response.status
 
     async def apply_light_intensity(self):

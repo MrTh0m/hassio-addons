@@ -529,6 +529,7 @@
           <button class="tab-btn debug-subtab" data-nav="server-logs" onclick="switchView('server-logs')">Logs serveur</button>
           <button class="tab-btn debug-subtab" data-nav="dbaudit" onclick="switchView('dbaudit')">Base de données</button>
         </div>
+        <div class="card health-banner"></div>
         <div class="card">
           <div class="cluster center" style="justify-content:space-between">
             <div class="cluster center" style="gap:.6rem">
@@ -568,6 +569,7 @@
           <button class="tab-btn debug-subtab" data-nav="server-logs" onclick="switchView('server-logs')">Logs serveur</button>
           <button class="tab-btn debug-subtab" data-nav="dbaudit" onclick="switchView('dbaudit')">Base de données</button>
         </div>
+        <div class="card health-banner"></div>
         <div class="card">
           <div class="cluster center" style="justify-content:space-between">
             <div class="cluster center" style="gap:.6rem">
@@ -607,6 +609,7 @@
           <button class="tab-btn debug-subtab" data-nav="server-logs" onclick="switchView('server-logs')">Logs serveur</button>
           <button class="tab-btn debug-subtab" data-nav="dbaudit" onclick="switchView('dbaudit')">Base de données</button>
         </div>
+        <div class="card health-banner"></div>
         <div class="card">
           <p class="small muted" style="margin:.1rem 0 .8rem">Vue en lecture seule du contenu de la base, pour vérifier la cohérence des données (ex. confirmer que des MeterValues sont bien enregistrées pendant une charge). Aucune modification possible depuis cette page.</p>
           <div class="cluster center" style="justify-content:space-between; gap:.6rem; flex-wrap:wrap">
@@ -1052,7 +1055,7 @@ function switchView(name) {
   if (name === "server-logs" && !debugToolsVisible()) name = "home";
   if (name === "tariffs" && !hasPerm("can_manage_tariffs")) name = "home";
   if (name === "dbaudit" && !debugToolsVisible()) name = "home";
-  if (DEBUG_SUBTABS.includes(name)) lastDebugSubTab = name;
+  if (DEBUG_SUBTABS.includes(name)) { lastDebugSubTab = name; loadHealthBanner(); }
   currentView = name;
   document.querySelectorAll(".view").forEach(v => v.classList.remove("active"));
   document.getElementById("view-" + name).classList.add("active");
@@ -1071,6 +1074,40 @@ function switchView(name) {
   // Pour les vues rechargées à chaque visite (sauf home/chargers déjà gérés)
   else if (name === "history") { populateVehicleFilter(); loadHistory(); }
   else if (name === "dbaudit") { viewLoaded[name] = false; initDbAuditView(); viewLoaded[name] = true; }
+}
+
+/* Bandeau "État de santé" de l'onglet Débug : petites puces colorées par
+   indicateur (voir GET /api/diagnostics/health), dupliqué identique en haut
+   des 3 sous-onglets (chacun est une section indépendante, cf. plus haut). */
+let healthData = null;
+async function loadHealthBanner() {
+  const containers = document.querySelectorAll(".health-banner");
+  if (!containers.length) return;
+  try {
+    healthData = await fetch("api/diagnostics/health", { headers: authHeaders() }).then(r => r.json());
+  } catch { healthData = null; }
+  containers.forEach(renderHealthBannerInto);
+}
+function renderHealthBannerInto(container) {
+  if (!healthData) { container.innerHTML = `<div class="tiny muted">État de santé indisponible.</div>`; return; }
+  const sevClass = { ok: "ok", warn: "warn", danger: "danger", unknown: "off" };
+  container.innerHTML = `<div class="section-title" style="margin-top:0">État de santé</div>` +
+    `<div class="cluster" style="gap:.35rem;flex-wrap:wrap">` +
+    healthData.map(h => {
+      const label = h.count > 0 ? `${esc(h.label)} (${h.count})` : esc(h.label);
+      return `<button class="badge ${sevClass[h.severity] || "off"}" style="cursor:pointer;border:none" onclick="toggleHealthDetail('${h.key}')" title="${esc(h.detail || "")}">${label}</button>`;
+    }).join("") +
+    `</div><div class="tiny health-detail" style="margin-top:.5rem"></div>`;
+}
+function toggleHealthDetail(key) {
+  const item = healthData && healthData.find(h => h.key === key);
+  document.querySelectorAll(".health-detail").forEach(box => {
+    if (!item) { box.innerHTML = ""; return; }
+    if (!item.items.length) { box.innerHTML = `<span class="muted">Rien à signaler côté ${esc(item.label)}.</span>`; return; }
+    box.innerHTML = `<b>${esc(item.label)}</b><ul style="margin:.3rem 0 0 1.1rem;padding:0">` +
+      item.items.slice(0, 20).map(it => `<li>${esc(Object.values(it).filter(v => v !== null && v !== undefined).join(" · "))}</li>`).join("") +
+      `</ul>`;
+  });
 }
 function refreshCurrentView() {
   const loaders = { home: loadHome, chargers: loadChargers, vehicles: loadVehicles, tariffs: loadTariffs, history: loadHistory, logs: () => loadLogs(true), "server-logs": () => loadServerLogs(true), dbaudit: () => loadDbTableRows(dbAuditState.page) };

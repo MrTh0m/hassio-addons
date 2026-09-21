@@ -1,3 +1,8 @@
+## 0.19.31
+
+- **Nouveau** : bandeau "État de santé" en haut de l'onglet Débug, avec 12 indicateurs (connecteurs bloqués/en défaut, sessions fantômes, sessions à 0 kWh malgré un coût réel, sessions de durée quasi nulle, bourrasques de reconnexion réseau, coupures MQTT, erreurs serveur, anti-tripping suivi d'un défaut, démarrages refusés à répétition, clés de config en attente de redémarrage, consommation kWh/100km hors norme, bornes hors ligne). Nouvel endpoint `GET /api/diagnostics/health`.
+- Le résultat Accepted/Rejected/Blocked d'un démarrage de charge est désormais journalisé dans le journal OCPP structuré (jusque-là visible seulement dans les logs bruts), nécessaire à l'indicateur "démarrages refusés".
+
 ## 0.19.30
 
 - **Corrigé** : une session fermée via le filet de sécurité (StopTransaction perdu, `meter_stop` replié sur `meter_start`) affichait 0.00 kWh alors que le coût et P. Max restaient corrects. Le calcul d'énergie totale utilise désormais la même somme de paliers croissants que le calcul de coût, au lieu d'un dernier-moins-premier sensible à ce cas.
