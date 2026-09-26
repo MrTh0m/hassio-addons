@@ -1418,7 +1418,7 @@ function renderHomeLast(s) {
     ? `<span>Recharge <b>${s.battery_recharge_percent}%</b>${s.battery_percent_end_est != null ? ` → ~<b>${s.battery_percent_end_est}%</b>` : ""}</span>` : "";
   const head = `<div class="spread">
       <div>
-        <b>${esc(s.charger_display_name || s.charger_id || s.location_label || "Externe")}${s.connector_id != null ? ` · Conn. ${s.connector_id}` : ""}</b>${s.vehicle_name ? ` <span class="badge accent">${esc(s.vehicle_name)}</span>` : ""}${s.is_external ? ` <span class="badge ext"><svg style="width:.85em;height:.85em"><use href="#i-ext"/></svg> externe</span>` : ""}${s.charger_deleted ? ` <span class="badge off" title="Cette borne a été supprimée définitivement">borne supprimée</span>` : ""}
+        <b>${esc(s.charger_display_name || s.charger_id || s.location_label || "Externe")}${s.connector_id != null ? ` · Conn. ${s.connector_id}` : ""}</b>${s.vehicle_name ? ` <span class="badge accent">${esc(s.vehicle_name)}</span>` : ""}${s.vehicle_deleted ? ` <span class="badge off" title="Ce véhicule a été supprimé définitivement">véhicule supprimé</span>` : ""}${s.is_external ? ` <span class="badge ext"><svg style="width:.85em;height:.85em"><use href="#i-ext"/></svg> externe</span>` : ""}${s.charger_deleted ? ` <span class="badge off" title="Cette borne a été supprimée définitivement">borne supprimée</span>` : ""}
         <div class="metrics">
           <span>${formatDateTime(s.start_time)} → ${formatDateTime(s.stop_time)}</span>
           <span><b>${formatDuration(s.duration_min)}</b></span>
@@ -1511,8 +1511,7 @@ async function loadChargers() {
           </div>
           <div class="cluster center" style="gap:.3rem">
             <button class="btn btn-icon btn-ghost" title="Fiche & statistiques" onclick="openChargerStatsModal('${esc(c.id)}')"><svg><use href="#i-info"/></svg></button>
-            ${hasPerm("can_manage_chargers") ? `<button class="btn btn-icon btn-ghost" title="Renommer" onclick="openRenameChargerModal('${esc(c.id)}', '${esc(c.display_name || "")}')"><svg><use href="#i-edit"/></svg></button>` : ""}
-            ${isAdmin() ? `<button class="btn btn-icon btn-ghost" title="Supprimer définitivement" onclick="hardDeleteCharger('${esc(c.id)}', '${esc(chargerLabel(c))}')"><svg style="color:var(--danger)"><use href="#i-trash"/></svg></button>` : ""}
+            ${hasPerm("can_manage_chargers") ? `<button class="btn btn-icon btn-ghost" title="Réglages" onclick="openChargerConfigModal('${esc(c.id)}')"><svg><use href="#i-edit"/></svg></button>` : ""}
           </div>
         </div>
       </div>`;
@@ -1559,16 +1558,29 @@ async function hardDeleteCharger(id, label) {
   const { ok } = await apiCall(`api/chargers/${id}/permanent`, { method: "DELETE", headers: authHeaders() }, "Borne supprimée définitivement");
   if (ok) { closeModal(); loadChargers(); }
 }
-async function openRenameChargerModal(id, currentName) {
-  openModalConnector = null;
-  const html = `<div class="modal-head"><h2>Renommer la borne</h2>
+function renderDeactivatedChargerModal(charger) {
+  return `<div class="modal-head"><h2><svg style="width:1.1em;height:1.1em;vertical-align:-.15em"><use href="#i-cog"/></svg> ${esc(chargerLabel(charger))} <span class="tiny muted">(désactivée)</span></h2>
     <button class="btn btn-icon btn-ghost" onclick="closeModal()"><svg><use href="#i-close"/></svg></button></div>
-    <p class="small muted" style="margin:0 0 .8rem">Cette borne est désactivée : seul son nom d'affichage peut être modifié. Elle redevient pleinement pilotable automatiquement si elle se reconnecte physiquement.</p>
-    <div class="cluster">
-      <label class="field" style="flex:1; min-width:200px"><span>Nom d'affichage</span><input id="rename-charger-input" value="${esc(currentName || "")}"></label>
-      <button class="btn btn-primary" onclick="saveRenameCharger('${esc(id)}')">Enregistrer</button>
-    </div>`;
-  openModal(html);
+    <p class="small muted" style="margin:0 0 .8rem">Cette borne est désactivée : elle n'est plus pilotable et son historique de charge est conservé. Elle redevient active automatiquement si elle se reconnecte physiquement ; en attendant, seul son nom d'affichage peut encore être modifié ici.</p>
+    <div class="card" style="margin-bottom:.7rem">
+      <label class="field"><span>Nom d'affichage</span>
+        <input id="rename-charger-input" value="${esc(charger.display_name || "")}" placeholder="${esc(charger.id)}">
+      </label>
+      <div class="cluster" style="margin-top:.6rem; justify-content:flex-end">
+        <button class="btn btn-primary" onclick="saveRenameCharger('${esc(charger.id)}')">Enregistrer</button>
+      </div>
+    </div>
+    ${isAdmin() ? `
+    <div class="section-title" style="color:var(--danger)">Zone de danger</div>
+    <div class="card" style="border-left:3px solid var(--danger)">
+      <div class="spread" style="align-items:center">
+        <div>
+          <b>Supprimer définitivement</b>
+          <div class="tiny muted">Ses sessions de charge restent dans l'historique (nom de la borne conservé), mais la borne elle-même et sa configuration OCPP disparaissent. Irréversible.</div>
+        </div>
+        <button class="btn btn-sm btn-danger" onclick="hardDeleteCharger('${esc(charger.id)}', '${esc(chargerLabel(charger))}')">Supprimer</button>
+      </div>
+    </div>` : ""}`;
 }
 async function saveRenameCharger(id) {
   const name = document.getElementById("rename-charger-input").value.trim();
@@ -1583,8 +1595,14 @@ async function openChargerConfigModal(id, activeTab) {
   activeTab = activeTab || "settings";
   openModalConnector = null;
   openModal(`<div class="empty">Chargement…</div>`);
-  const [charger, tariffs, conditions, connectors] = await Promise.all([
-    fetch(`api/chargers/${id}`, { headers: authHeaders() }).then(r => r.json()),
+  const charger = await fetch(`api/chargers/${id}`, { headers: authHeaders() }).then(r => r.json());
+  // Borne désactivée : la plupart des réglages (mode, tarif, programmation…)
+  // sont bloqués côté serveur (_require_active_charger) tant qu'elle n'est
+  // pas réactivée (automatique, à sa reconnexion physique). On affiche donc
+  // une modale réduite, plutôt qu'un formulaire complet dont la sauvegarde
+  // échouerait en partie.
+  if (!charger.active) { openModal(renderDeactivatedChargerModal(charger)); return; }
+  const [tariffs, conditions, connectors] = await Promise.all([
     fetch(`api/tariffs`, { headers: authHeaders() }).then(r => r.json()),
     fetch(`api/chargers/${id}/conditions`, { headers: authHeaders() }).then(r => r.json()),
     fetch(`api/chargers/${id}/connectors`, { headers: authHeaders() }).then(r => r.json()).then(a => a.filter(c => c.connector_id !== 0)).catch(() => []),
@@ -2154,7 +2172,7 @@ function renderChargerSessionsTable(sessions) {
   const rows = sessions.map(s => `<tr>
     <td>${formatDateTime(s.start_time)}</td>
     <td>${s.connector_id ?? "–"}</td>
-    <td>${esc(s.vehicle_name || "–")}</td>
+    <td>${esc(s.vehicle_name || "–")}${s.vehicle_deleted ? ' <span class="badge off" style="padding:.05rem .35rem">suppr.</span>' : ""}</td>
     <td>${formatDuration(s.duration_min)}</td>
     <td>${kWh(s.energy_wh)}</td>
     <td>${kW(s.power_max_w)}</td>
@@ -2245,7 +2263,7 @@ async function openVehicleEditModal(id) {
       </div>
       <div class="card" style="border-left:3px solid var(--danger)">
         <div class="spread">
-          <div><b>Supprimer définitivement</b><div class="tiny muted">Supprime aussi tout son historique de charge. Irréversible.</div></div>
+          <div><b>Supprimer définitivement</b><div class="tiny muted">Ses sessions sur une borne encore présente dans l'app restent dans l'historique de cette borne (nom du véhicule conservé). Les autres (charges externes, borne déjà supprimée) sont, elles, effacées. Irréversible.</div></div>
           <button class="btn btn-sm btn-danger" onclick="hardDeleteVehicle(${v.id}, '${esc(v.name)}')">Supprimer</button>
         </div>
       </div>`;
@@ -2271,10 +2289,16 @@ async function reactivateVehicle(id) {
   if (ok) { closeModal(); loadVehicles(); }
 }
 async function hardDeleteVehicle(id, name) {
-  if (!confirm(`Supprimer DÉFINITIVEMENT le véhicule « ${name} » ?\n\nToutes ses sessions de charge seront aussi supprimées de l'historique. Cette action est irréversible.`)) return;
-  if (!confirm("Confirmation finale : la voiture ET tout son historique de charge seront perdus pour toujours. Continuer ?")) return;
+  if (!confirm(`Supprimer DÉFINITIVEMENT le véhicule « ${name} » ?\n\nSes sessions faites sur une borne encore présente dans l'app resteront dans l'historique de cette borne (nom du véhicule conservé, marqué « véhicule supprimé »). Les autres sessions (charges externes, ou sur une borne déjà supprimée définitivement) seront, elles, réellement effacées. Cette action est irréversible.`)) return;
+  if (!confirm("Confirmation finale : le véhicule sera définitivement supprimé. Continuer ?")) return;
   const { ok, data } = await apiCall(`api/vehicles/${id}/permanent`, { method: "DELETE", headers: authHeaders() }, "Véhicule supprimé définitivement");
-  if (ok) { toast(`${data?.deleted_sessions ?? 0} session(s) de charge supprimée(s) avec le véhicule`, "ok"); closeModal(); loadVehicles(); }
+  if (ok) {
+    const parts = [];
+    if (data?.deleted_sessions) parts.push(`${data.deleted_sessions} session(s) effacée(s)`);
+    if (data?.kept_sessions) parts.push(`${data.kept_sessions} conservée(s) côté borne`);
+    toast(parts.length ? parts.join(", ") : "Véhicule supprimé", "ok");
+    closeModal(); loadVehicles();
+  }
 }
 async function openVehicleStatsModal(vehicleId) {
   openModalConnector = null;
@@ -2435,7 +2459,7 @@ function renderHistory() {
       // Un user peut modifier les sessions de ses voitures ; l'admin peut tout modifier
       const canEditSession = isAdmin() || (currentUser.vehicle_ids && s.vehicle_id && currentUser.vehicle_ids.includes(s.vehicle_id));
       return `<tr>
-      <td data-label="Borne">${bornCell}</td><td data-label="Conn.">${s.connector_id ?? "–"}</td><td data-label="Véhicule">${esc(s.vehicle_name || "–")}</td>
+      <td data-label="Borne">${bornCell}</td><td data-label="Conn.">${s.connector_id ?? "–"}</td><td data-label="Véhicule">${esc(s.vehicle_name || "–")}${s.vehicle_deleted ? ' <span class="badge off" style="padding:.05rem .35rem">suppr.</span>' : ""}</td>
       <td data-label="Début">${formatDateTime(s.start_time)}</td><td data-label="Fin">${formatDateTime(s.stop_time)}</td><td data-label="Durée">${dur}</td>
       <td data-label="kWh">${kWh(s.energy_wh)}</td><td data-label="P. max">${kW(s.power_max_w)}</td><td data-label="Coût">${eur(s.cost)}</td><td data-label="Tarif">${esc(s.tariff_plan_name || "–")}</td>
       <td data-label="km">${num(s.odometer_km)}</td><td data-label="km parc.">${num(s.km_since_last)}</td><td data-label="kWh/100">${s.kwh_per_100km != null ? s.kwh_per_100km : "–"}</td>
@@ -2594,6 +2618,14 @@ async function openSettingsModal() {
   openModalConnector = null;
   const adminOnly = isAdmin();
   const isBuiltinAdmin = currentUser.username === "admin";
+  let tzList = [];
+  if (adminOnly) {
+    try {
+      tzList = (await fetch("api/settings/timezones", { headers: authHeaders() }).then(r => r.json())).timezones || [];
+    } catch (e) { tzList = []; }
+    const curTz = currentUser.display_timezone || "Europe/Paris";
+    if (!tzList.includes(curTz)) tzList = [curTz, ...tzList];
+  }
 
   // Sections communes
   let passwordSection = `
@@ -2649,9 +2681,11 @@ async function openSettingsModal() {
     </div>
     <div class="card form-card" style="margin-top:.6rem">
       <label class="field"><span>Fuseau horaire d'affichage et d'export</span>
-        <input id="set-tz" value="${esc(currentUser.display_timezone || "Europe/Paris")}" style="width:220px">
+        <select id="set-tz" style="width:220px">
+          ${tzList.map(tz => `<option value="${esc(tz)}" ${tz === (currentUser.display_timezone || "Europe/Paris") ? "selected" : ""}>${esc(tz)}</option>`).join("")}
+        </select>
       </label>
-      <p class="tiny muted" style="margin:.4rem 0 .6rem">Nom de zone IANA (ex. <code>Europe/Paris</code>, <code>UTC</code>). S'applique à l'affichage des horodatages (Logs OCPP, Logs serveur, dates partout dans l'app) et aux exports CSV. Les données restent stockées en UTC en base, seule la présentation change.</p>
+      <p class="tiny muted" style="margin:.4rem 0 .6rem">S'applique à l'affichage des horodatages (Logs OCPP, Logs serveur, dates partout dans l'app) et aux exports CSV. Les données restent stockées en UTC en base, seule la présentation change.</p>
       <button class="btn btn-sm" onclick="saveDisplayTimezone()">Enregistrer</button>
     </div>
     <div class="card form-card" style="margin-top:.6rem; border-left:3px solid var(--warn)">

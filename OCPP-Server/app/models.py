@@ -185,6 +185,13 @@ class Transaction(Base):
     # qui reste False ici.
     charger_display_name_snapshot = Column(String, nullable=True)
 
+    # Nom d'affichage du véhicule au moment d'une suppression DÉFINITIVE (voir
+    # hard_delete_vehicle dans api.py). Une session faite sur une borne locale
+    # encore présente dans l'app n'est jamais supprimée avec le véhicule (elle
+    # sert aussi à l'historique de cette borne) : vehicle_id est mis à NULL
+    # mais ce snapshot permet de continuer à afficher le nom du véhicule.
+    vehicle_display_name_snapshot = Column(String, nullable=True)
+
     charger = relationship("Charger", back_populates="transactions")
     vehicle = relationship("Vehicle", back_populates="transactions")
 

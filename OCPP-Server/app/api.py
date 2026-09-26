@@ -208,6 +208,16 @@ def set_debug_mode(body: DebugModeUpdate, db: Session = Depends(get_db), user=De
     return {"debug_mode": body.enabled}
 
 
+@router.get("/settings/timezones")
+def list_timezones(user=Depends(get_current_user)):
+    """Liste des fuseaux horaires IANA valides (format Région/Ville), pour
+    peupler la liste déroulante de Réglages → Avancé. Exclut les alias courts
+    hérités (ex. 'CET', 'EST') au profit de leurs équivalents Région/Ville,
+    plus lisibles ; UTC est ajouté explicitement puisqu'il n'a pas de '/'."""
+    names = sorted(z for z in available_timezones() if "/" in z)
+    return {"timezones": ["UTC"] + names}
+
+
 class TimezoneUpdate(BaseModel):
     timezone: str
 
@@ -949,12 +959,18 @@ def _serialize_session(s: Transaction, db: Session, prev_odometer: Optional[floa
         else s.charger_display_name_snapshot if charger_deleted
         else None
     )
+    # Véhicule supprimé DÉFINITIVEMENT (voir hard_delete_vehicle) : vehicle_id
+    # est à NULL mais le nom est conservé sur la session elle-même, quand
+    # cette session a été gardée pour ne pas perdre l'historique de sa borne.
+    vehicle_deleted = s.vehicle_id is None and bool(s.vehicle_display_name_snapshot)
+    vehicle_name = vehicle.name if vehicle else (s.vehicle_display_name_snapshot if vehicle_deleted else None)
     return {
         "id": s.id, "charger_id": s.charger_id,
         "charger_display_name": charger_display_name,
         "charger_deleted": charger_deleted,
         "connector_id": s.connector_id, "id_tag": s.id_tag,
-        "vehicle_id": s.vehicle_id, "vehicle_name": vehicle.name if vehicle else None,
+        "vehicle_id": s.vehicle_id, "vehicle_name": vehicle_name,
+        "vehicle_deleted": vehicle_deleted,
         "meter_start": s.meter_start, "meter_stop": s.meter_stop,
         "start_time": s.start_time.isoformat() if s.start_time else None,
         "stop_time": s.stop_time.isoformat() if s.stop_time else None,
@@ -1543,10 +1559,17 @@ def reactivate_vehicle(vehicle_id: int, db: Session = Depends(get_db), user=Depe
 
 @router.delete("/vehicles/{vehicle_id}/permanent")
 async def hard_delete_vehicle(vehicle_id: int, db: Session = Depends(get_db), user=Depends(get_current_user)):
-    """Suppression DÉFINITIVE et IRRÉVERSIBLE d'un véhicule ET de tout son
-    historique de charge (sessions + MeterValues associées). Contrairement à
-    la désactivation, ceci efface réellement les lignes en base. L'UI doit
-    avertir explicitement l'utilisateur avant d'appeler cette route."""
+    """Suppression DÉFINITIVE et IRRÉVERSIBLE d'un véhicule. Ses sessions
+    faites sur une borne locale encore présente dans l'app (charger_id non
+    NULL, active ou désactivée peu importe) sont CONSERVÉES : seul le lien
+    vers ce véhicule est détaché (vehicle_id mis à NULL), avec son nom au
+    moment de la suppression gardé en snapshot
+    (vehicle_display_name_snapshot) pour rester lisible dans l'historique de
+    cette borne — sinon celle-ci perdrait un pan de son propre historique.
+    Les autres sessions (charges externes, ou faites sur une borne déjà
+    supprimée définitivement) n'ont plus de raison d'être conservées et sont
+    réellement effacées, avec leurs MeterValues. L'UI doit avertir
+    explicitement l'utilisateur avant d'appeler cette route."""
     _require_vehicle_permission(user, db)
     vehicle = db.query(Vehicle).filter(Vehicle.id == vehicle_id).first()
     if not vehicle:
@@ -1554,7 +1577,17 @@ async def hard_delete_vehicle(vehicle_id: int, db: Session = Depends(get_db), us
     allowed_ids = _user_vehicle_ids(db, user)
     if allowed_ids is not None and vehicle_id not in allowed_ids:
         raise HTTPException(status_code=403, detail="Véhicule non associé à votre compte")
-    txn_ids = [t.id for t in db.query(Transaction.id).filter(Transaction.vehicle_id == vehicle_id).all()]
+
+    label = vehicle.name
+    kept_sessions = db.query(Transaction).filter(
+        Transaction.vehicle_id == vehicle_id, Transaction.charger_id.isnot(None)
+    ).update(
+        {Transaction.vehicle_id: None, Transaction.vehicle_display_name_snapshot: label},
+        synchronize_session=False,
+    )
+    txn_ids = [t.id for t in db.query(Transaction.id).filter(
+        Transaction.vehicle_id == vehicle_id, Transaction.charger_id.is_(None)
+    ).all()]
     if txn_ids:
         db.query(MeterValue).filter(MeterValue.transaction_id.in_(txn_ids)).delete(synchronize_session=False)
         db.query(Transaction).filter(Transaction.id.in_(txn_ids)).delete(synchronize_session=False)
@@ -1565,7 +1598,7 @@ async def hard_delete_vehicle(vehicle_id: int, db: Session = Depends(get_db), us
     # réversible, qui laisse les entités MQTT en place) : l'appareil disparaît
     # aussi côté HA.
     await mqtt_bridge.unpublish_vehicle_discovery(vehicle_id)
-    return {"status": "ok", "deleted_sessions": len(txn_ids)}
+    return {"status": "ok", "deleted_sessions": len(txn_ids), "kept_sessions": kept_sessions}
 
 
 # --- Tarifs ---
