@@ -126,6 +126,13 @@ class Charger(Base):
     # qu'on sait acceptée par défaut) tant que ce n'est pas confirmé.
     light_zero_supported = Column(Boolean, nullable=True)
 
+    # Numéro de version de la liste d'autorisation locale (SendLocalList,
+    # OCPP 1.6) poussée sur cette borne. Doit strictement augmenter à chaque
+    # mise à jour complète (Full) selon la spéc ; persisté ici pour survivre
+    # à un redémarrage du serveur. None/0 signifie qu'aucune liste n'a encore
+    # été poussée (voir csms_local.sync_local_auth_list).
+    local_list_version = Column(Integer, default=0, nullable=True)
+
     transactions = relationship("Transaction", back_populates="charger")
     meter_values = relationship("MeterValue", back_populates="charger")
     config_keys = relationship("ConfigurationKey", back_populates="charger")
@@ -135,6 +142,7 @@ class Charger(Base):
         "ChargeCondition", back_populates="charger", cascade="all, delete-orphan",
     )
     user_links = relationship("UserCharger", back_populates="charger", cascade="all, delete-orphan")
+    vehicle_links = relationship("VehicleCharger", back_populates="charger", cascade="all, delete-orphan")
 
 
 class Transaction(Base):
@@ -160,6 +168,15 @@ class Transaction(Base):
     # on_status_notification/on_stop_transaction (csms_local.py).
     charging_seconds = Column(Float, default=0.0, nullable=True)
     charging_since = Column(DateTime, nullable=True)
+
+    # Marque une session démarrée avec un idTag que le serveur n'a pas jugé
+    # autorisé (voir csms_local._tag_is_authorized), typiquement une charge
+    # locale déclenchée par la borne elle-même (idTag par défaut) que le
+    # serveur a refusée (StartTransaction.conf -> Blocked) mais dont la borne
+    # a quand même entamé la charge. La transaction est quand même créée et
+    # suivie normalement (voir incident du 26/09) : elle ne doit jamais rester
+    # invisible, seul ce champ distingue qu'elle n'était pas autorisée.
+    unauthorized = Column(Boolean, default=False, nullable=True)
 
     is_external = Column(Boolean, default=False)
     location_label = Column(String, nullable=True)
@@ -251,6 +268,26 @@ class Vehicle(Base):
 
     transactions = relationship("Transaction", back_populates="vehicle")
     user_links = relationship("UserVehicle", back_populates="vehicle", cascade="all, delete-orphan")
+    charger_links = relationship("VehicleCharger", back_populates="vehicle", cascade="all, delete-orphan")
+
+
+class VehicleCharger(Base):
+    """Association véhicule <-> borne (N:N) : détermine quelles voitures sont
+    autorisées à charger sur quelle borne. Sert à construire la liste
+    d'autorisation locale (SendLocalList) poussée sur la borne, pour qu'elle
+    puisse elle-même refuser un idTag inconnu au lieu de démarrer une charge
+    que le serveur n'a pas validée (voir csms_local.sync_local_auth_list et
+    l'incident du 26/09 : idTag par défaut de la borne, non reconnu, ignoré
+    par le firmware malgré un Blocked du serveur)."""
+    __tablename__ = "vehicle_chargers"
+    __table_args__ = (UniqueConstraint("vehicle_id", "charger_id", name="uq_vehicle_charger"),)
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    vehicle_id = Column(Integer, ForeignKey("vehicles.id"), nullable=False)
+    charger_id = Column(String, ForeignKey("chargers.id"), nullable=False)
+
+    vehicle = relationship("Vehicle", back_populates="charger_links")
+    charger = relationship("Charger", back_populates="vehicle_links")
 
 
 class TariffPlan(Base):

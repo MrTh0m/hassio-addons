@@ -35,6 +35,7 @@ PENDING_KEY_STALE_DAYS = 3
 IMPLAUSIBLE_KWH_100KM_LOW = 5
 IMPLAUSIBLE_KWH_100KM_HIGH = 40
 STUCK_PREPARING_AFTER_FAILED_START_MIN = 10
+UNAUTHORIZED_SESSION_LOOKBACK_H = 24
 
 
 def _badge(key, label, severity, count, items=None, detail=None):
@@ -333,6 +334,71 @@ def _check_connecteur_bloque_apres_echec():
         db.close()
 
 
+def _check_charge_active_non_suivie():
+    """Motif du 26/09 : après un incident de file OCPP bloquée, la borne a
+    démarré une charge en local (idTag par défaut) alors que le serveur avait
+    répondu Blocked à l'Authorize/StartTransaction. Depuis, csms_local crée
+    toujours une Transaction même quand elle est refusée (voir
+    Transaction.unauthorized et _check_sessions_non_autorisees ci-dessous) ;
+    ce contrôle reste comme filet de sécurité indépendant, au cas où un autre
+    chemin laisserait à nouveau un connecteur « Charging » sans aucune
+    transaction, autorisée ou non, pour l'expliquer."""
+    db = SessionLocal()
+    try:
+        rows = db.query(ConnectorStatus, Charger).join(
+            Charger, Charger.id == ConnectorStatus.charger_id
+        ).filter(
+            ConnectorStatus.connector_id != 0,
+            ConnectorStatus.status == "Charging",
+        ).all()
+        items = []
+        for cs, charger in rows:
+            has_active = db.query(Transaction).filter(
+                Transaction.charger_id == cs.charger_id,
+                Transaction.connector_id == cs.connector_id,
+                Transaction.status == "active",
+            ).first()
+            if has_active:
+                continue
+            since_min = round((datetime.utcnow() - cs.updated_at).total_seconds() / 60, 1) if cs.updated_at else None
+            items.append({
+                "charger_id": cs.charger_id,
+                "charger_name": charger.display_name or cs.charger_id,
+                "connector_id": cs.connector_id,
+                "since_min": since_min,
+            })
+        return _badge("charge_active_non_suivie", "Charge en cours sans transaction associée (non suivie)",
+                      "danger" if items else "ok", len(items), items)
+    finally:
+        db.close()
+
+
+def _check_sessions_non_autorisees():
+    """Sessions démarrées avec un idTag que le serveur a refusé (Blocked)
+    mais que la borne a quand même lancées (voir Transaction.unauthorized,
+    csms_local.on_start_transaction). Contrairement à avant le 26/09, ces
+    sessions sont désormais toujours créées et suivies : ce badge sert à ce
+    qu'elles restent visibles et ne se perdent pas dans l'historique comme
+    des sessions normales, pour vérification (idTag à enregistrer comme
+    véhicule, ou comportement de la borne à corriger côté config/liste
+    locale)."""
+    db = SessionLocal()
+    try:
+        cutoff = datetime.utcnow() - timedelta(hours=UNAUTHORIZED_SESSION_LOOKBACK_H)
+        rows = db.query(Transaction).filter(
+            Transaction.unauthorized.is_(True),
+            (Transaction.status == "active") | (Transaction.start_time >= cutoff),
+        ).order_by(Transaction.start_time.desc()).all()
+        items = [{
+            "id": t.id, "charger_id": t.charger_id, "connector_id": t.connector_id,
+            "id_tag": t.id_tag, "status": t.status,
+        } for t in rows]
+        return _badge("sessions_non_autorisees", "Sessions démarrées avec un idTag non autorisé (24h)",
+                      "warn" if items else "ok", len(items), items)
+    finally:
+        db.close()
+
+
 def _check_bornes_hors_ligne():
     db = SessionLocal()
     try:
@@ -351,6 +417,8 @@ def _check_bornes_hors_ligne():
 _CHECKS = [
     _check_connecteurs_bloques,
     _check_connecteur_bloque_apres_echec,
+    _check_charge_active_non_suivie,
+    _check_sessions_non_autorisees,
     _check_transactions_fantomes,
     _check_charges_sans_capacite,
     _check_charges_duree_nulle,

@@ -8,11 +8,11 @@ from ocpp.v16 import call, call_result
 from ocpp.v16.enums import (
     Action, RegistrationStatus, AuthorizationStatus, ConfigurationStatus,
     ChargingProfilePurposeType, ChargingProfileKindType, ChargingRateUnitType,
-    ClearChargingProfileStatus, ResetType,
+    ClearChargingProfileStatus, ResetType, UpdateType,
 )
 
 from .db import SessionLocal
-from .models import Charger, ChargerMode, Transaction, MeterValue, ConfigurationKey, ConnectorStatus, Vehicle
+from .models import Charger, ChargerMode, Transaction, MeterValue, ConfigurationKey, ConnectorStatus, Vehicle, VehicleCharger
 from .pricing import freeze_transaction_cost, compute_session_cost, resolve_plan_for_charger
 from . import mqtt_bridge
 from . import ocpp_logs
@@ -127,6 +127,25 @@ def _tag_is_authorized(db, charger, id_tag) -> bool:
     return db.query(Vehicle).filter(Vehicle.id_tag == id_tag).first() is not None
 
 
+def _authorized_id_tags_for_charger(db, charger_id: str) -> list[str]:
+    """Tags à pousser dans la liste d'autorisation locale (SendLocalList) de
+    cette borne : les idTag des véhicules actifs qui lui sont associés
+    (VehicleCharger), plus les tags internes que le serveur utilise lui-même
+    (RESERVED_TAGS). Les tags "REMOTE-*" ne sont volontairement pas inclus :
+    ils ne sont jamais présentés localement à la borne, uniquement envoyés par
+    le serveur via RemoteStartTransaction, déjà acceptés à ce titre."""
+    rows = db.query(Vehicle).join(
+        VehicleCharger, VehicleCharger.vehicle_id == Vehicle.id
+    ).filter(
+        VehicleCharger.charger_id == charger_id,
+        Vehicle.deleted_at.is_(None),
+        Vehicle.id_tag.isnot(None),
+    ).all()
+    tags = {v.id_tag for v in rows}
+    tags.update(RESERVED_TAGS)
+    return sorted(tags)
+
+
 def now_iso() -> str:
     return datetime.utcnow().isoformat() + "Z"
 
@@ -171,8 +190,11 @@ class LocalChargePoint(ChargePoint16):
 
         asyncio.create_task(self._detect_smart_charging())
         # Reconnexion = bon moment pour resynchroniser la luminosité en mode
-        # auto (le réglage aurait pu dériver pendant la coupure).
+        # auto (le réglage aurait pu dériver pendant la coupure), et pour
+        # repousser la liste d'autorisation locale (la borne redémarre sa
+        # mémoire de cette liste à chaque reboot selon certains firmwares).
         asyncio.create_task(self.apply_light_intensity())
+        asyncio.create_task(sync_local_auth_list(self.id))
         # SSE : la borne vient de (re)connecter
         sse_notify("charger_connected", {"charger_id": self.id})
 
@@ -398,15 +420,16 @@ class LocalChargePoint(ChargePoint16):
             charger_label = (charger.display_name if charger else None) or self.id
             pending_vehicle_id = PENDING_REMOTE_STARTS.pop((self.id, connector_id), None)
 
-            if not _tag_is_authorized(db, charger, id_tag):
-                ocpp_logs.record(self.id, "out", "StartTransaction.conf",
-                                 summary=f"conn {connector_id} -> Blocked (idTag={id_tag})",
-                                 payload={"connectorId": connector_id, "status": "Blocked"},
-                                 connector_id=connector_id)
-                return call_result.StartTransaction(
-                    transaction_id=0,
-                    id_tag_info={"status": AuthorizationStatus.blocked},
-                )
+            # Non autorisé ne veut plus dire "ignoré" : voir l'incident du
+            # 26/09, où une borne a démarré une charge locale (idTag par
+            # défaut) après un Blocked du serveur, sans qu'aucune trace ne le
+            # signale nulle part. Le serveur continue de répondre Blocked (il
+            # ne ment pas sur l'autorisation), mais crée et suit quand même la
+            # transaction comme n'importe quelle autre, avec un identifiant
+            # réel (jamais 0) pour que les MeterValues/StopTransaction qui
+            # suivront s'y rattachent normalement plutôt que de rester
+            # orphelins.
+            unauthorized = not _tag_is_authorized(db, charger, id_tag)
 
             vehicle = db.query(Vehicle).filter(Vehicle.id_tag == id_tag).first() if id_tag else None
             if vehicle is None and pending_vehicle_id is not None:
@@ -438,6 +461,7 @@ class LocalChargePoint(ChargePoint16):
                 vehicle_id=vehicle.id if vehicle else None,
                 meter_start=meter_start,
                 status="active",
+                unauthorized=unauthorized,
                 deferred_until=deferred_label if suspend_now else None,
             )
             db.add(txn)
@@ -475,21 +499,25 @@ class LocalChargePoint(ChargePoint16):
         if suspend_now:
             asyncio.create_task(self._suspend_for_schedule(connector_id))
 
-        # SSE : nouvelle transaction
+        # SSE : nouvelle transaction (le champ unauthorized permet à l'UI de
+        # la signaler distinctement, ex. bandeau ou badge, sans attendre le
+        # prochain calcul de compute_health)
         sse_notify("transaction_started", {
             "charger_id": self.id,
             "connector_id": connector_id,
             "transaction_id": txn_id,
             "deferred": suspend_now,
+            "unauthorized": unauthorized,
         })
 
+        status_out = AuthorizationStatus.blocked if unauthorized else AuthorizationStatus.accepted
         ocpp_logs.record(self.id, "out", "StartTransaction.conf",
-                         summary=f"conn {connector_id} -> Accepted (txn {txn_id})",
-                         payload={"connectorId": connector_id, "status": "Accepted", "transactionId": txn_id},
+                         summary=f"conn {connector_id} -> {status_out.value} (txn {txn_id}, idTag={id_tag})",
+                         payload={"connectorId": connector_id, "status": status_out.value, "transactionId": txn_id},
                          connector_id=connector_id)
         return call_result.StartTransaction(
             transaction_id=txn_id,
-            id_tag_info={"status": AuthorizationStatus.accepted},
+            id_tag_info={"status": status_out},
         )
 
     async def _suspend_for_schedule(self, connector_id: int):
@@ -819,6 +847,41 @@ class LocalChargePoint(ChargePoint16):
         ocpp_logs.record(self.id, "out", "Reset", summary=rtype.value, payload={"type": rtype.value})
         return await self.call(call.Reset(type=rtype))
 
+    async def push_local_auth_list(self, id_tags: list[str]):
+        """Pousse la liste complète des idTags autorisés localement sur la
+        borne (SendLocalList, mise à jour Full). Objectif : que la borne
+        puisse elle-même refuser un idTag inconnu (typiquement son propre
+        idTag par défaut) au lieu de démarrer une charge que le serveur n'a
+        pas validée (voir l'incident du 26/09). N'a d'effet réel que si la
+        borne supporte et respecte LocalAuthListEnabled ; comme on l'a
+        constaté, rien ne garantit qu'un firmware donné s'y conforme
+        strictement, donc à vérifier en conditions réelles après déploiement.
+        Le numéro de version doit augmenter strictement à chaque mise à jour
+        complète (spec OCPP 1.6) ; on l'incrémente et le persiste sur la borne
+        à chaque appel plutôt que de recalculer un delta."""
+        db = self._db()
+        try:
+            charger = db.query(Charger).filter(Charger.id == self.id).first()
+            if not charger:
+                return None
+            charger.local_list_version = (charger.local_list_version or 0) + 1
+            version = charger.local_list_version
+            db.commit()
+        finally:
+            db.close()
+        entries = [{"id_tag": tag, "id_tag_info": {"status": "Accepted"}} for tag in id_tags]
+        ocpp_logs.record(self.id, "out", "SendLocalList",
+                         summary=f"{len(entries)} tag(s), version {version}",
+                         payload={"listVersion": version, "updateType": "Full", "tagCount": len(entries)})
+        resp = await self.call(call.SendLocalList(
+            list_version=version,
+            update_type=UpdateType.full,
+            local_authorization_list=entries,
+        ))
+        ocpp_logs.record(self.id, "in", "SendLocalList.conf",
+                         summary=f"-> {resp.status.value}", payload={"status": resp.status.value})
+        return resp.status
+
     async def set_charging_limit(self, connector_id: int, limit_w: float | None):
         try:
             if limit_w is None:
@@ -858,3 +921,27 @@ class LocalChargePoint(ChargePoint16):
         except Exception:
             SMART_CHARGING_SUPPORT[self.id] = False
             return False
+
+
+async def sync_local_auth_list(charger_id: str):
+    """Recalcule et pousse la liste d'autorisation locale d'une borne
+    CONNECTÉE, d'après les véhicules qui lui sont associés (VehicleCharger).
+    À appeler après toute modification de cette association (création d'un
+    véhicule, changement des bornes associées, désactivation/suppression), et
+    automatiquement à chaque BootNotification (voir on_boot_notification). Ne
+    fait rien silencieusement si la borne n'est pas connectée (elle sera de
+    toute façon resynchronisée à sa prochaine reconnexion) ou si l'appel OCPP
+    échoue (borne ne supportant pas SendLocalList, par exemple)."""
+    cp = CONNECTED_CHARGERS.get(charger_id)
+    if cp is None:
+        return None
+    db = cp._db()
+    try:
+        tags = _authorized_id_tags_for_charger(db, charger_id)
+    finally:
+        db.close()
+    try:
+        return await cp.push_local_auth_list(tags)
+    except Exception:
+        logger.debug("Synchronisation de la liste locale échouée pour %s", charger_id, exc_info=True)
+        return None

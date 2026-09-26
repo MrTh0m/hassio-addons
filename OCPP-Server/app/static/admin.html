@@ -472,6 +472,10 @@
               <input id="veh-battery" type="number" step="0.1" style="width:160px"></label>
             <button class="btn btn-primary" onclick="createVehicle()"><svg><use href="#i-plus"/></svg>Ajouter</button>
           </div>
+          <div class="small muted" style="margin-top:.7rem">Bornes associées
+            <span class="tiny muted" style="display:block">Détermine sur quelles bornes ce véhicule est autorisé à charger (liste d'autorisation locale poussée sur la borne).</span>
+          </div>
+          <div id="veh-chargers-list" class="cluster" style="gap:.4rem; flex-wrap:wrap; margin-top:.3rem"><span class="tiny muted">Chargement…</span></div>
         </div>
         <div class="card" style="margin-top:.8rem">
           <div class="table-wrap"><table class="responsive" id="vehicles-table">
@@ -2202,7 +2206,23 @@ function renderSessionsTable(sessions, withVehicle) {
 
 /* ========================= VÉHICULES ========================= */
 let cachedVehicles = [];
-async function loadVehicles() { cachedVehicles = await fetch("api/vehicles", { headers: authHeaders() }).then(r => r.json()); renderVehicles(); }
+async function loadVehicles() {
+  const [vehicles, chargers] = await Promise.all([
+    fetch("api/vehicles", { headers: authHeaders() }).then(r => r.json()),
+    fetch("api/chargers", { headers: authHeaders() }).then(r => r.json()),
+  ]);
+  cachedVehicles = vehicles;
+  cachedChargers = chargers;
+  renderVehicleChargerCheckboxes("veh-chargers-list", "veh-chr", chargers, new Set());
+  renderVehicles();
+}
+function renderVehicleChargerCheckboxes(containerId, cls, chargers, checkedIds) {
+  const el = document.getElementById(containerId);
+  if (!el) return;
+  el.innerHTML = chargers.length
+    ? chargers.map(c => `<label class="tiny cluster center" style="gap:.25rem"><input type="checkbox" class="${cls}" value="${esc(c.id)}" ${checkedIds.has(c.id) ? "checked" : ""}> ${esc(c.display_name || c.id)}${c.active ? "" : " (désactivée)"}</label>`).join("")
+    : `<span class="tiny muted">Aucune borne connue</span>`;
+}
 function renderVehicles() {
   const tb = document.querySelector("#vehicles-table tbody");
   if (!cachedVehicles.length) { tb.innerHTML = `<tr><td colspan="8"><span class="empty">Aucun véhicule pour l'instant.</span></td></tr>`; return; }
@@ -2228,14 +2248,21 @@ async function createVehicle() {
   const name = document.getElementById("veh-name").value.trim();
   if (!name) { toast("Nom requis", "err"); return; }
   const bat = document.getElementById("veh-battery").value;
+  const charger_ids = Array.from(document.querySelectorAll(".veh-chr:checked")).map(e => e.value);
   const { ok } = await apiCall("api/vehicles", { method: "POST", headers: jsonHeaders(), body: JSON.stringify({
-    name, id_tag: document.getElementById("veh-idtag").value.trim() || null, battery_capacity_kwh: bat ? parseFloat(bat) : null }) }, "Véhicule ajouté");
-  if (ok) { ["veh-name", "veh-idtag", "veh-battery"].forEach(i => document.getElementById(i).value = ""); loadVehicles(); }
+    name, id_tag: document.getElementById("veh-idtag").value.trim() || null, battery_capacity_kwh: bat ? parseFloat(bat) : null, charger_ids }) }, "Véhicule ajouté");
+  if (ok) {
+    ["veh-name", "veh-idtag", "veh-battery"].forEach(i => document.getElementById(i).value = "");
+    document.querySelectorAll(".veh-chr:checked").forEach(e => e.checked = false);
+    loadVehicles();
+  }
 }
 async function openVehicleEditModal(id) {
   const v = cachedVehicles.find(x => x.id === id);
   if (!v) return;
   openModalConnector = null;
+  const chargers = cachedChargers && cachedChargers.length ? cachedChargers : await fetch("api/chargers", { headers: authHeaders() }).then(r => r.json());
+  const cids = new Set(v.charger_ids || []);
   let html = `<div class="modal-head"><h2>Modifier ${esc(v.name)}</h2>
     <button class="btn btn-icon btn-ghost" onclick="closeModal()"><svg><use href="#i-close"/></svg></button></div>
     <div class="cluster">
@@ -2243,6 +2270,9 @@ async function openVehicleEditModal(id) {
       <label class="field"><span>idTag associé</span><input id="ev-tag" value="${esc(v.id_tag || "")}"></label>
       <label class="field"><span>Capacité batterie (kWh)</span><input id="ev-bat" type="number" step="0.1" value="${v.battery_capacity_kwh ?? ""}" style="width:140px"></label>
     </div>
+    <div class="section-title">Bornes associées</div>
+    <div class="tiny muted" style="margin:-.4rem 0 .4rem">Détermine sur quelles bornes ce véhicule est autorisé à charger (liste d'autorisation locale poussée sur la borne).</div>
+    <div class="cluster" style="gap:.4rem; flex-wrap:wrap" id="ev-chargers-list">${chargers.length ? chargers.map(c => `<label class="tiny cluster center" style="gap:.25rem"><input type="checkbox" class="ev-chr" value="${esc(c.id)}" ${cids.has(c.id) ? "checked" : ""}> ${esc(c.display_name || c.id)}${c.active ? "" : " (désactivée)"}</label>`).join("") : `<span class="tiny muted">Aucune borne connue</span>`}</div>
     <div class="cluster" style="margin-top:.8rem"><button class="btn btn-primary btn-sm" onclick="saveVehicleEdit(${v.id})">Enregistrer</button></div>`;
 
   if (hasPerm("can_manage_vehicles")) {
@@ -2275,8 +2305,9 @@ async function saveVehicleEdit(id) {
   const name = document.getElementById("ev-name").value.trim();
   if (!name) { toast("Nom requis", "err"); return; }
   const bat = document.getElementById("ev-bat").value;
+  const charger_ids = Array.from(document.querySelectorAll(".ev-chr:checked")).map(e => e.value);
   const { ok } = await apiCall(`api/vehicles/${id}`, { method: "PUT", headers: jsonHeaders(), body: JSON.stringify({
-    name, id_tag: document.getElementById("ev-tag").value.trim() || null, battery_capacity_kwh: bat ? parseFloat(bat) : null }) }, "Enregistré");
+    name, id_tag: document.getElementById("ev-tag").value.trim() || null, battery_capacity_kwh: bat ? parseFloat(bat) : null, charger_ids }) }, "Enregistré");
   if (ok) { closeModal(); loadVehicles(); }
 }
 async function deactivateVehicle(id) {

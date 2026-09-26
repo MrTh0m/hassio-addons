@@ -19,7 +19,7 @@ from .db import get_db
 from .models import (
     Charger, ChargerMode, AuthMode, Transaction, MeterValue, User, UserRole,
     UserVehicle, UserCharger, UserPermission, ConnectorStatus,
-    Vehicle, TariffPlan, TariffPeriod, ChargeCondition, ChargeConditionType, ConfigurationKey,
+    Vehicle, VehicleCharger, TariffPlan, TariffPeriod, ChargeCondition, ChargeConditionType, ConfigurationKey,
     AppSetting,
 )
 from .pricing import (
@@ -31,6 +31,7 @@ from .auth import (
 )
 from .csms_local import (
     CONNECTED_CHARGERS, PENDING_REMOTE_STARTS, SMART_CHARGING_SUPPORT, PENDING_REBOOT_KEYS,
+    sync_local_auth_list,
 )
 from . import mqtt_bridge
 
@@ -1348,6 +1349,11 @@ class VehicleCreate(BaseModel):
     name: str
     id_tag: Optional[str] = None
     battery_capacity_kwh: Optional[float] = None
+    # Bornes sur lesquelles ce véhicule est autorisé à charger (voir
+    # VehicleCharger) : sert à construire la liste d'autorisation locale
+    # poussée sur chaque borne (SendLocalList). None = champ non fourni, ne
+    # touche pas aux associations existantes ; [] = retire toutes les bornes.
+    charger_ids: Optional[list[str]] = None
 
 
 @router.get("/vehicles")
@@ -1369,6 +1375,7 @@ def list_vehicles(db: Session = Depends(get_db), user=Depends(get_current_user))
             "id": v.id, "name": v.name, "id_tag": v.id_tag,
             "battery_capacity_kwh": v.battery_capacity_kwh,
             "active": v.deleted_at is None,
+            "charger_ids": _vehicle_charger_ids(db, v.id),
             "stats": agg,
         })
     return result
@@ -1421,9 +1428,40 @@ def vehicle_stats(vehicle_id: int, db: Session = Depends(get_db), user=Depends(g
         "id": vehicle.id, "name": vehicle.name, "id_tag": vehicle.id_tag,
         "battery_capacity_kwh": vehicle.battery_capacity_kwh,
         "active": vehicle.deleted_at is None,
+        "charger_ids": _vehicle_charger_ids(db, vehicle.id),
         "stats": stats,
         "sessions": serialized,
     }
+
+
+def _vehicle_charger_ids(db: Session, vehicle_id: int) -> list:
+    return [row[0] for row in db.query(VehicleCharger.charger_id).filter(
+        VehicleCharger.vehicle_id == vehicle_id
+    ).all()]
+
+
+async def _sync_vehicle_chargers(db: Session, vehicle: Vehicle, charger_ids):
+    """Remplace les bornes associées à ce véhicule par `charger_ids`, puis
+    resynchronise la liste d'autorisation locale (SendLocalList) de chaque
+    borne affectée, qu'elle vienne de gagner ou de perdre ce véhicule. Ne
+    touche à rien si `charger_ids` est None (champ non fourni dans la
+    requête). Lève une 404 si une borne citée n'existe pas, avant toute
+    modification (pas d'état partiel en cas d'erreur)."""
+    if charger_ids is None:
+        return
+    after = set(charger_ids)
+    for cid in after:
+        if not db.query(Charger).filter(Charger.id == cid).first():
+            raise HTTPException(status_code=404, detail=f"Borne inconnue : {cid}")
+    before = set(_vehicle_charger_ids(db, vehicle.id))
+    if before == after:
+        return
+    db.query(VehicleCharger).filter(VehicleCharger.vehicle_id == vehicle.id).delete(synchronize_session=False)
+    for cid in after:
+        db.add(VehicleCharger(vehicle_id=vehicle.id, charger_id=cid))
+    db.commit()
+    for cid in before | after:
+        await sync_local_auth_list(cid)
 
 
 def _require_vehicle_permission(user: dict, db: Session):
@@ -1478,6 +1516,7 @@ async def create_vehicle(body: VehicleCreate, db: Session = Depends(get_db), use
         db.add(UserVehicle(user_id=uid, vehicle_id=vehicle.id))
     db.commit()
     db.refresh(vehicle)
+    await _sync_vehicle_chargers(db, vehicle, body.charger_ids)
     # Véhicule = appareil MQTT à part entière (voir mqtt_bridge.publish_vehicle_discovery).
     await mqtt_bridge.publish_vehicle_discovery(vehicle.id, vehicle.name)
     if vehicle.battery_capacity_kwh is not None:
@@ -1516,6 +1555,7 @@ async def update_vehicle(
     vehicle.id_tag = body.id_tag or None
     vehicle.battery_capacity_kwh = body.battery_capacity_kwh
     db.commit()
+    await _sync_vehicle_chargers(db, vehicle, body.charger_ids)
     # Republie la découverte : le nom affiché de l'appareil MQTT doit suivre
     # un éventuel renommage, et battery_capacity_kwh peut avoir changé.
     await mqtt_bridge.publish_vehicle_discovery(vehicle.id, vehicle.name)
@@ -1524,7 +1564,7 @@ async def update_vehicle(
 
 
 @router.delete("/vehicles/{vehicle_id}")
-def delete_vehicle(vehicle_id: int, db: Session = Depends(get_db), user=Depends(get_current_user)):
+async def delete_vehicle(vehicle_id: int, db: Session = Depends(get_db), user=Depends(get_current_user)):
     """Désactive un véhicule (suppression LOGIQUE, réversible). Reste visible
     (grisé) dans la liste et dans l'historique, mais ne peut plus recevoir de
     nouvelle charge tant qu'il n'est pas réactivé."""
@@ -1535,14 +1575,20 @@ def delete_vehicle(vehicle_id: int, db: Session = Depends(get_db), user=Depends(
     allowed_ids = _user_vehicle_ids(db, user)
     if allowed_ids is not None and vehicle_id not in allowed_ids:
         raise HTTPException(status_code=403, detail="Véhicule non associé à votre compte")
+    affected_chargers = _vehicle_charger_ids(db, vehicle_id)
     vehicle.deleted_at = datetime.utcnow()
     vehicle.id_tag = None
     db.commit()
+    # Un véhicule désactivé sort de _authorized_id_tags_for_charger : les
+    # bornes qui l'avaient dans leur liste locale doivent être resynchronisées
+    # pour retirer son idTag.
+    for cid in affected_chargers:
+        await sync_local_auth_list(cid)
     return {"status": "ok"}
 
 
 @router.post("/vehicles/{vehicle_id}/reactivate")
-def reactivate_vehicle(vehicle_id: int, db: Session = Depends(get_db), user=Depends(get_current_user)):
+async def reactivate_vehicle(vehicle_id: int, db: Session = Depends(get_db), user=Depends(get_current_user)):
     """Annule une désactivation. Le idTag (retiré lors de la désactivation)
     n'est pas restauré automatiquement, à resaisir si besoin."""
     _require_vehicle_permission(user, db)
@@ -1554,6 +1600,11 @@ def reactivate_vehicle(vehicle_id: int, db: Session = Depends(get_db), user=Depe
         raise HTTPException(status_code=403, detail="Véhicule non associé à votre compte")
     vehicle.deleted_at = None
     db.commit()
+    # Symétrique de la désactivation : redonner l'idTag (une fois resaisi) à la
+    # liste locale des bornes associées. Sans idTag pour l'instant, ce sera un
+    # no-op côté _authorized_id_tags_for_charger jusqu'à sa resaisie.
+    for cid in _vehicle_charger_ids(db, vehicle_id):
+        await sync_local_auth_list(cid)
     return {"status": "ok"}
 
 
@@ -1579,6 +1630,7 @@ async def hard_delete_vehicle(vehicle_id: int, db: Session = Depends(get_db), us
         raise HTTPException(status_code=403, detail="Véhicule non associé à votre compte")
 
     label = vehicle.name
+    affected_chargers = _vehicle_charger_ids(db, vehicle_id)
     kept_sessions = db.query(Transaction).filter(
         Transaction.vehicle_id == vehicle_id, Transaction.charger_id.isnot(None)
     ).update(
@@ -1592,12 +1644,15 @@ async def hard_delete_vehicle(vehicle_id: int, db: Session = Depends(get_db), us
         db.query(MeterValue).filter(MeterValue.transaction_id.in_(txn_ids)).delete(synchronize_session=False)
         db.query(Transaction).filter(Transaction.id.in_(txn_ids)).delete(synchronize_session=False)
     db.query(UserVehicle).filter(UserVehicle.vehicle_id == vehicle_id).delete(synchronize_session=False)
+    db.query(VehicleCharger).filter(VehicleCharger.vehicle_id == vehicle_id).delete(synchronize_session=False)
     db.delete(vehicle)
     db.commit()
     # Suppression définitive uniquement (contrairement à la désactivation,
     # réversible, qui laisse les entités MQTT en place) : l'appareil disparaît
     # aussi côté HA.
     await mqtt_bridge.unpublish_vehicle_discovery(vehicle_id)
+    for cid in affected_chargers:
+        await sync_local_auth_list(cid)
     return {"status": "ok", "deleted_sessions": len(txn_ids), "kept_sessions": kept_sessions}
 
 
