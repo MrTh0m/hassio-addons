@@ -177,6 +177,14 @@ class Transaction(Base):
     # ouverte (câble verrouillé) mais aucun kWh ne transite encore.
     deferred_until = Column(String, nullable=True)  # "HH:MM" ou description libre
 
+    # Nom d'affichage de la borne au moment d'une suppression DÉFINITIVE (voir
+    # hard_delete_charger dans api.py). La session n'est jamais supprimée avec
+    # la borne : charger_id est mis à NULL (la ligne Charger disparaît
+    # réellement) mais ce snapshot permet de continuer à afficher le nom de la
+    # borne dans l'historique, distingué d'une charge externe par is_external
+    # qui reste False ici.
+    charger_display_name_snapshot = Column(String, nullable=True)
+
     charger = relationship("Charger", back_populates="transactions")
     vehicle = relationship("Vehicle", back_populates="transactions")
 

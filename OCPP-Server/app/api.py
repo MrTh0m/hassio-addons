@@ -1,8 +1,13 @@
+import asyncio
 import csv
 import io
 import json
+import logging
+import os
+import urllib.request
 from typing import Optional
 from datetime import datetime
+from zoneinfo import ZoneInfo, available_timezones
 
 from fastapi import APIRouter, Depends, HTTPException, status, Response
 from fastapi.security import OAuth2PasswordRequestForm
@@ -30,11 +35,17 @@ from .csms_local import (
 from . import mqtt_bridge
 
 
-def _to_csv_response(rows: list, filename: str) -> Response:
-    """Convertit une liste de dicts plats en réponse CSV téléchargeable.
-    Gère le marqueur {"__dt__": iso} utilisé par _serialize_row pour les
-    datetimes, et convertit les valeurs dict/list restantes (ex. payload de
-    log) en JSON compact plutôt que de planter sur un type non scalaire."""
+def _rows_to_csv_bytes(rows: list, tz: Optional[ZoneInfo] = None) -> bytes:
+    """Convertit une liste de dicts plats en octets CSV (UTF-8 avec BOM, pour
+    qu'Excel/LibreOffice ouvrent les accents correctement). Gère le marqueur
+    {"__dt__": iso} utilisé par _serialize_row pour les datetimes, et
+    convertit les valeurs dict/list restantes (ex. payload de log) en JSON
+    compact plutôt que de planter sur un type non scalaire.
+
+    Si `tz` est fourni, un marqueur {"__dt__": iso} est converti dans ce
+    fuseau avec son abréviation explicite (ex. "2026-09-18 08:08:04 CEST")
+    plutôt que laissé en UTC brut. Extrait de _to_csv_response pour être
+    réutilisable dans un zip multi-fichiers (voir diagnostics_dump)."""
     columns: list = []
     for r in rows:
         for k in r.keys():
@@ -47,7 +58,7 @@ def _to_csv_response(rows: list, filename: str) -> Response:
         flat = {}
         for k, v in r.items():
             if isinstance(v, dict) and "__dt__" in v:
-                flat[k] = v["__dt__"]
+                flat[k] = _format_dt_for_export(v["__dt__"], tz) if tz else v["__dt__"]
             elif isinstance(v, (dict, list)):
                 flat[k] = json.dumps(v, ensure_ascii=False)
             elif v is None:
@@ -55,12 +66,48 @@ def _to_csv_response(rows: list, filename: str) -> Response:
             else:
                 flat[k] = v
         writer.writerow(flat)
-    # BOM utf-8 : Excel/LibreOffice ouvrent sinon les accents mal encodés.
-    csv_bytes = output.getvalue().encode("utf-8-sig")
+    return output.getvalue().encode("utf-8-sig")
+
+
+def _to_csv_response(rows: list, filename: str, tz: Optional[ZoneInfo] = None) -> Response:
+    """Convertit une liste de dicts plats en réponse CSV téléchargeable (voir
+    _rows_to_csv_bytes pour le détail de la conversion)."""
+    csv_bytes = _rows_to_csv_bytes(rows, tz)
     return Response(
         content=csv_bytes, media_type="text/csv; charset=utf-8",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+def _format_dt_for_export(value, tz: Optional[ZoneInfo]) -> str:
+    """Convertit un datetime (naïf, supposé UTC comme partout dans ce projet)
+    ou une chaîne ISO UTC vers le fuseau `tz`, avec son abréviation explicite
+    (ex. "2026-09-18 08:08:04 CEST"). Sans `tz`, renvoie la valeur telle
+    quelle (UTC brut, comportement historique)."""
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        try:
+            dt = datetime.fromisoformat(value.replace("Z", ""))
+        except ValueError:
+            return value
+    else:
+        dt = value
+    if tz is None:
+        return dt.isoformat() if not isinstance(value, str) else value
+    dt_utc = dt.replace(tzinfo=ZoneInfo("UTC"))
+    localized = dt_utc.astimezone(tz)
+    return localized.strftime("%Y-%m-%d %H:%M:%S %Z")
+
+
+def _export_filename(base: str, tz: Optional[ZoneInfo], ext: str = "csv") -> str:
+    """Nom de fichier horodaté au moment de l'export (dans le fuseau
+    d'affichage configuré), pour ne plus dépendre du "(2)" ajouté par le
+    navigateur à chaque nouveau téléchargement du même nom, qui ne dit rien du
+    moment réel de l'export."""
+    now = datetime.utcnow().replace(tzinfo=ZoneInfo("UTC"))
+    local = now.astimezone(tz) if tz else now
+    return f"{base}_{local.strftime('%Y-%m-%d_%Hh%M')}.{ext}"
 
 
 router = APIRouter(prefix="/api")
@@ -69,6 +116,8 @@ router = APIRouter(prefix="/api")
 # --- Auth ---
 
 DEBUG_MODE_KEY = "debug_mode"
+DISPLAY_TZ_KEY = "display_timezone"
+DEFAULT_DISPLAY_TZ = "Europe/Paris"
 
 
 def _get_setting(db: Session, key: str, default: str = "false") -> str:
@@ -89,6 +138,23 @@ def _is_debug_mode(db: Session) -> bool:
     return _get_setting(db, DEBUG_MODE_KEY, "false") == "true"
 
 
+def _get_display_tz_name(db: Session) -> str:
+    return _get_setting(db, DISPLAY_TZ_KEY, DEFAULT_DISPLAY_TZ)
+
+
+def _get_display_tz(db: Session) -> ZoneInfo:
+    """Fuseau horaire configuré pour l'affichage et l'export (réglage global,
+    voir set_display_timezone). Retombe sur Europe/Paris si la valeur stockée
+    n'est plus une zone IANA valide (ne devrait pas arriver, set_display_timezone
+    valide déjà à l'écriture, mais on ne veut jamais planter un export pour
+    autant)."""
+    name = _get_display_tz_name(db)
+    try:
+        return ZoneInfo(name)
+    except Exception:
+        return ZoneInfo(DEFAULT_DISPLAY_TZ)
+
+
 @router.post("/auth/login")
 def login(form: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
     user = db.query(User).filter(
@@ -104,10 +170,11 @@ def login(form: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get
 def get_me(db: Session = Depends(get_db), user=Depends(get_current_user)):
     """Retourne le profil complet du user connecté (rôle + permissions)."""
     debug_mode = _is_debug_mode(db)
+    display_timezone = _get_display_tz_name(db)
     uid = get_user_id(user)
     u = db.query(User).filter(User.id == uid).first() if uid else None
     if not u:
-        return {"role": user.get("role", "user"), "permissions": {}, "debug_mode": debug_mode}
+        return {"role": user.get("role", "user"), "permissions": {}, "debug_mode": debug_mode, "display_timezone": display_timezone}
     perms = u.permissions
     vehicle_ids = [lnk.vehicle_id for lnk in u.vehicle_links]
     charger_ids = [lnk.charger_id for lnk in u.charger_links]
@@ -118,6 +185,7 @@ def get_me(db: Session = Depends(get_db), user=Depends(get_current_user)):
         "vehicle_ids": vehicle_ids,
         "charger_ids": charger_ids,
         "debug_mode": debug_mode,
+        "display_timezone": display_timezone,
         "permissions": {
             "can_manage_chargers": is_admin(user) or (perms.can_manage_chargers if perms else False),
             "can_manage_tariffs": is_admin(user) or (perms.can_manage_tariffs if perms else False),
@@ -138,6 +206,87 @@ def set_debug_mode(body: DebugModeUpdate, db: Session = Depends(get_db), user=De
     indépendamment de ce réglage : celui-ci ne fait que masquer/afficher l'onglet)."""
     _set_setting(db, DEBUG_MODE_KEY, "true" if body.enabled else "false")
     return {"debug_mode": body.enabled}
+
+
+class TimezoneUpdate(BaseModel):
+    timezone: str
+
+
+@router.put("/settings/timezone")
+def set_display_timezone(body: TimezoneUpdate, db: Session = Depends(get_db), user=Depends(require_admin)):
+    """Fuseau horaire utilisé pour l'affichage (Logs OCPP/serveur) et l'export
+    (CSV) partout dans l'app. Réglage global (pas par utilisateur), comme le
+    mode débug. Les timestamps restent stockés en UTC en base : ce réglage ne
+    change que la présentation."""
+    if body.timezone not in available_timezones():
+        raise HTTPException(status_code=400, detail=f"Fuseau horaire inconnu : {body.timezone}")
+    _set_setting(db, DISPLAY_TZ_KEY, body.timezone)
+    return {"display_timezone": body.timezone}
+
+
+class ServerRestartBody(BaseModel):
+    force: bool = False
+
+
+_restart_logger = logging.getLogger("ocpp-server.restart")
+_SUPERVISOR_URL = "http://supervisor"
+# Référence forte vers la tâche de redémarrage : sans ça, asyncio peut la
+# collecter avant qu'elle ne s'exécute (create_task ne garde qu'une
+# référence faible).
+_restart_tasks: set = set()
+
+
+async def _supervisor_restart_later(token: str, delay: float = 1.5):
+    """Attend un court instant (le temps que la réponse HTTP parte vers le
+    navigateur), puis demande au Supervisor de redémarrer cet add-on. La
+    requête a de bonnes chances de ne jamais « revenir » puisque le conteneur
+    est arrêté pendant qu'elle est traitée : une exception ici est donc
+    attendue et sans gravité."""
+    await asyncio.sleep(delay)
+
+    def _call() -> int:
+        req = urllib.request.Request(
+            f"{_SUPERVISOR_URL}/addons/self/restart", method="POST",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            return resp.status
+
+    try:
+        status_code = await asyncio.to_thread(_call)
+        _restart_logger.info("Supervisor : redémarrage de l'add-on demandé (HTTP %s)", status_code)
+    except Exception as exc:
+        _restart_logger.warning("Supervisor : appel de redémarrage interrompu ou en échec (%s)", exc)
+
+
+@router.post("/server/restart")
+async def restart_server(body: ServerRestartBody, db: Session = Depends(get_db), user=Depends(require_admin)):
+    """Redémarre l'add-on (serveur CSMS) via l'API Supervisor de Home
+    Assistant, sans passer par l'interface HA. Nécessite `hassio_api: true`
+    dans config.json (fournit SUPERVISOR_TOKEN). Les bornes se déconnectent
+    puis se reconnectent d'elles-mêmes au redémarrage.
+
+    Si une charge est en cours et que `force` n'est pas demandé, ne fait rien
+    et renvoie le nombre de sessions actives pour que l'UI demande
+    confirmation (même logique que le redémarrage d'une borne)."""
+    token = os.environ.get("SUPERVISOR_TOKEN")
+    if not token:
+        raise HTTPException(
+            status_code=503,
+            detail="Redémarrage indisponible : le serveur ne tourne pas en add-on Home Assistant "
+                   "avec accès au Supervisor (SUPERVISOR_TOKEN absent).",
+        )
+    active = db.query(Transaction).filter(Transaction.status == "active").count()
+    if active and not body.force:
+        return {"status": "confirm_required", "active_transactions": active}
+    _restart_logger.warning(
+        "Redémarrage du serveur demandé par %s (%d charge(s) en cours)",
+        user.get("sub") if isinstance(user, dict) else user, active,
+    )
+    task = asyncio.create_task(_supervisor_restart_later(token))
+    _restart_tasks.add(task)
+    task.add_done_callback(_restart_tasks.discard)
+    return {"status": "restarting", "active_transactions": active}
 
 
 @router.get("/diagnostics/health")
@@ -167,6 +316,46 @@ def list_installed_packages(user=Depends(require_admin)):
         key=lambda p: p["name"].lower(),
     )
     return pkgs
+
+
+@router.get("/diagnostics/dump")
+def diagnostics_dump(db: Session = Depends(get_db), user=Depends(require_admin)):
+    """Regroupe en un seul zip tout ce qui sert habituellement à diagnostiquer
+    un problème (logs OCPP, logs serveur, statuts connecteurs, transactions
+    récentes, clés de config, bornes, relevés de compteur récents), pour ne
+    plus avoir à exporter chaque fichier séparément à la main comme on l'a
+    fait à plusieurs reprises en pratique."""
+    import zipfile
+
+    tz = _get_display_tz(db)
+
+    ocpp_entries = ocpp_logs.get_entries(limit=2000)
+    ocpp_entries = [{**e, "ts": _format_dt_for_export(e["ts"], tz)} for e in ocpp_entries]
+
+    srv_entries = server_logs.get_entries(limit=2000)
+    srv_entries = [{**e, "ts": _format_dt_for_export(e["ts"], tz)} for e in srv_entries]
+
+    connector_rows = db.query(ConnectorStatus).order_by(_order_column(ConnectorStatus)).all()
+    txn_rows = db.query(Transaction).order_by(Transaction.id.desc()).limit(2000).all()
+    config_rows = db.query(ConfigurationKey).order_by(_order_column(ConfigurationKey)).all()
+    charger_rows = db.query(Charger).all()
+    mv_rows = db.query(MeterValue).order_by(MeterValue.id.desc()).limit(3000).all()
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("ocpp-logs.csv", _rows_to_csv_bytes(ocpp_entries))
+        zf.writestr("logs-serveur.csv", _rows_to_csv_bytes(srv_entries))
+        zf.writestr("connector_statuses.csv", _rows_to_csv_bytes([_serialize_row(r) for r in connector_rows], tz=tz))
+        zf.writestr("transactions.csv", _rows_to_csv_bytes([_serialize_row(r) for r in txn_rows], tz=tz))
+        zf.writestr("configuration_keys.csv", _rows_to_csv_bytes([_serialize_row(r) for r in config_rows]))
+        zf.writestr("chargers.csv", _rows_to_csv_bytes([_serialize_row(r) for r in charger_rows], tz=tz))
+        zf.writestr("meter_values.csv", _rows_to_csv_bytes([_serialize_row(r) for r in mv_rows], tz=tz))
+    buf.seek(0)
+    filename = _export_filename("dump-diagnostic", tz, ext="zip")
+    return Response(
+        content=buf.read(), media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 class ChangePasswordBody(BaseModel):
@@ -281,6 +470,44 @@ def delete_charger(charger_id: str, db: Session = Depends(get_db), user=Depends(
     db.commit()
     CONNECTED_CHARGERS.pop(charger_id, None)
     return {"status": "ok"}
+
+
+@router.delete("/chargers/{charger_id}/permanent")
+async def hard_delete_charger(
+    charger_id: str, db: Session = Depends(get_db), user=Depends(require_admin),
+):
+    """Suppression DÉFINITIVE d'une borne (contrairement à la désactivation
+    ci-dessus, réversible). Ses sessions de charge ne sont PAS supprimées : le
+    lien vers cette borne (charger_id) est détaché (mis à NULL), mais le nom
+    de la borne au moment de la suppression est conservé sur chaque session
+    (charger_display_name_snapshot) pour rester lisible dans l'historique et
+    les statistiques du véhicule, exactement comme un renommage figé. Les
+    MeterValues détaillés de cette borne sont en revanche supprimés (ils ne
+    servent qu'au graphique de puissance dans le temps ; l'énergie et le coût
+    de chaque session, eux, sont déjà figés sur la ligne Transaction et ne
+    dépendent pas des MeterValues bruts). L'UI doit avertir explicitement
+    l'utilisateur avant d'appeler cette route."""
+    charger = db.query(Charger).filter(Charger.id == charger_id).first()
+    if not charger:
+        raise HTTPException(status_code=404, detail="Borne inconnue")
+    label = charger.display_name or charger.id
+    connector_ids = [
+        row[0] for row in db.query(ConnectorStatus.connector_id).filter(
+            ConnectorStatus.charger_id == charger_id
+        ).distinct().all()
+    ]
+    txn_count = db.query(Transaction).filter(Transaction.charger_id == charger_id).update(
+        {Transaction.charger_id: None, Transaction.charger_display_name_snapshot: label}
+    )
+    db.query(MeterValue).filter(MeterValue.charger_id == charger_id).delete()
+    db.query(ConnectorStatus).filter(ConnectorStatus.charger_id == charger_id).delete()
+    db.query(ConfigurationKey).filter(ConfigurationKey.charger_id == charger_id).delete()
+    db.query(UserCharger).filter(UserCharger.charger_id == charger_id).delete()
+    db.delete(charger)
+    db.commit()
+    CONNECTED_CHARGERS.pop(charger_id, None)
+    await mqtt_bridge.unpublish_charger_discovery(charger_id, connector_ids)
+    return {"status": "ok", "detached_sessions": txn_count}
 
 
 @router.get("/chargers/{charger_id}")
@@ -500,7 +727,8 @@ async def export_configuration(
         for k in data["keys"]
     ]
     label = (charger.display_name if charger else None) or charger_id
-    filename = f"config-ocpp-{label}.csv".replace(" ", "_")
+    tz = _get_display_tz(db)
+    filename = _export_filename(f"config-ocpp-{label}".replace(" ", "_"), tz)
     return _to_csv_response(rows, filename)
 
 
@@ -712,9 +940,19 @@ def _serialize_session(s: Transaction, db: Session, prev_odometer: Optional[floa
                 kwh_per_100km = round((energy_wh / 1000.0) / delta * 100, 2)
 
     charger_obj = db.query(Charger).filter(Charger.id == s.charger_id).first() if s.charger_id else None
+    # Borne supprimée DÉFINITIVEMENT (voir hard_delete_charger) : charger_id
+    # est à NULL mais le nom est conservé sur la session elle-même, distinct
+    # d'une charge externe (is_external reste False ici).
+    charger_deleted = s.charger_id is None and not s.is_external and bool(s.charger_display_name_snapshot)
+    charger_display_name = (
+        charger_obj.display_name if charger_obj
+        else s.charger_display_name_snapshot if charger_deleted
+        else None
+    )
     return {
         "id": s.id, "charger_id": s.charger_id,
-        "charger_display_name": charger_obj.display_name if charger_obj else None,
+        "charger_display_name": charger_display_name,
+        "charger_deleted": charger_deleted,
         "connector_id": s.connector_id, "id_tag": s.id_tag,
         "vehicle_id": s.vehicle_id, "vehicle_name": vehicle.name if vehicle else None,
         "meter_start": s.meter_start, "meter_stop": s.meter_stop,
@@ -1008,7 +1246,11 @@ def export_history(
     que /history (un user ne voit que les sessions de ses véhicules)."""
     sessions = _query_history(db, user, vehicle_id, charger_id, status_filter, limit)
     data = _serialize_sessions_with_km(sessions, db)
-    return _to_csv_response(data, "historique.csv")
+    tz = _get_display_tz(db)
+    for row in data:
+        row["start_time"] = _format_dt_for_export(row["start_time"], tz)
+        row["stop_time"] = _format_dt_for_export(row["stop_time"], tz)
+    return _to_csv_response(data, _export_filename("historique", tz))
 
 
 @router.get("/chargers/{charger_id}/metervalues")
@@ -1097,19 +1339,56 @@ def list_vehicles(db: Session = Depends(get_db), user=Depends(get_current_user))
     """Renvoie aussi les véhicules désactivés (deleted_at rempli), avec le
     champ `active` pour que l'UI les affiche grisés plutôt que de les cacher
     complètement. Seule une suppression DÉFINITIVE (voir plus bas) les fait
-    disparaître."""
+    disparaître. Inclut aussi les statistiques agrégées de chaque véhicule
+    (même calcul que /vehicles/{id}/stats), pour les colonnes du tableau sans
+    devoir faire un appel par véhicule côté UI."""
     vehicles = db.query(Vehicle).order_by(Vehicle.deleted_at.is_not(None), Vehicle.name).all()
     allowed_ids = _user_vehicle_ids(db, user)
     if allowed_ids is not None:
         vehicles = [v for v in vehicles if v.id in allowed_ids]
-    return [
-        {
+    result = []
+    for v in vehicles:
+        agg, _ = _vehicle_aggregate_stats(db, v.id, v.battery_capacity_kwh)
+        result.append({
             "id": v.id, "name": v.name, "id_tag": v.id_tag,
             "battery_capacity_kwh": v.battery_capacity_kwh,
             "active": v.deleted_at is None,
-        }
-        for v in vehicles
-    ]
+            "stats": agg,
+        })
+    return result
+
+
+def _vehicle_aggregate_stats(db: Session, vehicle_id: int, battery_capacity_kwh: Optional[float]) -> tuple[dict, list]:
+    """Calcule les indicateurs agrégés d'un véhicule (nombre de charges,
+    énergie/coût cumulés, distance, conso moyenne, coût moyen au km, distance
+    rapportée à la capacité batterie) à partir de son historique complet.
+    Retourne (stats, sessions_serialisées) : les sessions sont déjà
+    calculées au passage (km depuis charge précédente inclus), autant les
+    renvoyer à l'appelant plutôt que de tout refaire (voir vehicle_stats)."""
+    sessions = db.query(Transaction).filter(
+        Transaction.vehicle_id == vehicle_id
+    ).order_by(Transaction.start_time.desc()).all()
+    serialized = _serialize_sessions_with_km(sessions, db)
+    completed = [s for s in serialized if s["status"] == "completed"]
+    total_energy_wh = sum(s["energy_wh"] or 0 for s in completed)
+    total_cost = sum(s["cost"] or 0 for s in completed if s["cost"] is not None)
+    total_km = sum(s["km_since_last"] or 0 for s in serialized if s["km_since_last"])
+    odos = [s["odometer_km"] for s in serialized if s["odometer_km"] is not None]
+    avg_consumption = round(total_energy_wh / 1000.0 / total_km * 100, 2) if total_km else None
+    avg_cost_per_km = round(total_cost / total_km, 3) if total_km else None
+    km_per_kwh_capacity = round(total_km / battery_capacity_kwh, 1) if (total_km and battery_capacity_kwh) else None
+    stats = {
+        "charge_count": len(completed),
+        "external_count": sum(1 for s in completed if s["is_external"]),
+        "total_energy_kwh": round(total_energy_wh / 1000.0, 2),
+        "total_cost": round(total_cost, 2),
+        "total_km": round(total_km, 1) if total_km else 0,
+        "avg_kwh_per_100km": avg_consumption,
+        "avg_cost_per_km": avg_cost_per_km,
+        "km_per_kwh_capacity": km_per_kwh_capacity,
+        "last_odometer_km": max(odos) if odos else None,
+    }
+    return stats, serialized
 
 
 @router.get("/vehicles/{vehicle_id}/stats")
@@ -1120,31 +1399,13 @@ def vehicle_stats(vehicle_id: int, db: Session = Depends(get_db), user=Depends(g
     vehicle = db.query(Vehicle).filter(Vehicle.id == vehicle_id).first()
     if not vehicle:
         raise HTTPException(status_code=404, detail="Véhicule inconnu")
-    sessions = db.query(Transaction).filter(
-        Transaction.vehicle_id == vehicle_id
-    ).order_by(Transaction.start_time.desc()).all()
-    serialized = _serialize_sessions_with_km(sessions, db)
-
-    completed = [s for s in serialized if s["status"] == "completed"]
-    total_energy_wh = sum(s["energy_wh"] or 0 for s in completed)
-    total_cost = sum(s["cost"] or 0 for s in completed if s["cost"] is not None)
-    total_km = sum(s["km_since_last"] or 0 for s in serialized if s["km_since_last"])
-    odos = [s["odometer_km"] for s in serialized if s["odometer_km"] is not None]
-    avg_consumption = round(total_energy_wh / 1000.0 / total_km * 100, 2) if total_km else None
+    stats, serialized = _vehicle_aggregate_stats(db, vehicle_id, vehicle.battery_capacity_kwh)
 
     return {
         "id": vehicle.id, "name": vehicle.name, "id_tag": vehicle.id_tag,
         "battery_capacity_kwh": vehicle.battery_capacity_kwh,
         "active": vehicle.deleted_at is None,
-        "stats": {
-            "charge_count": len(completed),
-            "external_count": sum(1 for s in completed if s["is_external"]),
-            "total_energy_kwh": round(total_energy_wh / 1000.0, 2),
-            "total_cost": round(total_cost, 2),
-            "total_km": round(total_km, 1) if total_km else 0,
-            "avg_kwh_per_100km": avg_consumption,
-            "last_odometer_km": max(odos) if odos else None,
-        },
+        "stats": stats,
         "sessions": serialized,
     }
 
@@ -1820,7 +2081,8 @@ def export_db_table(table_name: str, db: Session = Depends(get_db), user=Depends
         raise HTTPException(status_code=404, detail="Table inconnue")
     rows = db.query(model).order_by(_order_column(model)).all()
     data = [_serialize_row(r) for r in rows]
-    return _to_csv_response(data, f"{table_name}.csv")
+    tz = _get_display_tz(db)
+    return _to_csv_response(data, _export_filename(table_name, tz), tz=tz)
 
 
 # ============================ JOURNAL OCPP (live) ============================
@@ -1874,14 +2136,16 @@ def clear_logs(user=Depends(require_admin)):
 def export_logs(
     charger_id: Optional[str] = None, action: Optional[str] = None,
     direction: Optional[str] = None, limit: int = 2000,
-    user=Depends(require_admin),
+    db: Session = Depends(get_db), user=Depends(require_admin),
 ):
     """Export CSV du journal en mémoire, avec les mêmes filtres que /logs."""
     entries = ocpp_logs.get_entries(
         charger_id=charger_id, action=action, direction=direction,
         since_id=0, limit=limit,
     )
-    return _to_csv_response(entries, "ocpp-logs.csv")
+    tz = _get_display_tz(db)
+    entries = [{**e, "ts": _format_dt_for_export(e["ts"], tz)} for e in entries]
+    return _to_csv_response(entries, _export_filename("ocpp-logs", tz))
 
 
 # ============================ JOURNAL SERVEUR (live) ============================
@@ -1934,11 +2198,13 @@ def clear_server_logs(user=Depends(require_admin)):
 @router.get("/server-logs/export")
 def export_server_logs(
     logger: Optional[str] = None, level: Optional[str] = None, limit: int = 2000,
-    user=Depends(require_admin),
+    db: Session = Depends(get_db), user=Depends(require_admin),
 ):
     """Export CSV du journal serveur en mémoire, mêmes filtres que /server-logs."""
     entries = server_logs.get_entries(logger=logger, level=level, since_id=0, limit=limit)
-    return _to_csv_response(entries, "logs-serveur.csv")
+    tz = _get_display_tz(db)
+    entries = [{**e, "ts": _format_dt_for_export(e["ts"], tz)} for e in entries]
+    return _to_csv_response(entries, _export_filename("logs-serveur", tz))
 
 
 # ============================ DANGER ZONE ============================

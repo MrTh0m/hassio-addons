@@ -34,6 +34,7 @@ LOOKBACK_H = 24
 PENDING_KEY_STALE_DAYS = 3
 IMPLAUSIBLE_KWH_100KM_LOW = 5
 IMPLAUSIBLE_KWH_100KM_HIGH = 40
+STUCK_PREPARING_AFTER_FAILED_START_MIN = 10
 
 
 def _badge(key, label, severity, count, items=None, detail=None):
@@ -283,6 +284,55 @@ def _check_consommation_implausible():
         db.close()
 
 
+def _check_connecteur_bloque_apres_echec():
+    """Signature précise observée deux fois (18/09 et 25/09) : le connecteur
+    reste en Preparing bien après une tentative de démarrage, qu'elle ait été
+    acceptée sans jamais aboutir (25/09) ou rejetée (18/09), sans qu'aucune
+    charge ne devienne active. Plus parlant qu'un simple comptage de rejets
+    (_check_demarrages_refuses) : c'est le symptôme exact qui a fait
+    suspecter un blocage interne à la borne les deux fois."""
+    db = SessionLocal()
+    try:
+        cutoff = datetime.utcnow() - timedelta(minutes=STUCK_PREPARING_AFTER_FAILED_START_MIN)
+        rows = db.query(ConnectorStatus, Charger).join(
+            Charger, Charger.id == ConnectorStatus.charger_id
+        ).filter(
+            ConnectorStatus.connector_id != 0,
+            ConnectorStatus.status == "Preparing",
+            ConnectorStatus.updated_at < cutoff,
+        ).all()
+        items = []
+        for cs, charger in rows:
+            has_active = db.query(Transaction).filter(
+                Transaction.charger_id == cs.charger_id,
+                Transaction.connector_id == cs.connector_id,
+                Transaction.status == "active",
+            ).first()
+            if has_active:
+                continue
+            attempted = False
+            for action in ("StartTransaction.conf", "RemoteStartTransaction.conf"):
+                for e in ocpp_logs.get_entries(charger_id=cs.charger_id, action=action, limit=200):
+                    if datetime.fromisoformat(e["ts"]) >= cs.updated_at:
+                        attempted = True
+                        break
+                if attempted:
+                    break
+            if attempted:
+                since_min = round((datetime.utcnow() - cs.updated_at).total_seconds() / 60, 1)
+                items.append({
+                    "charger_id": cs.charger_id,
+                    "charger_name": charger.display_name or cs.charger_id,
+                    "connector_id": cs.connector_id,
+                    "since_min": since_min,
+                })
+        return _badge("connecteur_bloque_echec_demarrage",
+                      "Connecteur bloqué en Preparing après un échec de démarrage",
+                      "danger" if items else "ok", len(items), items)
+    finally:
+        db.close()
+
+
 def _check_bornes_hors_ligne():
     db = SessionLocal()
     try:
@@ -300,6 +350,7 @@ def _check_bornes_hors_ligne():
 
 _CHECKS = [
     _check_connecteurs_bloques,
+    _check_connecteur_bloque_apres_echec,
     _check_transactions_fantomes,
     _check_charges_sans_capacite,
     _check_charges_duree_nulle,

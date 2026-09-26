@@ -222,6 +222,32 @@ async def unpublish_vehicle_discovery(vehicle_id: int):
         await _safe_publish(f"{DISCOVERY_PREFIX}/sensor/{v}_{key}/config", "", retain=True)
 
 
+async def unpublish_charger_discovery(charger_id: str, connector_ids: list[int]):
+    """Retire toutes les entités MQTT d'une borne ET de ses connecteurs (payload
+    vide = suppression côté HA, même convention que unpublish_vehicle_discovery
+    ci-dessus). À appeler uniquement sur une suppression DÉFINITIVE (voir
+    hard_delete_charger dans api.py) : une simple désactivation (réversible,
+    la borne peut se reconnecter et redevenir active toute seule) laisse les
+    entités en place."""
+    if _client is None:
+        return
+    slug = _slug(charger_id)
+    await _safe_publish(f"{DISCOVERY_PREFIX}/sensor/{slug}_status/config", "", retain=True)
+    await _safe_publish(f"{DISCOVERY_PREFIX}/switch/{slug}_charge_control/config", "", retain=True)
+    for connector_id in connector_ids:
+        if connector_id == 0:
+            continue
+        c = f"connector{connector_id}"
+        for key in (
+            "status", "power_w", "current_a", "voltage_v", "energy_wh",
+            "session_energy_wh", "session_cost", "session_duration_min",
+            "session_start_time", "last_session_energy_wh", "last_session_cost",
+        ):
+            await _safe_publish(f"{DISCOVERY_PREFIX}/sensor/{slug}_{c}_{key}/config", "", retain=True)
+        await _safe_publish(f"{DISCOVERY_PREFIX}/switch/{slug}_{c}_charge_control/config", "", retain=True)
+    _slug_to_id.pop(slug, None)
+
+
 async def publish_vehicle_state(vehicle_id: int, **values):
     if _client is None:
         return

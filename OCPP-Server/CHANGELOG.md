@@ -1,3 +1,12 @@
+## 0.19.33
+
+- **Nouveau** : bouton **Redémarrer le serveur** dans Réglages → Avancé (admin). Redémarre l'add-on via l'API Supervisor de Home Assistant, avec confirmation renforcée si une charge est en cours, puis recharge automatiquement l'application quand le serveur est de retour. Nouvel endpoint `POST /api/server/restart`. ⚠️ Nécessite la nouvelle permission `hassio_api` : la mise à jour de l'add-on la fait prendre en compte (le score de sécurité affiché par HA baisse légèrement, c'est attendu). Tests dédiés (`test_server_restart.py`).
+- **Nouveau** : réglage global du **fuseau horaire** d'affichage et d'export (Réglages → Avancé, nom de zone IANA, `Europe/Paris` par défaut). S'applique aux Logs OCPP et Logs serveur (abréviation du fuseau affichée à côté de chaque heure) et à tous les exports CSV. Les données restent stockées en UTC en base.
+- **Nouveau** : les fichiers exportés portent la date et l'heure réelles de l'export dans leur nom (ex. `logs-serveur_2026-09-25_14h30.csv`), dans le fuseau configuré, au lieu de dépendre du suffixe `(2)` ajouté par le navigateur.
+- **Nouveau** : bouton **Exporter un dump complet** (zip) dans la barre des sous-onglets Débug : logs OCPP, logs serveur, statuts connecteurs, transactions, clés de configuration, bornes et relevés de compteur récents en un seul fichier. Nouvel endpoint `GET /api/diagnostics/dump`.
+- **Nouveau** : indicateur État de santé « Connecteur bloqué en Preparing après un échec de démarrage », qui détecte précisément le blocage interne observé en prod les 18/09 et 25/09 (plus parlant qu'un simple comptage de démarrages refusés). La carte propose directement **Redémarrer la borne** en un clic pour chaque connecteur concerné.
+- **Amélioré** : onglet **Véhicules** aligné sur les Bornes. Le tableau affiche désormais Total kWh, Total €, €/km et km/kWh pour chaque véhicule ; les actions passent en icônes (fiche « i » + crayon), et Désactiver / Réactiver / Supprimer définitivement sont déplacés dans la modale d'édition, en zone de danger.
+
 ## 0.19.32
 
 - **Amélioré** : l'onglet "État de santé" devient un sous-onglet Débug à part entière (point d'entrée par défaut de Débug), avec une vraie mise en page : les anomalies ressortent en cartes cliquables (détail au clic), les indicateurs sans souci se replient en simples puces plutôt que d'encombrer l'écran. Plus de bandeau dupliqué en haut des 3 autres sous-onglets.

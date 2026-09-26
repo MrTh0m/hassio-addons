@@ -149,7 +149,7 @@ async def on_startup():
     asyncio.create_task(run_scheduler())
 
 
-APP_VERSION = "0.19.32"
+APP_VERSION = "0.19.33"
 
 
 @app.get("/healthz")
