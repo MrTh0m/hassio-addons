@@ -1707,6 +1707,18 @@ async function openChargerConfigModal(id, activeTab) {
       </div>
       ${scheduleSection}
 
+      ${isAdmin() && isLocal ? `
+      <div class="section-title">Maintenance</div>
+      <div class="card" style="border-left:3px solid var(--warn); margin-bottom:.2rem">
+        <div class="spread" style="align-items:center">
+          <div>
+            <b>Redémarrer la borne</b>
+            <div class="tiny muted">Redémarrage logiciel à distance (Reset OCPP). La borne se déconnecte puis se reconnecte d'elle-même en général en moins d'une minute. Utile si elle reste bloquée (ex. connecteur figé en Preparing) ou pour appliquer une clé de configuration en attente.</div>
+          </div>
+          <button class="btn btn-sm" ${charger.connected ? "" : `disabled title="Borne hors ligne : impossible de lui envoyer la commande"`} onclick="triggerChargerReset('${id}')"><svg><use href="#i-refresh"/></svg>Redémarrer</button>
+        </div>
+      </div>` : ""}
+
       ${isAdmin() ? `
       <div class="section-title">Zone de danger</div>
       <div class="card" style="border-left:3px solid var(--danger)">
@@ -1906,6 +1918,15 @@ async function saveOcppKey(chargerId, key, inputId) {
 }
 
 async function triggerChargerReset(chargerId, hasActiveCharge) {
+  // Vérifie l'état réel des connecteurs plutôt que de se fier à l'appelant
+  // seul (la carte État de santé, par exemple, ne connaît pas les autres
+  // connecteurs de la borne). En cas d'échec de lecture, on garde la valeur
+  // fournie.
+  try {
+    const conns = await fetch(`api/chargers/${chargerId}/connectors`, { headers: authHeaders() }).then(r => r.json());
+    if (Array.isArray(conns)) hasActiveCharge = hasActiveCharge || conns.some(c =>
+      c.connector_id !== 0 && ["Charging", "SuspendedEV", "SuspendedEVSE"].includes(c.status));
+  } catch (e) { /* on garde hasActiveCharge tel quel */ }
   const msg = hasActiveCharge
     ? "Cette borne a une charge en cours : un redémarrage risque de l'interrompre. Redémarrer quand même ?"
     : "Redémarrer cette borne maintenant ? (redémarrage logiciel OCPP, la borne va se déconnecter puis se reconnecter)";

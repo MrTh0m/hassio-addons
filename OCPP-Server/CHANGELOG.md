@@ -5,6 +5,8 @@
 - **Nouveau** : les fichiers exportés portent la date et l'heure réelles de l'export dans leur nom (ex. `logs-serveur_2026-09-25_14h30.csv`), dans le fuseau configuré, au lieu de dépendre du suffixe `(2)` ajouté par le navigateur.
 - **Nouveau** : bouton **Exporter un dump complet** (zip) dans la barre des sous-onglets Débug : logs OCPP, logs serveur, statuts connecteurs, transactions, clés de configuration, bornes et relevés de compteur récents en un seul fichier. Nouvel endpoint `GET /api/diagnostics/dump`.
 - **Nouveau** : indicateur État de santé « Connecteur bloqué en Preparing après un échec de démarrage », qui détecte précisément le blocage interne observé en prod les 18/09 et 25/09 (plus parlant qu'un simple comptage de démarrages refusés). La carte propose directement **Redémarrer la borne** en un clic pour chaque connecteur concerné.
+- **Nouveau** : bouton permanent **Redémarrer la borne** (Reset OCPP logiciel) dans la modale de configuration d'une borne, nouvelle section « Maintenance » (admin, mode local). Jusqu'ici il n'apparaissait que lorsqu'une clé de configuration attendait un redémarrage. Grisé si la borne est hors ligne.
+- **Corrigé** : la confirmation « charge en cours » avant un redémarrage de borne vérifie désormais l'état réel des connecteurs, quel que soit l'endroit d'où le redémarrage est lancé (depuis la carte État de santé, elle était toujours considérée comme absente).
 - **Amélioré** : onglet **Véhicules** aligné sur les Bornes. Le tableau affiche désormais Total kWh, Total €, €/km et km/kWh pour chaque véhicule ; les actions passent en icônes (fiche « i » + crayon), et Désactiver / Réactiver / Supprimer définitivement sont déplacés dans la modale d'édition, en zone de danger.
 
 ## 0.19.32
