@@ -105,10 +105,15 @@
   .btn-sm { padding: .32rem .6rem; font-size: .85rem; }
   .btn-icon { padding: .45rem; border-radius: var(--r-sm); }
   .btn[disabled] { opacity: .5; cursor: not-allowed; }
-  .linkbtn {
+  .health-card { background: var(--surface-2); border-radius: var(--r); padding: .7rem .85rem; cursor: pointer; border-left: 3px solid transparent; }
+  .health-card.warn { border-left-color: var(--warn); }
+  .health-card.danger { border-left-color: var(--danger); }
+  .health-card-detail { display: none; margin-top: .5rem; padding-top: .5rem; border-top: 1px solid var(--border); font-size: .78rem; color: var(--text-muted); line-height: 1.5; }
+  .health-card.open .health-card-detail { display: block; }
   .tab-btn { background:none; border:none; padding:.4rem .85rem; cursor:pointer; color:var(--muted); border-bottom:2px solid transparent; font-size:.9rem; margin-bottom:-1px; }
   .tab-btn.active { color:var(--accent); border-bottom-color:var(--accent); font-weight:600; }
   .tab-btn:hover:not(.active) { color:var(--fg); }
+  .linkbtn {
     background: none; border: none; padding: 0; cursor: pointer; font: inherit;
     color: var(--primary-strong); font-weight: 550;
   }
@@ -412,16 +417,14 @@
     <button class="navitem" data-nav="vehicles" onclick="switchView('vehicles')"><svg><use href="#i-car"/></svg><span class="navlabel">Véhicules</span><span class="navlabel-mobile">Autos</span></button>
     <button class="navitem" data-nav="tariffs" onclick="switchView('tariffs')"><svg><use href="#i-tariff"/></svg><span class="navlabel">Abo. électrique</span><span class="navlabel-mobile">Abo.</span></button>
     <button class="navitem" data-nav="history" onclick="switchView('history')"><svg><use href="#i-history"/></svg><span class="navlabel">Historique</span><span class="navlabel-mobile">Histo.</span></button>
-    <button class="navitem" data-nav="logs" onclick="switchView('logs')"><svg><use href="#i-logs"/></svg><span class="navlabel">Logs OCPP</span><span class="navlabel-mobile">Logs OCPP</span></button>
-    <button class="navitem" data-nav="server-logs" onclick="switchView('server-logs')"><svg><use href="#i-terminal"/></svg><span class="navlabel">Logs serveur</span><span class="navlabel-mobile">Serveur</span></button>
-    <button class="navitem" data-nav="dbaudit" onclick="switchView('dbaudit')"><svg><use href="#i-database"/></svg><span class="navlabel">Base de données</span><span class="navlabel-mobile">BDD</span></button>
+    <button class="navitem" data-nav="debug" onclick="switchView('debug')"><svg><use href="#i-terminal"/></svg><span class="navlabel">Débug</span><span class="navlabel-mobile">Débug</span></button>
     <div class="nav-spacer"></div>
     <button class="navitem logout" onclick="logout()"><svg><use href="#i-logout"/></svg><span class="navlabel">Déconnexion</span></button>
   </aside>
 
   <div class="main-col">
     <div class="topbar">
-      <div class="brand-mobile"><img src="icon.svg" alt=""><h1 id="view-title">Accueil</h1></div>
+      <div class="brand-mobile"><img src="icon.svg" alt=""><div><h1 id="view-title">Accueil</h1><div class="tiny muted" id="topbar-version" style="line-height:1"></div></div></div>
       <h1 id="view-title-desktop" style="display:none">Accueil</h1>
       <div class="cluster center" style="gap:.4rem; margin-left:auto">
         <button class="btn btn-icon btn-ghost" id="refresh-btn" title="Rafraîchir" onclick="refreshCurrentView()"><svg><use href="#i-refresh"/></svg></button>
@@ -469,10 +472,14 @@
               <input id="veh-battery" type="number" step="0.1" style="width:160px"></label>
             <button class="btn btn-primary" onclick="createVehicle()"><svg><use href="#i-plus"/></svg>Ajouter</button>
           </div>
+          <div class="small muted" style="margin-top:.7rem">Bornes associées
+            <span class="tiny muted" style="display:block">Détermine sur quelles bornes ce véhicule est autorisé à charger (liste d'autorisation locale poussée sur la borne).</span>
+          </div>
+          <div id="veh-chargers-list" class="cluster" style="gap:.4rem; flex-wrap:wrap; margin-top:.3rem"><span class="tiny muted">Chargement…</span></div>
         </div>
         <div class="card" style="margin-top:.8rem">
           <div class="table-wrap"><table class="responsive" id="vehicles-table">
-            <thead><tr><th>Nom</th><th>idTag</th><th>Capacité batt.</th><th>Charges</th><th></th></tr></thead>
+            <thead><tr><th>Nom</th><th>idTag</th><th>Capacité batt.</th><th>Total kWh</th><th>Total €</th><th>€/km</th><th>km/kWh</th><th></th></tr></thead>
             <tbody></tbody>
           </table></div>
         </div>
@@ -524,8 +531,26 @@
         </div>
       </section>
 
+      <!-- ÉTAT DE SANTÉ -->
+      <section class="view" id="view-health">
+        <div class="cluster center debug-tabs" style="gap:.1rem; border-bottom:1px solid var(--border); margin-bottom:.9rem">
+          <button class="tab-btn debug-subtab" data-nav="health" onclick="switchView('health')">État de santé</button>
+          <button class="tab-btn debug-subtab" data-nav="logs" onclick="switchView('logs')">Logs OCPP</button>
+          <button class="tab-btn debug-subtab" data-nav="server-logs" onclick="switchView('server-logs')">Logs serveur</button>
+          <button class="tab-btn debug-subtab" data-nav="dbaudit" onclick="switchView('dbaudit')">Base de données</button>
+          <button class="btn btn-icon btn-ghost" style="margin-left:auto" title="Exporter un dump complet (zip)" onclick="exportDump()"><svg><use href="#i-download"/></svg></button>
+        </div>
+        <div class="card health-banner"></div>
+      </section>
+
       <!-- LOGS -->
       <section class="view" id="view-logs">
+        <div class="cluster center debug-tabs" style="gap:.1rem; border-bottom:1px solid var(--border); margin-bottom:.9rem">
+          <button class="tab-btn debug-subtab" data-nav="health" onclick="switchView('health')">État de santé</button>
+          <button class="tab-btn debug-subtab" data-nav="logs" onclick="switchView('logs')">Logs OCPP</button>
+          <button class="tab-btn debug-subtab" data-nav="server-logs" onclick="switchView('server-logs')">Logs serveur</button>
+          <button class="tab-btn debug-subtab" data-nav="dbaudit" onclick="switchView('dbaudit')">Base de données</button>
+        </div>
         <div class="card">
           <div class="cluster center" style="justify-content:space-between">
             <div class="cluster center" style="gap:.6rem">
@@ -560,6 +585,12 @@
 
       <!-- LOGS SERVEUR -->
       <section class="view" id="view-server-logs">
+        <div class="cluster center debug-tabs" style="gap:.1rem; border-bottom:1px solid var(--border); margin-bottom:.9rem">
+          <button class="tab-btn debug-subtab" data-nav="health" onclick="switchView('health')">État de santé</button>
+          <button class="tab-btn debug-subtab" data-nav="logs" onclick="switchView('logs')">Logs OCPP</button>
+          <button class="tab-btn debug-subtab" data-nav="server-logs" onclick="switchView('server-logs')">Logs serveur</button>
+          <button class="tab-btn debug-subtab" data-nav="dbaudit" onclick="switchView('dbaudit')">Base de données</button>
+        </div>
         <div class="card">
           <div class="cluster center" style="justify-content:space-between">
             <div class="cluster center" style="gap:.6rem">
@@ -594,6 +625,12 @@
       </section>
 
       <section class="view" id="view-dbaudit">
+        <div class="cluster center debug-tabs" style="gap:.1rem; border-bottom:1px solid var(--border); margin-bottom:.9rem">
+          <button class="tab-btn debug-subtab" data-nav="health" onclick="switchView('health')">État de santé</button>
+          <button class="tab-btn debug-subtab" data-nav="logs" onclick="switchView('logs')">Logs OCPP</button>
+          <button class="tab-btn debug-subtab" data-nav="server-logs" onclick="switchView('server-logs')">Logs serveur</button>
+          <button class="tab-btn debug-subtab" data-nav="dbaudit" onclick="switchView('dbaudit')">Base de données</button>
+        </div>
         <div class="card">
           <p class="small muted" style="margin:.1rem 0 .8rem">Vue en lecture seule du contenu de la base, pour vérifier la cohérence des données (ex. confirmer que des MeterValues sont bien enregistrées pendant une charge). Aucune modification possible depuis cette page.</p>
           <div class="cluster center" style="justify-content:space-between; gap:.6rem; flex-wrap:wrap">
@@ -679,7 +716,7 @@ function toggleTheme() {
 
 /* ---------- Version ---------- */
 fetch("api/version").then(r => r.json()).then(d => {
-  ["login-version", "side-version", "app-version"].forEach(id => {
+  ["login-version", "side-version", "app-version", "topbar-version"].forEach(id => {
     const el = document.getElementById(id); if (el) el.textContent = "v" + d.version;
   });
 }).catch(() => {});
@@ -701,17 +738,13 @@ function hasPerm(p) { return isAdmin() || !!(currentUser.permissions && currentU
 function debugToolsVisible() { return isAdmin() && !!currentUser.debug_mode; }
 // Affiche/masque les éléments selon le rôle
 function applyRoleUI() {
-  // Onglets Logs OCPP et Logs serveur (réservés admin + mode débug, comme Base de données)
-  const logBtn = document.querySelector(".navitem[data-nav='logs']");
-  if (logBtn) logBtn.style.display = debugToolsVisible() ? "" : "none";
-  const slogBtn = document.querySelector(".navitem[data-nav='server-logs']");
-  if (slogBtn) slogBtn.style.display = debugToolsVisible() ? "" : "none";
+  // Onglet Débug (fusion Logs OCPP / Logs serveur / Base de données),
+  // réservé admin + mode débug (Réglages -> Avancé)
+  const debugBtn = document.querySelector(".navitem[data-nav='debug']");
+  if (debugBtn) debugBtn.style.display = debugToolsVisible() ? "" : "none";
   // Onglet Abo. électrique
   const tariffBtn = document.querySelector(".navitem[data-nav='tariffs']");
   if (tariffBtn) tariffBtn.style.display = hasPerm("can_manage_tariffs") ? "" : "none";
-  // Onglet Base de données (admin + mode débug activé dans Réglages)
-  const dbBtn = document.querySelector(".navitem[data-nav='dbaudit']");
-  if (dbBtn) dbBtn.style.display = debugToolsVisible() ? "" : "none";
   // Formulaire ajout de véhicule
   const vehAdd = document.getElementById("veh-add-card");
   if (vehAdd) vehAdd.style.display = hasPerm("can_manage_vehicles") ? "" : "none";
@@ -760,8 +793,18 @@ function formatDateTime(iso) {
   const hasTz = /Z|[+-]\d{2}:\d{2}$/.test(iso);
   const d = new Date(hasTz ? iso : iso + "Z");
   if (isNaN(d.getTime())) return iso;
-  const p = n => String(n).padStart(2, "0");
-  return `${p(d.getDate())}/${p(d.getMonth() + 1)}/${d.getFullYear()} ${p(d.getHours())}:${p(d.getMinutes())}`;
+  const tz = (currentUser && currentUser.display_timezone) || "Europe/Paris";
+  try {
+    const parts = new Intl.DateTimeFormat("fr-FR", {
+      timeZone: tz, day: "2-digit", month: "2-digit", year: "numeric",
+      hour: "2-digit", minute: "2-digit", hour12: false,
+    }).formatToParts(d);
+    const get = t => (parts.find(p => p.type === t) || {}).value || "";
+    return `${get("day")}/${get("month")}/${get("year")} ${get("hour")}:${get("minute")}`;
+  } catch {
+    const p = n => String(n).padStart(2, "0");
+    return `${p(d.getDate())}/${p(d.getMonth() + 1)}/${d.getFullYear()} ${p(d.getHours())}:${p(d.getMinutes())}`;
+  }
 }
 function formatDuration(min) {
   if (min == null) return "–";
@@ -1029,23 +1072,34 @@ function logout() {
 
 /* ---------- Navigation ---------- */
 let currentView = "home";
-const viewTitles = { home: "Accueil", chargers: "Bornes", vehicles: "Véhicules", tariffs: "Abo. électrique", history: "Historique", logs: "Logs OCPP", "server-logs": "Logs serveur", dbaudit: "Base de données" };
+// Dernier sous-onglet consulté dans "Débug" (État de santé / Logs OCPP / Logs
+// serveur / Base de données) : switchView('debug') depuis le menu y
+// redirige, pour rouvrir là où on était plutôt que toujours sur le même.
+let lastDebugSubTab = "health";
+const DEBUG_SUBTABS = ["health", "logs", "server-logs", "dbaudit"];
+const viewTitles = { home: "Accueil", chargers: "Bornes", vehicles: "Véhicules", tariffs: "Abo. électrique", history: "Historique", health: "État de santé", logs: "Logs OCPP", "server-logs": "Logs serveur", dbaudit: "Base de données" };
 const viewLoaded = {};
 function switchView(name) {
   // Garde : on redirige vers l'accueil si la vue est interdite au user
+  if (name === "debug") name = lastDebugSubTab;
+  if (name === "health" && !debugToolsVisible()) name = "home";
   if (name === "logs" && !debugToolsVisible()) name = "home";
   if (name === "server-logs" && !debugToolsVisible()) name = "home";
   if (name === "tariffs" && !hasPerm("can_manage_tariffs")) name = "home";
   if (name === "dbaudit" && !debugToolsVisible()) name = "home";
+  if (DEBUG_SUBTABS.includes(name)) { lastDebugSubTab = name; loadHealthBanner(); }
   currentView = name;
   document.querySelectorAll(".view").forEach(v => v.classList.remove("active"));
   document.getElementById("view-" + name).classList.add("active");
-  document.querySelectorAll(".navitem[data-nav]").forEach(b => b.classList.toggle("active", b.dataset.nav === name));
+  document.querySelectorAll(".navitem[data-nav], .debug-subtab[data-nav]").forEach(b => {
+    const isDebugNavItem = b.dataset.nav === "debug" && DEBUG_SUBTABS.includes(name);
+    b.classList.toggle("active", b.dataset.nav === name || isDebugNavItem);
+  });
   document.getElementById("view-title").textContent = viewTitles[name];
   const td = document.getElementById("view-title-desktop"); if (td) td.textContent = viewTitles[name];
   if (name !== "logs") stopLogsPolling();
   if (name !== "server-logs") stopServerLogsPolling();
-  const loaders = { home: loadHome, chargers: loadChargers, vehicles: loadVehicles, tariffs: loadTariffs, history: () => { populateVehicleFilter(); loadHistory(); }, logs: initLogsView, "server-logs": initServerLogsView, dbaudit: initDbAuditView };
+  const loaders = { home: loadHome, chargers: loadChargers, vehicles: loadVehicles, tariffs: loadTariffs, history: () => { populateVehicleFilter(); loadHistory(); }, health: () => {}, logs: initLogsView, "server-logs": initServerLogsView, dbaudit: initDbAuditView };
   if (name === "home" || name === "chargers") loaders[name]();
   else if (name === "logs" || name === "server-logs") loaders[name]();
   else if (!viewLoaded[name]) { loaders[name](); viewLoaded[name] = true; }
@@ -1053,8 +1107,60 @@ function switchView(name) {
   else if (name === "history") { populateVehicleFilter(); loadHistory(); }
   else if (name === "dbaudit") { viewLoaded[name] = false; initDbAuditView(); viewLoaded[name] = true; }
 }
+
+/* Page "État de santé" de l'onglet Débug (voir GET /api/diagnostics/health) :
+   les anomalies (warn/danger) ressortent en cartes cliquables, les
+   indicateurs sans souci se replient dans une simple liste de puces pour ne
+   pas noyer l'œil. Dupliqué identique dans les 4 sous-onglets Débug (chacun
+   est une section indépendante, cf. plus haut), rendu recalculé à chaque
+   fois depuis la même donnée (healthData). */
+let healthData = null;
+async function loadHealthBanner() {
+  const containers = document.querySelectorAll(".health-banner");
+  if (!containers.length) return;
+  try {
+    healthData = await fetch("api/diagnostics/health", { headers: authHeaders() }).then(r => r.json());
+  } catch { healthData = null; }
+  containers.forEach(renderHealthBannerInto);
+}
+function renderHealthBannerInto(container) {
+  if (!healthData) { container.innerHTML = `<div class="tiny muted">État de santé indisponible.</div>`; return; }
+  const issues = healthData.filter(h => h.severity !== "ok");
+  const okOnes = healthData.filter(h => h.severity === "ok");
+  let html = "";
+  if (!issues.length) {
+    html += `<div class="cluster center" style="gap:.5rem"><span style="width:10px;height:10px;border-radius:50%;background:var(--ok);display:inline-block;flex:none"></span><b>Aucune anomalie</b><span class="tiny muted">sur ${healthData.length} indicateurs</span></div>`;
+  } else {
+    const dotColor = issues.some(h => h.severity === "danger") ? "var(--danger)" : "var(--warn)";
+    html += `<div class="cluster center" style="gap:.5rem;margin-bottom:1rem"><span style="width:10px;height:10px;border-radius:50%;background:${dotColor};display:inline-block;flex:none"></span><b>${issues.length} point${issues.length > 1 ? "s" : ""} à surveiller</b><span class="tiny muted">sur ${healthData.length} indicateurs</span></div>`;
+    html += `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:.6rem;margin-bottom:1rem">` +
+      issues.map(h => {
+        const detail = h.key === "connecteur_bloque_echec_demarrage"
+          ? h.items.slice(0, 6).map(it =>
+              `${esc(it.charger_name)} · conn. ${it.connector_id} · depuis ${it.since_min} min ` +
+              `<button class="linkbtn" onclick="event.stopPropagation(); triggerChargerReset('${esc(it.charger_id)}', false)">Redémarrer la borne</button>`
+            ).join("<br>")
+          : h.items.slice(0, 6).map(it => esc(Object.values(it).filter(v => v !== null && v !== undefined).join(" · "))).join("<br>");
+        return `<div class="health-card ${h.severity === "danger" ? "danger" : "warn"}" onclick="this.classList.toggle('open')">
+          <div class="cluster center" style="justify-content:space-between;gap:.5rem">
+            <span class="tiny muted">${esc(h.label)}</span>
+            <b style="font-size:1.25rem">${h.count}</b>
+          </div>
+          ${detail ? `<div class="health-card-detail">${detail}</div>` : ""}
+        </div>`;
+      }).join("") +
+      `</div>`;
+  }
+  if (okOnes.length) {
+    html += `<div style="border-top:1px solid var(--border);padding-top:.7rem">
+      <div class="tiny muted" style="margin-bottom:.5rem">${okOnes.length} autre${okOnes.length > 1 ? "s" : ""} indicateur${okOnes.length > 1 ? "s" : ""}, rien à signaler</div>
+      <div class="cluster" style="gap:.4rem;flex-wrap:wrap">${okOnes.map(h => `<span class="badge ok" style="cursor:default">${esc(h.label)}</span>`).join("")}</div>
+    </div>`;
+  }
+  container.innerHTML = html;
+}
 function refreshCurrentView() {
-  const loaders = { home: loadHome, chargers: loadChargers, vehicles: loadVehicles, tariffs: loadTariffs, history: loadHistory, logs: () => loadLogs(true), "server-logs": () => loadServerLogs(true), dbaudit: () => loadDbTableRows(dbAuditState.page) };
+  const loaders = { home: loadHome, chargers: loadChargers, vehicles: loadVehicles, tariffs: loadTariffs, history: loadHistory, health: loadHealthBanner, logs: () => loadLogs(true), "server-logs": () => loadServerLogs(true), dbaudit: () => loadDbTableRows(dbAuditState.page) };
   (loaders[currentView] || (() => {}))();
   toast("Rafraîchi", "ok");
 }
@@ -1128,13 +1234,20 @@ async function renderHomeCurrent(active, chargers, condByCharger) {
   const el = document.getElementById("home-current");
   if (!active.length) { el.innerHTML = `<div class="card"><div class="empty">Aucune charge en cours.</div></div>`; return; }
   const vehicles = await fetch("api/vehicles", { headers: authHeaders() }).then(r => r.json());
-  // Statuts connecteurs pour repérer un délestage (SuspendedEVSE / SuspendedEV).
+  // Statuts connecteurs pour repérer un délestage (SuspendedEVSE / SuspendedEV),
+  // et historique de puissance pour le graphique d'occupation (même endpoint
+  // que le détail connecteur, cf. renderOccupancyChart), plus accessible ici
+  // pendant une charge en cours que niché dans Bornes -> Détails.
   const statusMap = {};
+  const powerHistoryMap = {};
   await Promise.all(active.map(async s => {
     if (!s.charger_id) return;
     const conns = await fetch(`api/chargers/${s.charger_id}/connectors`, { headers: authHeaders() }).then(r => r.json()).catch(() => []);
     const c = conns.find(x => x.connector_id === s.connector_id);
     if (c) statusMap[`${s.charger_id}:${s.connector_id}`] = c.status;
+    if (!s.deferred_until) {
+      powerHistoryMap[s.id] = await fetch(`api/chargers/${s.charger_id}/sessions/${s.id}/power-history`, { headers: authHeaders() }).then(r => r.json()).catch(() => null);
+    }
   }));
 
   el.innerHTML = active.map(s => {
@@ -1193,6 +1306,7 @@ async function renderHomeCurrent(active, chargers, condByCharger) {
             <span><b>${eur(s.cost)}</b></span>
             ${recharge}
           </div>
+          ${powerHistoryMap[s.id] && powerHistoryMap[s.id].points.length >= 2 ? renderOccupancyChart(powerHistoryMap[s.id]) : ""}
         </div>
         ${stopBtn}
       </div>
@@ -1308,7 +1422,7 @@ function renderHomeLast(s) {
     ? `<span>Recharge <b>${s.battery_recharge_percent}%</b>${s.battery_percent_end_est != null ? ` → ~<b>${s.battery_percent_end_est}%</b>` : ""}</span>` : "";
   const head = `<div class="spread">
       <div>
-        <b>${esc(s.charger_display_name || s.charger_id || s.location_label || "Externe")}${s.connector_id != null ? ` · Conn. ${s.connector_id}` : ""}</b>${s.vehicle_name ? ` <span class="badge accent">${esc(s.vehicle_name)}</span>` : ""}${s.is_external ? ` <span class="badge ext"><svg style="width:.85em;height:.85em"><use href="#i-ext"/></svg> externe</span>` : ""}
+        <b>${esc(s.charger_display_name || s.charger_id || s.location_label || "Externe")}${s.connector_id != null ? ` · Conn. ${s.connector_id}` : ""}</b>${s.vehicle_name ? ` <span class="badge accent">${esc(s.vehicle_name)}</span>` : ""}${s.vehicle_deleted ? ` <span class="badge off" title="Ce véhicule a été supprimé définitivement">véhicule supprimé</span>` : ""}${s.is_external ? ` <span class="badge ext"><svg style="width:.85em;height:.85em"><use href="#i-ext"/></svg> externe</span>` : ""}${s.charger_deleted ? ` <span class="badge off" title="Cette borne a été supprimée définitivement">borne supprimée</span>` : ""}
         <div class="metrics">
           <span>${formatDateTime(s.start_time)} → ${formatDateTime(s.stop_time)}</span>
           <span><b>${formatDuration(s.duration_min)}</b></span>
@@ -1401,7 +1515,7 @@ async function loadChargers() {
           </div>
           <div class="cluster center" style="gap:.3rem">
             <button class="btn btn-icon btn-ghost" title="Fiche & statistiques" onclick="openChargerStatsModal('${esc(c.id)}')"><svg><use href="#i-info"/></svg></button>
-            ${hasPerm("can_manage_chargers") ? `<button class="btn btn-icon btn-ghost" title="Renommer" onclick="openRenameChargerModal('${esc(c.id)}', '${esc(c.display_name || "")}')"><svg><use href="#i-edit"/></svg></button>` : ""}
+            ${hasPerm("can_manage_chargers") ? `<button class="btn btn-icon btn-ghost" title="Réglages" onclick="openChargerConfigModal('${esc(c.id)}')"><svg><use href="#i-edit"/></svg></button>` : ""}
           </div>
         </div>
       </div>`;
@@ -1433,7 +1547,6 @@ async function loadChargers() {
         <div class="cluster center" style="gap:.3rem">
           <button class="btn btn-icon btn-ghost" title="Fiche & statistiques" onclick="openChargerStatsModal('${esc(c.id)}')"><svg><use href="#i-info"/></svg></button>
           ${hasPerm("can_manage_chargers") ? `<button class="btn btn-icon btn-ghost" title="Configuration" onclick="openChargerConfigModal('${esc(c.id)}')"><svg><use href="#i-cog"/></svg></button>` : ""}
-          ${isAdmin() ? `<button class="btn btn-icon btn-ghost" title="Désactiver" onclick="deleteCharger('${esc(c.id)}')"><svg style="color:var(--danger)"><use href="#i-trash"/></svg></button>` : ""}
         </div>
       </div>
     </div>`;
@@ -1442,18 +1555,36 @@ async function loadChargers() {
 async function deleteCharger(id) {
   if (!confirm(`Désactiver la borne « ${id} » ?\n\nElle apparaîtra grisée dans la liste (son historique est conservé) et ne sera plus pilotable. Si elle se reconnecte physiquement, elle est réactivée automatiquement.`)) return;
   const { ok } = await apiCall(`api/chargers/${id}`, { method: "DELETE", headers: authHeaders() }, "Borne désactivée");
-  if (ok) { loadChargers(); }
+  if (ok) { closeModal(); loadChargers(); }
 }
-async function openRenameChargerModal(id, currentName) {
-  openModalConnector = null;
-  const html = `<div class="modal-head"><h2>Renommer la borne</h2>
+async function hardDeleteCharger(id, label) {
+  if (!confirm(`Supprimer DÉFINITIVEMENT la borne « ${label} » ?\n\nSes sessions de charge sont conservées dans l'historique et restent associées à leur véhicule, avec le nom de la borne encore visible (marquée « borne supprimée »). Cette action est irréversible : la borne elle-même disparaît, y compris sa configuration OCPP enregistrée.`)) return;
+  const { ok } = await apiCall(`api/chargers/${id}/permanent`, { method: "DELETE", headers: authHeaders() }, "Borne supprimée définitivement");
+  if (ok) { closeModal(); loadChargers(); }
+}
+function renderDeactivatedChargerModal(charger) {
+  return `<div class="modal-head"><h2><svg style="width:1.1em;height:1.1em;vertical-align:-.15em"><use href="#i-cog"/></svg> ${esc(chargerLabel(charger))} <span class="tiny muted">(désactivée)</span></h2>
     <button class="btn btn-icon btn-ghost" onclick="closeModal()"><svg><use href="#i-close"/></svg></button></div>
-    <p class="small muted" style="margin:0 0 .8rem">Cette borne est désactivée : seul son nom d'affichage peut être modifié. Elle redevient pleinement pilotable automatiquement si elle se reconnecte physiquement.</p>
-    <div class="cluster">
-      <label class="field" style="flex:1; min-width:200px"><span>Nom d'affichage</span><input id="rename-charger-input" value="${esc(currentName || "")}"></label>
-      <button class="btn btn-primary" onclick="saveRenameCharger('${esc(id)}')">Enregistrer</button>
-    </div>`;
-  openModal(html);
+    <p class="small muted" style="margin:0 0 .8rem">Cette borne est désactivée : elle n'est plus pilotable et son historique de charge est conservé. Elle redevient active automatiquement si elle se reconnecte physiquement ; en attendant, seul son nom d'affichage peut encore être modifié ici.</p>
+    <div class="card" style="margin-bottom:.7rem">
+      <label class="field"><span>Nom d'affichage</span>
+        <input id="rename-charger-input" value="${esc(charger.display_name || "")}" placeholder="${esc(charger.id)}">
+      </label>
+      <div class="cluster" style="margin-top:.6rem; justify-content:flex-end">
+        <button class="btn btn-primary" onclick="saveRenameCharger('${esc(charger.id)}')">Enregistrer</button>
+      </div>
+    </div>
+    ${isAdmin() ? `
+    <div class="section-title" style="color:var(--danger)">Zone de danger</div>
+    <div class="card" style="border-left:3px solid var(--danger)">
+      <div class="spread" style="align-items:center">
+        <div>
+          <b>Supprimer définitivement</b>
+          <div class="tiny muted">Ses sessions de charge restent dans l'historique (nom de la borne conservé), mais la borne elle-même et sa configuration OCPP disparaissent. Irréversible.</div>
+        </div>
+        <button class="btn btn-sm btn-danger" onclick="hardDeleteCharger('${esc(charger.id)}', '${esc(chargerLabel(charger))}')">Supprimer</button>
+      </div>
+    </div>` : ""}`;
 }
 async function saveRenameCharger(id) {
   const name = document.getElementById("rename-charger-input").value.trim();
@@ -1468,8 +1599,14 @@ async function openChargerConfigModal(id, activeTab) {
   activeTab = activeTab || "settings";
   openModalConnector = null;
   openModal(`<div class="empty">Chargement…</div>`);
-  const [charger, tariffs, conditions, connectors] = await Promise.all([
-    fetch(`api/chargers/${id}`, { headers: authHeaders() }).then(r => r.json()),
+  const charger = await fetch(`api/chargers/${id}`, { headers: authHeaders() }).then(r => r.json());
+  // Borne désactivée : la plupart des réglages (mode, tarif, programmation…)
+  // sont bloqués côté serveur (_require_active_charger) tant qu'elle n'est
+  // pas réactivée (automatique, à sa reconnexion physique). On affiche donc
+  // une modale réduite, plutôt qu'un formulaire complet dont la sauvegarde
+  // échouerait en partie.
+  if (!charger.active) { openModal(renderDeactivatedChargerModal(charger)); return; }
+  const [tariffs, conditions, connectors] = await Promise.all([
     fetch(`api/tariffs`, { headers: authHeaders() }).then(r => r.json()),
     fetch(`api/chargers/${id}/conditions`, { headers: authHeaders() }).then(r => r.json()),
     fetch(`api/chargers/${id}/connectors`, { headers: authHeaders() }).then(r => r.json()).then(a => a.filter(c => c.connector_id !== 0)).catch(() => []),
@@ -1591,6 +1728,30 @@ async function openChargerConfigModal(id, activeTab) {
         ${isLocal && !scheduleBlocked ? `<button class="btn btn-sm st-action" onclick="openConditionModal('${id}')"><svg><use href="#i-plus"/></svg>Ajouter</button>` : ""}
       </div>
       ${scheduleSection}
+
+      ${isAdmin() && isLocal ? `
+      <div class="section-title">Maintenance</div>
+      <div class="card" style="border-left:3px solid var(--warn); margin-bottom:.2rem">
+        <div class="spread" style="align-items:center">
+          <div>
+            <b>Redémarrer la borne</b>
+            <div class="tiny muted">Redémarrage logiciel à distance (Reset OCPP). La borne se déconnecte puis se reconnecte d'elle-même en général en moins d'une minute. Utile si elle reste bloquée (ex. connecteur figé en Preparing) ou pour appliquer une clé de configuration en attente.</div>
+          </div>
+          <button class="btn btn-sm" ${charger.connected ? "" : `disabled title="Borne hors ligne : impossible de lui envoyer la commande"`} onclick="triggerChargerReset('${id}')"><svg><use href="#i-refresh"/></svg>Redémarrer</button>
+        </div>
+      </div>` : ""}
+
+      ${isAdmin() ? `
+      <div class="section-title">Zone de danger</div>
+      <div class="card" style="border-left:3px solid var(--danger)">
+        <div class="spread" style="align-items:center">
+          <div>
+            <b>Désactiver cette borne</b>
+            <div class="tiny muted">Réversible. Reste visible (grisée), son historique est conservé. Se réactive automatiquement si elle se reconnecte physiquement.</div>
+          </div>
+          <button class="btn btn-sm btn-danger" onclick="deleteCharger('${id}')">Désactiver</button>
+        </div>
+      </div>` : ""}
     </div>
 
     <div style="${activeTab === "ocpp" ? "" : "display:none"}">
@@ -1779,6 +1940,15 @@ async function saveOcppKey(chargerId, key, inputId) {
 }
 
 async function triggerChargerReset(chargerId, hasActiveCharge) {
+  // Vérifie l'état réel des connecteurs plutôt que de se fier à l'appelant
+  // seul (la carte État de santé, par exemple, ne connaît pas les autres
+  // connecteurs de la borne). En cas d'échec de lecture, on garde la valeur
+  // fournie.
+  try {
+    const conns = await fetch(`api/chargers/${chargerId}/connectors`, { headers: authHeaders() }).then(r => r.json());
+    if (Array.isArray(conns)) hasActiveCharge = hasActiveCharge || conns.some(c =>
+      c.connector_id !== 0 && ["Charging", "SuspendedEV", "SuspendedEVSE"].includes(c.status));
+  } catch (e) { /* on garde hasActiveCharge tel quel */ }
   const msg = hasActiveCharge
     ? "Cette borne a une charge en cours : un redémarrage risque de l'interrompre. Redémarrer quand même ?"
     : "Redémarrer cette borne maintenant ? (redémarrage logiciel OCPP, la borne va se déconnecter puis se reconnecter)";
@@ -2006,7 +2176,7 @@ function renderChargerSessionsTable(sessions) {
   const rows = sessions.map(s => `<tr>
     <td>${formatDateTime(s.start_time)}</td>
     <td>${s.connector_id ?? "–"}</td>
-    <td>${esc(s.vehicle_name || "–")}</td>
+    <td>${esc(s.vehicle_name || "–")}${s.vehicle_deleted ? ' <span class="badge off" style="padding:.05rem .35rem">suppr.</span>' : ""}</td>
     <td>${formatDuration(s.duration_min)}</td>
     <td>${kWh(s.energy_wh)}</td>
     <td>${kW(s.power_max_w)}</td>
@@ -2022,7 +2192,7 @@ function renderChargerSessionsTable(sessions) {
 function renderSessionsTable(sessions, withVehicle) {
   const rows = sessions.map(s => `<tr>
     <td>${formatDateTime(s.start_time)}</td>
-    ${withVehicle ? `<td>${esc(s.charger_display_name || s.charger_id || s.location_label || "Externe")}${s.is_external ? ' <span class="badge ext" style="padding:.05rem .35rem">ext</span>' : ""}</td>` : ""}
+    ${withVehicle ? `<td>${esc(s.charger_display_name || s.charger_id || s.location_label || "Externe")}${s.is_external ? ' <span class="badge ext" style="padding:.05rem .35rem">ext</span>' : ""}${s.charger_deleted ? ' <span class="badge off" style="padding:.05rem .35rem">suppr.</span>' : ""}</td>` : ""}
     <td>${kWh(s.energy_wh)}</td>
     <td>${eur(s.cost)}</td>
     <td>${num(s.km_since_last, " km")}</td>
@@ -2035,64 +2205,131 @@ function renderSessionsTable(sessions, withVehicle) {
 }
 
 /* ========================= VÉHICULES ========================= */
-let cachedVehicles = [], editingVehicle = null;
-async function loadVehicles() { cachedVehicles = await fetch("api/vehicles", { headers: authHeaders() }).then(r => r.json()); renderVehicles(); }
+let cachedVehicles = [];
+async function loadVehicles() {
+  const [vehicles, chargers] = await Promise.all([
+    fetch("api/vehicles", { headers: authHeaders() }).then(r => r.json()),
+    fetch("api/chargers", { headers: authHeaders() }).then(r => r.json()),
+  ]);
+  cachedVehicles = vehicles;
+  cachedChargers = chargers;
+  renderVehicleChargerCheckboxes("veh-chargers-list", "veh-chr", chargers, new Set());
+  renderVehicles();
+}
+function renderVehicleChargerCheckboxes(containerId, cls, chargers, checkedIds) {
+  const el = document.getElementById(containerId);
+  if (!el) return;
+  el.innerHTML = chargers.length
+    ? chargers.map(c => `<label class="tiny cluster center" style="gap:.25rem"><input type="checkbox" class="${cls}" value="${esc(c.id)}" ${checkedIds.has(c.id) ? "checked" : ""}> ${esc(c.display_name || c.id)}${c.active ? "" : " (désactivée)"}</label>`).join("")
+    : `<span class="tiny muted">Aucune borne connue</span>`;
+}
 function renderVehicles() {
   const tb = document.querySelector("#vehicles-table tbody");
-  if (!cachedVehicles.length) { tb.innerHTML = `<tr><td colspan="5"><span class="empty">Aucun véhicule pour l'instant.</span></td></tr>`; return; }
-  tb.innerHTML = cachedVehicles.map(v => editingVehicle === v.id ? `
-    <tr>
-      <td data-label="Nom"><input id="ev-name-${v.id}" value="${esc(v.name)}"></td>
-      <td data-label="idTag"><input id="ev-tag-${v.id}" value="${esc(v.id_tag || "")}"></td>
-      <td data-label="Capacité batt."><input id="ev-bat-${v.id}" type="number" step="0.1" value="${v.battery_capacity_kwh ?? ""}" style="width:90px"></td>
-      <td></td>
-      <td><span class="cell-actions"><button class="linkbtn" onclick="saveVehicleEdit(${v.id})">Enregistrer</button><button class="linkbtn" onclick="editingVehicle=null; renderVehicles()">Annuler</button></span></td>
-    </tr>` : `
+  if (!cachedVehicles.length) { tb.innerHTML = `<tr><td colspan="8"><span class="empty">Aucun véhicule pour l'instant.</span></td></tr>`; return; }
+  tb.innerHTML = cachedVehicles.map(v => {
+    const st = v.stats || {};
+    return `
     <tr${v.active ? "" : ` style="opacity:.55"`}>
       <td data-label="Nom"><b>${esc(v.name)}</b>${v.active ? "" : ` <span class="tiny muted">(désactivé)</span>`}</td>
       <td data-label="idTag">${v.id_tag ? esc(v.id_tag) : "–"}</td>
       <td data-label="Capacité batt.">${v.battery_capacity_kwh != null ? v.battery_capacity_kwh + " kWh" : "–"}</td>
-      <td data-label="Charges"><button class="linkbtn" onclick="openVehicleStatsModal(${v.id})">Voir la fiche</button></td>
-      <td><span class="cell-actions">${vehicleActionButtons(v)}</span></td>
-    </tr>`).join("");
-}
-function vehicleActionButtons(v) {
-  if (!hasPerm("can_manage_vehicles")) return "";
-  if (v.active) {
-    return `<button class="linkbtn" onclick="editingVehicle=${v.id}; renderVehicles()">Modifier</button><button class="linkbtn" onclick="deactivateVehicle(${v.id})">Désactiver</button>`;
-  }
-  return `<button class="linkbtn" onclick="editingVehicle=${v.id}; renderVehicles()">Modifier</button><button class="linkbtn" onclick="reactivateVehicle(${v.id})">Réactiver</button><button class="linkbtn danger" onclick="hardDeleteVehicle(${v.id}, '${esc(v.name)}')">Supprimer définitivement</button>`;
+      <td data-label="Total kWh">${st.total_energy_kwh != null ? st.total_energy_kwh : "–"}</td>
+      <td data-label="Total €">${st.total_cost != null ? st.total_cost.toFixed(2) + " €" : "–"}</td>
+      <td data-label="€/km">${st.avg_cost_per_km != null ? st.avg_cost_per_km.toFixed(3) + " €" : "–"}</td>
+      <td data-label="km/kWh">${st.km_per_kwh_capacity != null ? st.km_per_kwh_capacity : "–"}</td>
+      <td><span class="cluster center" style="gap:.2rem">
+        <button class="btn btn-icon btn-ghost" title="Fiche & statistiques" onclick="openVehicleStatsModal(${v.id})"><svg><use href="#i-info"/></svg></button>
+        ${hasPerm("can_manage_vehicles") ? `<button class="btn btn-icon btn-ghost" title="Modifier" onclick="openVehicleEditModal(${v.id})"><svg><use href="#i-edit"/></svg></button>` : ""}
+      </span></td>
+    </tr>`;
+  }).join("");
 }
 async function createVehicle() {
   const name = document.getElementById("veh-name").value.trim();
   if (!name) { toast("Nom requis", "err"); return; }
   const bat = document.getElementById("veh-battery").value;
+  const charger_ids = Array.from(document.querySelectorAll(".veh-chr:checked")).map(e => e.value);
   const { ok } = await apiCall("api/vehicles", { method: "POST", headers: jsonHeaders(), body: JSON.stringify({
-    name, id_tag: document.getElementById("veh-idtag").value.trim() || null, battery_capacity_kwh: bat ? parseFloat(bat) : null }) }, "Véhicule ajouté");
-  if (ok) { ["veh-name", "veh-idtag", "veh-battery"].forEach(i => document.getElementById(i).value = ""); loadVehicles(); }
+    name, id_tag: document.getElementById("veh-idtag").value.trim() || null, battery_capacity_kwh: bat ? parseFloat(bat) : null, charger_ids }) }, "Véhicule ajouté");
+  if (ok) {
+    ["veh-name", "veh-idtag", "veh-battery"].forEach(i => document.getElementById(i).value = "");
+    document.querySelectorAll(".veh-chr:checked").forEach(e => e.checked = false);
+    loadVehicles();
+  }
+}
+async function openVehicleEditModal(id) {
+  const v = cachedVehicles.find(x => x.id === id);
+  if (!v) return;
+  openModalConnector = null;
+  const chargers = cachedChargers && cachedChargers.length ? cachedChargers : await fetch("api/chargers", { headers: authHeaders() }).then(r => r.json());
+  const cids = new Set(v.charger_ids || []);
+  let html = `<div class="modal-head"><h2>Modifier ${esc(v.name)}</h2>
+    <button class="btn btn-icon btn-ghost" onclick="closeModal()"><svg><use href="#i-close"/></svg></button></div>
+    <div class="cluster">
+      <label class="field" style="flex:1; min-width:160px"><span>Nom</span><input id="ev-name" value="${esc(v.name)}"></label>
+      <label class="field"><span>idTag associé</span><input id="ev-tag" value="${esc(v.id_tag || "")}"></label>
+      <label class="field"><span>Capacité batterie (kWh)</span><input id="ev-bat" type="number" step="0.1" value="${v.battery_capacity_kwh ?? ""}" style="width:140px"></label>
+    </div>
+    <div class="section-title">Bornes associées</div>
+    <div class="tiny muted" style="margin:-.4rem 0 .4rem">Détermine sur quelles bornes ce véhicule est autorisé à charger (liste d'autorisation locale poussée sur la borne).</div>
+    <div class="cluster" style="gap:.4rem; flex-wrap:wrap" id="ev-chargers-list">${chargers.length ? chargers.map(c => `<label class="tiny cluster center" style="gap:.25rem"><input type="checkbox" class="ev-chr" value="${esc(c.id)}" ${cids.has(c.id) ? "checked" : ""}> ${esc(c.display_name || c.id)}${c.active ? "" : " (désactivée)"}</label>`).join("") : `<span class="tiny muted">Aucune borne connue</span>`}</div>
+    <div class="cluster" style="margin-top:.8rem"><button class="btn btn-primary btn-sm" onclick="saveVehicleEdit(${v.id})">Enregistrer</button></div>`;
+
+  if (hasPerm("can_manage_vehicles")) {
+    html += `<div class="section-title" style="color:var(--danger)">Zone de danger</div>`;
+    if (v.active) {
+      html += `<div class="card" style="border-left:3px solid var(--danger)">
+        <div class="spread">
+          <div><b>Désactiver ce véhicule</b><div class="tiny muted">Réversible. Reste visible (grisé), son historique est conservé. Aucune nouvelle charge ne pourra lui être associée tant qu'il n'est pas réactivé.</div></div>
+          <button class="btn btn-sm btn-danger" onclick="deactivateVehicle(${v.id})">Désactiver</button>
+        </div>
+      </div>`;
+    } else {
+      html += `<div class="card" style="border-left:3px solid var(--warn); margin-bottom:.6rem">
+        <div class="spread">
+          <div><b>Réactiver ce véhicule</b></div>
+          <button class="btn btn-sm" onclick="reactivateVehicle(${v.id})">Réactiver</button>
+        </div>
+      </div>
+      <div class="card" style="border-left:3px solid var(--danger)">
+        <div class="spread">
+          <div><b>Supprimer définitivement</b><div class="tiny muted">Ses sessions sur une borne encore présente dans l'app restent dans l'historique de cette borne (nom du véhicule conservé). Les autres (charges externes, borne déjà supprimée) sont, elles, effacées. Irréversible.</div></div>
+          <button class="btn btn-sm btn-danger" onclick="hardDeleteVehicle(${v.id}, '${esc(v.name)}')">Supprimer</button>
+        </div>
+      </div>`;
+    }
+  }
+  openModal(html);
 }
 async function saveVehicleEdit(id) {
-  const name = document.getElementById(`ev-name-${id}`).value.trim();
+  const name = document.getElementById("ev-name").value.trim();
   if (!name) { toast("Nom requis", "err"); return; }
-  const bat = document.getElementById(`ev-bat-${id}`).value;
+  const bat = document.getElementById("ev-bat").value;
+  const charger_ids = Array.from(document.querySelectorAll(".ev-chr:checked")).map(e => e.value);
   const { ok } = await apiCall(`api/vehicles/${id}`, { method: "PUT", headers: jsonHeaders(), body: JSON.stringify({
-    name, id_tag: document.getElementById(`ev-tag-${id}`).value.trim() || null, battery_capacity_kwh: bat ? parseFloat(bat) : null }) }, "Enregistré");
-  if (ok) { editingVehicle = null; loadVehicles(); }
+    name, id_tag: document.getElementById("ev-tag").value.trim() || null, battery_capacity_kwh: bat ? parseFloat(bat) : null, charger_ids }) }, "Enregistré");
+  if (ok) { closeModal(); loadVehicles(); }
 }
 async function deactivateVehicle(id) {
   if (!confirm("Désactiver ce véhicule ?\n\nIl restera visible (grisé) et son historique est conservé. Aucune nouvelle charge ne pourra lui être associée tant qu'il n'est pas réactivé. Vous pourrez le réactiver à tout moment.")) return;
   const { ok } = await apiCall(`api/vehicles/${id}`, { method: "DELETE", headers: authHeaders() }, "Véhicule désactivé");
-  if (ok) loadVehicles();
+  if (ok) { closeModal(); loadVehicles(); }
 }
 async function reactivateVehicle(id) {
   const { ok } = await apiCall(`api/vehicles/${id}/reactivate`, { method: "POST", headers: authHeaders() }, "Véhicule réactivé");
-  if (ok) loadVehicles();
+  if (ok) { closeModal(); loadVehicles(); }
 }
 async function hardDeleteVehicle(id, name) {
-  if (!confirm(`Supprimer DÉFINITIVEMENT le véhicule « ${name} » ?\n\nToutes ses sessions de charge seront aussi supprimées de l'historique. Cette action est irréversible.`)) return;
-  if (!confirm("Confirmation finale : la voiture ET tout son historique de charge seront perdus pour toujours. Continuer ?")) return;
+  if (!confirm(`Supprimer DÉFINITIVEMENT le véhicule « ${name} » ?\n\nSes sessions faites sur une borne encore présente dans l'app resteront dans l'historique de cette borne (nom du véhicule conservé, marqué « véhicule supprimé »). Les autres sessions (charges externes, ou sur une borne déjà supprimée définitivement) seront, elles, réellement effacées. Cette action est irréversible.`)) return;
+  if (!confirm("Confirmation finale : le véhicule sera définitivement supprimé. Continuer ?")) return;
   const { ok, data } = await apiCall(`api/vehicles/${id}/permanent`, { method: "DELETE", headers: authHeaders() }, "Véhicule supprimé définitivement");
-  if (ok) { toast(`${data?.deleted_sessions ?? 0} session(s) de charge supprimée(s) avec le véhicule`, "ok"); loadVehicles(); }
+  if (ok) {
+    const parts = [];
+    if (data?.deleted_sessions) parts.push(`${data.deleted_sessions} session(s) effacée(s)`);
+    if (data?.kept_sessions) parts.push(`${data.kept_sessions} conservée(s) côté borne`);
+    toast(parts.length ? parts.join(", ") : "Véhicule supprimé", "ok");
+    closeModal(); loadVehicles();
+  }
 }
 async function openVehicleStatsModal(vehicleId) {
   openModalConnector = null;
@@ -2246,12 +2483,14 @@ function renderHistory() {
     const dur = formatDuration(s.duration_min);
     const bornCell = s.is_external
       ? `${esc(s.location_label || "Externe")} <span class="badge ext" style="padding:.05rem .35rem">ext</span>`
+      : s.charger_deleted
+      ? `${esc(s.charger_display_name)} <span class="badge off" style="padding:.05rem .35rem" title="Borne supprimée définitivement">suppr.</span>`
       : esc(s.charger_display_name || s.charger_id || "–");
     const est = s.battery_percent_end_est != null && s.battery_percent_end == null ? ` <span class="tiny muted">(~${s.battery_percent_end_est})</span>` : "";
       // Un user peut modifier les sessions de ses voitures ; l'admin peut tout modifier
       const canEditSession = isAdmin() || (currentUser.vehicle_ids && s.vehicle_id && currentUser.vehicle_ids.includes(s.vehicle_id));
       return `<tr>
-      <td data-label="Borne">${bornCell}</td><td data-label="Conn.">${s.connector_id ?? "–"}</td><td data-label="Véhicule">${esc(s.vehicle_name || "–")}</td>
+      <td data-label="Borne">${bornCell}</td><td data-label="Conn.">${s.connector_id ?? "–"}</td><td data-label="Véhicule">${esc(s.vehicle_name || "–")}${s.vehicle_deleted ? ' <span class="badge off" style="padding:.05rem .35rem">suppr.</span>' : ""}</td>
       <td data-label="Début">${formatDateTime(s.start_time)}</td><td data-label="Fin">${formatDateTime(s.stop_time)}</td><td data-label="Durée">${dur}</td>
       <td data-label="kWh">${kWh(s.energy_wh)}</td><td data-label="P. max">${kW(s.power_max_w)}</td><td data-label="Coût">${eur(s.cost)}</td><td data-label="Tarif">${esc(s.tariff_plan_name || "–")}</td>
       <td data-label="km">${num(s.odometer_km)}</td><td data-label="km parc.">${num(s.km_since_last)}</td><td data-label="kWh/100">${s.kwh_per_100km != null ? s.kwh_per_100km : "–"}</td>
@@ -2285,7 +2524,7 @@ async function openSessionEditModal(sessionId) {
     if (isNaN(d.getTime())) return "";
     return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
   };
-  const title = s.is_external ? "Charge externe" : `${esc(s.charger_display_name || s.charger_id || "Borne")}${s.connector_id != null ? " · Conn. " + s.connector_id : ""}`;
+  const title = s.is_external ? "Charge externe" : `${esc(s.charger_display_name || s.charger_id || "Borne")}${s.connector_id != null ? " · Conn. " + s.connector_id : ""}${s.charger_deleted ? " (supprimée)" : ""}`;
   const extBlock = s.is_external ? `
     <div class="cluster" style="margin-top:.6rem">
       <label class="field"><span>Lieu</span><input id="se-loc" value="${esc(s.location_label || "")}" style="width:160px"></label>
@@ -2410,6 +2649,14 @@ async function openSettingsModal() {
   openModalConnector = null;
   const adminOnly = isAdmin();
   const isBuiltinAdmin = currentUser.username === "admin";
+  let tzList = [];
+  if (adminOnly) {
+    try {
+      tzList = (await fetch("api/settings/timezones", { headers: authHeaders() }).then(r => r.json())).timezones || [];
+    } catch (e) { tzList = []; }
+    const curTz = currentUser.display_timezone || "Europe/Paris";
+    if (!tzList.includes(curTz)) tzList = [curTz, ...tzList];
+  }
 
   // Sections communes
   let passwordSection = `
@@ -2462,6 +2709,21 @@ async function openSettingsModal() {
       <div class="cluster">
         <button class="btn btn-sm" onclick="showInstalledPackages()">Versions des dépendances installées</button>
       </div>
+    </div>
+    <div class="card form-card" style="margin-top:.6rem">
+      <label class="field"><span>Fuseau horaire d'affichage et d'export</span>
+        <select id="set-tz" style="width:220px">
+          ${tzList.map(tz => `<option value="${esc(tz)}" ${tz === (currentUser.display_timezone || "Europe/Paris") ? "selected" : ""}>${esc(tz)}</option>`).join("")}
+        </select>
+      </label>
+      <p class="tiny muted" style="margin:.4rem 0 .6rem">S'applique à l'affichage des horodatages (Logs OCPP, Logs serveur, dates partout dans l'app) et aux exports CSV. Les données restent stockées en UTC en base, seule la présentation change.</p>
+      <button class="btn btn-sm" onclick="saveDisplayTimezone()">Enregistrer</button>
+    </div>
+    <div class="card form-card" style="margin-top:.6rem; border-left:3px solid var(--warn)">
+      <div class="spread">
+        <div><b>Redémarrer le serveur</b><div class="tiny muted">Redémarre l'add-on via Home Assistant. Les bornes se déconnectent puis se reconnectent d'elles-mêmes, l'application se recharge automatiquement quand le serveur est de retour (environ 30 s à 1 min).</div></div>
+        <button class="btn btn-sm" onclick="restartServer()"><svg><use href="#i-refresh"/></svg>Redémarrer</button>
+      </div>
     </div>`;
   }
 
@@ -2513,10 +2775,48 @@ async function toggleDebugMode(on) {
     if (cb) cb.checked = !on;
   }
 }
+async function saveDisplayTimezone() {
+  const tz = document.getElementById("set-tz").value.trim();
+  if (!tz) { toast("Fuseau horaire requis", "err"); return; }
+  const { ok } = await apiCall("api/settings/timezone", { method: "PUT", headers: jsonHeaders(), body: JSON.stringify({ timezone: tz }) }, "Fuseau horaire enregistré");
+  if (ok) currentUser.display_timezone = tz;
+}
+
+async function restartServer(force = false) {
+  if (!force && !confirm("Redémarrer le serveur maintenant ?\n\nL'application sera indisponible quelques dizaines de secondes, et les bornes vont se déconnecter puis se reconnecter.")) return;
+  const { ok, data } = await apiCall("api/server/restart", { method: "POST", headers: jsonHeaders(), body: JSON.stringify({ force }) });
+  if (!ok) return;
+  if (data && data.status === "confirm_required") {
+    const n = data.active_transactions;
+    if (confirm(`${n} charge${n > 1 ? "s sont" : " est"} en cours. Le redémarrage du serveur ne coupe pas la charge côté borne, mais les relevés reçus pendant l'interruption peuvent être perdus. Redémarrer quand même ?`)) restartServer(true);
+    return;
+  }
+  closeModal();
+  toast("Redémarrage du serveur en cours…", "ok");
+  waitForServerAndReload();
+}
+
+async function waitForServerAndReload() {
+  // Attend d'abord que le serveur tombe (sinon on rechargerait l'ancienne
+  // instance juste avant son arrêt), puis qu'il revienne.
+  const deadline = Date.now() + 3 * 60 * 1000;
+  let wentDown = false;
+  while (Date.now() < deadline) {
+    await new Promise(r => setTimeout(r, 2500));
+    let up = false;
+    try {
+      const resp = await fetch("api/version", { cache: "no-store" });
+      up = resp.ok;
+    } catch (e) { up = false; }
+    if (!up) wentDown = true;
+    else if (wentDown) { location.reload(); return; }
+  }
+  toast(wentDown ? "Le serveur ne répond toujours pas, rechargez la page manuellement" : "Le serveur n'a pas redémarré (voir Logs serveur)", "err");
+}
 
 // Noms (en minuscule) des paquets déjà listés dans requirements.txt, pour ne
 // montrer par défaut que ceux-là plutôt que toutes les dépendances transitives.
-const REQUIREMENTS_PACKAGES = ["fastapi", "uvicorn", "sqlalchemy", "ocpp", "websockets", "pyjwt", "bcrypt", "python-multipart", "aiomqtt"];
+const REQUIREMENTS_PACKAGES = ["fastapi", "uvicorn", "sqlalchemy", "ocpp", "websockets", "pyjwt", "bcrypt", "python-multipart", "aiomqtt", "tzdata"];
 
 async function showInstalledPackages() {
   openModal(`<div class="empty">Chargement…</div>`);
@@ -2703,6 +3003,9 @@ async function downloadFile(url, fallbackFilename) {
 
 function exportOcppConfig(chargerId, displayName) {
   downloadFile(`api/chargers/${chargerId}/config/export`, `config-ocpp-${displayName || chargerId}.csv`);
+}
+function exportDump() {
+  downloadFile("api/diagnostics/dump", "dump-diagnostic.zip");
 }
 
 function exportDbTableCsv() {
@@ -2895,8 +3198,18 @@ function formatLogTime(iso) {
   const hasTz = /Z|[+-]\d{2}:\d{2}$/.test(iso);
   const d = new Date(hasTz ? iso : iso + "Z");
   if (isNaN(d.getTime())) return iso;
-  const p = n => String(n).padStart(2, "0");
-  return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+  const tz = (currentUser && currentUser.display_timezone) || "Europe/Paris";
+  try {
+    const parts = new Intl.DateTimeFormat("fr-FR", {
+      timeZone: tz, hour: "2-digit", minute: "2-digit", second: "2-digit",
+      hour12: false, timeZoneName: "short",
+    }).formatToParts(d);
+    const get = t => (parts.find(p => p.type === t) || {}).value || "";
+    return `${get("hour")}:${get("minute")}:${get("second")} ${get("timeZoneName")}`;
+  } catch {
+    const p = n => String(n).padStart(2, "0");
+    return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+  }
 }
 function startLogsPolling() {
   stopLogsPolling();

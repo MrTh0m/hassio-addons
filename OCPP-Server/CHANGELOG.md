@@ -1,3 +1,50 @@
+## 0.19.34
+
+- **Corrigé (critique)** : après un incident de file OCPP bloquée (25-26/09), une borne Schneider a démarré une charge locale (idTag par défaut `freeCharge`) alors que le serveur avait répondu `Blocked` à l'`Authorize`/`StartTransaction` — et a continué de charger malgré ce refus. `on_start_transaction` ne créait alors **aucune** `Transaction` dans ce cas, laissant la charge tourner (courant réel compris) sans qu'aucune trace ne le signale nulle part. Une session refusée est désormais **toujours créée et suivie** normalement (nouveau champ `Transaction.unauthorized`), avec un `transaction_id` réel (jamais 0) pour que les `MeterValues`/`StopTransaction` qui suivent s'y rattachent au lieu de rester orphelins. Le serveur continue de répondre honnêtement `Blocked` à la borne, il ne ment pas sur l'autorisation, seule la visibilité change.
+- **Nouveau** : deux indicateurs État de santé dédiés à cet incident : « Charge en cours sans transaction associée (non suivie) » (filet de sécurité générique) et « Sessions démarrées avec un idTag non autorisé (24h) » (surface les sessions `unauthorized`, pour vérification : idTag à enregistrer comme véhicule, ou config de la borne à revoir).
+- **Nouveau** : liste d'autorisation locale par borne (OCPP `SendLocalList`). Un véhicule peut désormais être associé à une ou plusieurs bornes (nouvelle table `vehicle_chargers`, cases à cocher « Bornes associées » dans le formulaire véhicule, création et modification) ; la borne reçoit alors la liste des idTags autorisés à charger dessus, resynchronisée automatiquement à chaque changement d'association et à chaque reconnexion (`BootNotification`). Objectif : que la borne elle-même refuse un idTag inconnu au lieu de démarrer une charge que le serveur n'a pas validée. ⚠️ Expérimental : rien ne garantit qu'un firmware donné respecte davantage cette liste qu'il ne respecte déjà un `Blocked` explicite (constaté ci-dessus), à vérifier en conditions réelles.
+- Tests dédiés (`test_unauthorized_start.py`) : idTag inconnu toujours suivi, idTag de véhicule connu accepté, `auth_mode=free` inchangé, remontée dans le bandeau de santé, construction de la liste d'autorisation locale (véhicules associés/désactivés).
+
+## 0.19.33
+
+- **Nouveau** : bouton **Redémarrer le serveur** dans Réglages → Avancé (admin). Redémarre l'add-on via l'API Supervisor de Home Assistant, avec confirmation renforcée si une charge est en cours, puis recharge automatiquement l'application quand le serveur est de retour. Nouvel endpoint `POST /api/server/restart`. ⚠️ Nécessite la nouvelle permission `hassio_api` : la mise à jour de l'add-on la fait prendre en compte (le score de sécurité affiché par HA baisse légèrement, c'est attendu). Tests dédiés (`test_server_restart.py`).
+- **Nouveau** : réglage global du **fuseau horaire** d'affichage et d'export (Réglages → Avancé, nom de zone IANA, `Europe/Paris` par défaut). S'applique aux Logs OCPP et Logs serveur (abréviation du fuseau affichée à côté de chaque heure) et à tous les exports CSV. Les données restent stockées en UTC en base.
+- **Nouveau** : les fichiers exportés portent la date et l'heure réelles de l'export dans leur nom (ex. `logs-serveur_2026-09-25_14h30.csv`), dans le fuseau configuré, au lieu de dépendre du suffixe `(2)` ajouté par le navigateur.
+- **Nouveau** : bouton **Exporter un dump complet** (zip) dans la barre des sous-onglets Débug : logs OCPP, logs serveur, statuts connecteurs, transactions, clés de configuration, bornes et relevés de compteur récents en un seul fichier. Nouvel endpoint `GET /api/diagnostics/dump`.
+- **Nouveau** : indicateur État de santé « Connecteur bloqué en Preparing après un échec de démarrage », qui détecte précisément le blocage interne observé en prod les 18/09 et 25/09 (plus parlant qu'un simple comptage de démarrages refusés). La carte propose directement **Redémarrer la borne** en un clic pour chaque connecteur concerné.
+- **Nouveau** : bouton permanent **Redémarrer la borne** (Reset OCPP logiciel) dans la modale de configuration d'une borne, nouvelle section « Maintenance » (admin, mode local). Jusqu'ici il n'apparaissait que lorsqu'une clé de configuration attendait un redémarrage. Grisé si la borne est hors ligne.
+- **Corrigé** : la confirmation « charge en cours » avant un redémarrage de borne vérifie désormais l'état réel des connecteurs, quel que soit l'endroit d'où le redémarrage est lancé (depuis la carte État de santé, elle était toujours considérée comme absente).
+- **Amélioré** : onglet **Véhicules** aligné sur les Bornes. Le tableau affiche désormais Total kWh, Total €, €/km et km/kWh pour chaque véhicule ; les actions passent en icônes (fiche « i » + crayon), et Désactiver / Réactiver / Supprimer définitivement sont déplacés dans la modale d'édition, en zone de danger.
+- **Amélioré** : le fuseau horaire d'affichage/export se choisit maintenant dans une **liste déroulante** (toutes les zones IANA valides, nouvel endpoint `GET /api/settings/timezones`) plutôt qu'en texte libre, pour éliminer tout risque de faute de frappe.
+- **Amélioré** : sur une borne désactivée, le crayon ouvre désormais sa modale **Réglages** habituelle (réduite à son nom et à la suppression définitive, les autres réglages n'ayant pas de sens tant qu'elle n'est pas réactivée), au lieu d'une mini-modale « Renommer » à part.
+- **Amélioré** : suppression définitive d'un véhicule plus sélective. Les sessions faites sur une borne locale encore présente dans l'app (active ou désactivée) sont désormais **conservées** dans l'historique de cette borne (véhicule détaché, nom gardé en snapshot, marqué « véhicule supprimé ») au lieu d'être effacées avec le véhicule ; seules les charges externes ou liées à une borne déjà supprimée définitivement le sont encore réellement. Évite de perdre un pan de l'historique d'une borne à chaque suppression de véhicule. Tests dédiés (`test_vehicle_hard_delete_cascade.py`, `test_settings_timezones.py`).
+
+## 0.19.32
+
+- **Amélioré** : l'onglet "État de santé" devient un sous-onglet Débug à part entière (point d'entrée par défaut de Débug), avec une vraie mise en page : les anomalies ressortent en cartes cliquables (détail au clic), les indicateurs sans souci se replient en simples puces plutôt que d'encombrer l'écran. Plus de bandeau dupliqué en haut des 3 autres sous-onglets.
+- **Corrigé** : les règles CSS `.tab-btn` étaient mal placées à l'intérieur des accolades de `.linkbtn` (bug préexistant, sans impact visible constaté).
+
+## 0.19.31
+
+- **Nouveau** : bandeau "État de santé" en haut de l'onglet Débug, avec 12 indicateurs (connecteurs bloqués/en défaut, sessions fantômes, sessions à 0 kWh malgré un coût réel, sessions de durée quasi nulle, bourrasques de reconnexion réseau, coupures MQTT, erreurs serveur, anti-tripping suivi d'un défaut, démarrages refusés à répétition, clés de config en attente de redémarrage, consommation kWh/100km hors norme, bornes hors ligne). Nouvel endpoint `GET /api/diagnostics/health`.
+- Le résultat Accepted/Rejected/Blocked d'un démarrage de charge est désormais journalisé dans le journal OCPP structuré (jusque-là visible seulement dans les logs bruts), nécessaire à l'indicateur "démarrages refusés".
+
+## 0.19.30
+
+- **Corrigé** : une session fermée via le filet de sécurité (StopTransaction perdu, `meter_stop` replié sur `meter_start`) affichait 0.00 kWh alors que le coût et P. Max restaient corrects. Le calcul d'énergie totale utilise désormais la même somme de paliers croissants que le calcul de coût, au lieu d'un dernier-moins-premier sensible à ce cas.
+- **Corrigé** : le graphique d'occupation d'une session pouvait afficher un axe des temps aberrant (relevé d'une autre session ayant hérité du même `transaction_id` après réutilisation d'id SQLite). Même filtrage défensif (borne + connecteur + fenêtre temporelle) que le calcul de coût désormais appliqué à ce graphique.
+- **Nouveau** : le graphique d'occupation de l'abonnement est désormais aussi affiché directement sur **Accueil**, dans la carte "Charge en cours", en plus du détail connecteur.
+- **Nouveau** : les onglets "Logs OCPP", "Logs serveur" et "Base de données" sont regroupés dans un onglet unique **Débug** (toujours conditionné au mode débug), avec une barre de sous-onglets pour naviguer entre les trois.
+- **Corrigé** : le numéro de version n'était pas visible en affichage mobile (menu en bas d'écran). Il apparaît maintenant sous le titre de la vue, dans la barre du haut.
+
+## 0.19.29
+
+- **Corrigé** : le workflow CI publiait l'image sur `main` alors que c'est `dev` la branche réellement installée (app en bêta, peu de commits sur `main` pour l'instant). La 0.19.28 avait été buildée sans jamais être poussée sur GHCR, d'où l'échec de mise à jour ("manifest unknown"). Un push sur `dev` publie désormais réellement l'image ; `main` reste en build de validation seulement.
+
+## 0.19.28
+
+- **Nouveau** : l'add-on est désormais publié en image préconstruite multi-arch (amd64/aarch64) sur GHCR (`ghcr.io/mrth0m/ocppserver`) au lieu d'être reconstruit localement à chaque mise à jour. Les mises à jour deviennent un simple téléchargement, avec une vraie barre de progression côté Home Assistant, au lieu d'un rebuild silencieux sur le Raspberry Pi.
+
 ## 0.19.27
 
 - **Corrigé** : la durée de vie du token de connexion passe de 24h à 30 jours. Usage familial sur réseau privé, aucune raison de forcer une reconnexion quotidienne.
