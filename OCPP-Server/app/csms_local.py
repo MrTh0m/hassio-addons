@@ -1,6 +1,7 @@
 import asyncio
 import logging
-from datetime import datetime, time as dtime
+from datetime import datetime, time as dtime, timezone
+from dataclasses import dataclass
 
 from ocpp.routing import on
 from ocpp.v16 import ChargePoint as ChargePoint16
@@ -150,6 +151,38 @@ def now_iso() -> str:
     return datetime.utcnow().isoformat() + "Z"
 
 
+def _ocpp_ts(value) -> datetime:
+    """Convertit un horodatage OCPP (ISO 8601, en général suffixé par Z) en
+    datetime UTC naïf, comme tout le reste de la base. Utilisé pour les
+    champs `timestamp` de StartTransaction/StopTransaction : une borne qui
+    rejoue sa file de messages après une coupure (observé le 03/10 : un
+    StopTransaction envoyé 5 jours après l'arrêt réel) donne ainsi la vraie
+    date de l'événement, pas l'heure de réception.
+
+    Retombe sur l'heure actuelle si la valeur est absente ou illisible, et
+    borne le résultat à l'heure de réception pour qu'une horloge de borne en
+    avance ne crée jamais de date future."""
+    now = datetime.utcnow()
+    if isinstance(value, str):
+        try:
+            parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+        except ValueError:
+            return now
+    elif isinstance(value, datetime):
+        parsed = value
+    else:
+        return now
+    if parsed.tzinfo is not None:
+        parsed = parsed.astimezone(timezone.utc).replace(tzinfo=None)
+    return min(parsed, now)
+
+
+@dataclass
+class _EmptyResponse:
+    """Réponse vide ({}), pour les actions hors du profil OCPP 1.6 standard
+    pour lesquelles la bibliothèque n'a pas de classe call_result."""
+
+
 class LocalChargePoint(ChargePoint16):
 
     def _db(self):
@@ -233,6 +266,21 @@ class LocalChargePoint(ChargePoint16):
     async def on_heartbeat(self, **kwargs):
         ocpp_logs.record(self.id, "in", "Heartbeat")
         return call_result.Heartbeat(current_time=now_iso())
+
+    @on("SecurityEventNotification", skip_schema_validation=True)
+    async def on_security_event_notification(self, **kwargs):
+        """Action de l'extension sécurité d'OCPP 1.6 (hors profil standard),
+        envoyée par la borne au démarrage (StartupOfTheDevice,
+        SettingSystemTime...). On se contente d'accuser réception : sans ce
+        handler, la bibliothèque répondait NotImplemented et loguait une
+        erreur à chaque démarrage de la borne. skip_schema_validation car la
+        bibliothèque n'embarque pas de schéma pour cette action en 1.6."""
+        ocpp_logs.record(self.id, "in", "SecurityEventNotification",
+                         summary=str(kwargs.get("type") or ""),
+                         payload={"type": kwargs.get("type"),
+                                  "timestamp": kwargs.get("timestamp"),
+                                  "techInfo": kwargs.get("tech_info")})
+        return _EmptyResponse()
 
     @on(Action.authorize)
     async def on_authorize(self, id_tag, **kwargs):
@@ -460,6 +508,9 @@ class LocalChargePoint(ChargePoint16):
                 id_tag=id_tag,
                 vehicle_id=vehicle.id if vehicle else None,
                 meter_start=meter_start,
+                # Date réelle du démarrage annoncée par la borne (et non
+                # l'heure de réception, décalée si la borne rejoue sa file).
+                start_time=_ocpp_ts(kwargs.get("timestamp")),
                 status="active",
                 unauthorized=unauthorized,
                 deferred_until=deferred_label if suspend_now else None,
@@ -542,7 +593,12 @@ class LocalChargePoint(ChargePoint16):
             if txn:
                 connector_id = txn.connector_id
                 txn.meter_stop = meter_stop
-                txn.stop_time = datetime.utcnow()
+                # Date réelle de l'arrêt annoncée par la borne (voir _ocpp_ts) ;
+                # jamais antérieure au début de la session (une transaction
+                # créée avant ce correctif peut porter l'heure de réception).
+                txn.stop_time = _ocpp_ts(kwargs.get("timestamp"))
+                if txn.start_time and txn.stop_time < txn.start_time:
+                    txn.stop_time = txn.start_time
                 txn.status = "completed"
                 txn.deferred_until = None
                 # Filet de sécurité : si un StopTransaction arrive alors que le
@@ -550,7 +606,9 @@ class LocalChargePoint(ChargePoint16):
                 # StatusNotification intermédiaire vue avant l'arrêt), on clôt
                 # quand même la période de charge en cours au lieu de la perdre.
                 if txn.charging_since:
-                    txn.charging_seconds = (txn.charging_seconds or 0.0) + (txn.stop_time - txn.charging_since).total_seconds()
+                    # max(0, ...) : avec un stop_time rejoué, charging_since
+                    # (posé à l'heure de réception) peut lui être postérieur.
+                    txn.charging_seconds = (txn.charging_seconds or 0.0) + max(0.0, (txn.stop_time - txn.charging_since).total_seconds())
                     txn.charging_since = None
                 if txn.start_time:
                     duration_min = round((txn.stop_time - txn.start_time).total_seconds() / 60, 1)
