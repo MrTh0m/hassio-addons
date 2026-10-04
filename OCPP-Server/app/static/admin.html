@@ -522,7 +522,7 @@
         <div class="card" style="margin-top:.8rem">
           <div class="table-wrap"><table class="responsive wide" id="history-table">
             <thead><tr>
-              <th>Borne</th><th>Conn.</th><th>Véhicule</th><th>Début</th><th>Fin</th><th>Durée</th>
+              <th>Borne</th><th>Conn.</th><th>Véhicule</th><th>Début</th><th>Fin</th><th title="Temps pendant lequel la charge a réellement délivré de l'énergie">Charge</th><th title="Durée totale branché (pauses incluses)">Branché</th>
               <th>kWh</th><th>P. max</th><th>Coût</th><th>Tarif</th><th>km</th><th>km parc.</th>
               <th>kWh/100</th><th>% init.</th><th>% fin</th><th>Recharge</th><th></th>
             </tr></thead>
@@ -809,6 +809,20 @@ function formatDateTime(iso) {
 function formatDuration(min) {
   if (min == null) return "–";
   return `${Math.floor(min / 60)}h${String(Math.round(min % 60)).padStart(2, "0")}`;
+}
+/* Durées d'une session. La CHARGE EFFECTIVE (connecteur en "Charging") est la
+   valeur principale ; la durée totale "branché" (qui inclut les pauses
+   véhicule/borne et l'attente avant le débranchement) est secondaire, en gris
+   et libellée explicitement pour ne jamais être confondue avec la première.
+   Sans suivi de charge effective (ancienne session), seule la durée branchée
+   est connue et elle est présentée comme telle. Rien pour une charge externe
+   (début = fin, aucune durée réelle). */
+function sessionDurationsHtml(s) {
+  if (s.is_external) return "";
+  const pluggedTip = "Durée totale branché : inclut les pauses (véhicule plein, délestage) et l'attente avant le débranchement";
+  const plugged = `<span class="muted" title="${pluggedTip}">Branché <b>${formatDuration(s.duration_min)}</b></span>`;
+  if (s.charging_duration_min == null) return plugged;
+  return `<span title="Temps pendant lequel la charge a réellement délivré de l'énergie">Charge <b>${formatDuration(s.charging_duration_min)}</b></span>${plugged}`;
 }
 function kWh(wh) { return (wh / 1000).toFixed(2); }
 function eur(c) { return c != null ? c.toFixed(2) + " €" : "–"; }
@@ -1299,9 +1313,7 @@ async function renderHomeCurrent(active, chargers, condByCharger) {
             ${condBadge}
           </div>
           <div class="metrics">
-            <span>Depuis <b>${formatDuration(s.duration_min)}</b></span>
-            ${(s.charging_duration_min != null && s.duration_min != null && (s.duration_min - s.charging_duration_min) > 0.5)
-              ? `<span class="warn" style="color:var(--warn)">Charge effective <b>${formatDuration(s.charging_duration_min)}</b></span>` : ""}
+            ${sessionDurationsHtml(s)}
             <span><b>${kWh(s.energy_wh)}</b> kWh</span>
             <span><b>${eur(s.cost)}</b></span>
             ${recharge}
@@ -1425,7 +1437,7 @@ function renderHomeLast(s) {
         <b>${esc(s.charger_display_name || s.charger_id || s.location_label || "Externe")}${s.connector_id != null ? ` · Conn. ${s.connector_id}` : ""}</b>${s.vehicle_name ? ` <span class="badge accent">${esc(s.vehicle_name)}</span>` : ""}${s.vehicle_deleted ? ` <span class="badge off" title="Ce véhicule a été supprimé définitivement">véhicule supprimé</span>` : ""}${s.is_external ? ` <span class="badge ext"><svg style="width:.85em;height:.85em"><use href="#i-ext"/></svg> externe</span>` : ""}${s.charger_deleted ? ` <span class="badge off" title="Cette borne a été supprimée définitivement">borne supprimée</span>` : ""}
         <div class="metrics">
           <span>${formatDateTime(s.start_time)} → ${formatDateTime(s.stop_time)}</span>
-          <span><b>${formatDuration(s.duration_min)}</b></span>
+          ${sessionDurationsHtml(s)}
           <span><b>${kWh(s.energy_wh)}</b> kWh</span>
           <span><b>${eur(s.cost)}</b></span>
           ${recharge}
@@ -2177,15 +2189,16 @@ function renderChargerSessionsTable(sessions) {
     <td>${formatDateTime(s.start_time)}</td>
     <td>${s.connector_id ?? "–"}</td>
     <td>${esc(s.vehicle_name || "–")}${s.vehicle_deleted ? ' <span class="badge off" style="padding:.05rem .35rem">suppr.</span>' : ""}</td>
-    <td>${formatDuration(s.duration_min)}</td>
+    <td>${s.is_external ? "–" : (s.charging_duration_min != null ? formatDuration(s.charging_duration_min) : "–")}</td>
+    <td class="muted">${s.is_external ? "–" : formatDuration(s.duration_min)}</td>
     <td>${kWh(s.energy_wh)}</td>
     <td>${kW(s.power_max_w)}</td>
     <td>${eur(s.cost)}</td>
     <td><span class="badge ${s.status === "active" ? "Charging" : "off"}">${s.status === "active" ? "en cours" : "terminée"}</span></td>
   </tr>`).join("");
   return `<div class="section-title">Historique des charges</div><div class="table-wrap"><table><thead><tr>
-    <th>Début</th><th>Conn.</th><th>Véhicule</th><th>Durée</th><th>kWh</th><th>P. max</th><th>Coût</th><th>Statut</th>
-  </tr></thead><tbody>${rows || `<tr><td colspan="8"><span class="empty">Aucune charge</span></td></tr>`}</tbody></table></div>`;
+    <th>Début</th><th>Conn.</th><th>Véhicule</th><th title="Temps pendant lequel la charge a réellement délivré de l'énergie">Charge</th><th title="Durée totale branché (pauses incluses)">Branché</th><th>kWh</th><th>P. max</th><th>Coût</th><th>Statut</th>
+  </tr></thead><tbody>${rows || `<tr><td colspan="9"><span class="empty">Aucune charge</span></td></tr>`}</tbody></table></div>`;
 }
 
 /* --- Tableau de sessions réutilisable (fiche véhicule) --- */
@@ -2478,9 +2491,12 @@ async function loadHistory() {
 }
 function renderHistory() {
   const tb = document.querySelector("#history-table tbody");
-  if (!cachedHistory.length) { tb.innerHTML = `<tr><td colspan="17"><span class="empty">Aucune session</span></td></tr>`; return; }
+  if (!cachedHistory.length) { tb.innerHTML = `<tr><td colspan="18"><span class="empty">Aucune session</span></td></tr>`; return; }
   tb.innerHTML = cachedHistory.map(s => {
     const dur = formatDuration(s.duration_min);
+    const chargeDur = s.is_external ? "–" : (s.charging_duration_min != null ? formatDuration(s.charging_duration_min) : "–");
+    const pluggedDur = s.is_external ? "–" : dur;
+    const endCell = s.stop_time ? formatDateTime(s.stop_time) : (s.status === "active" ? `<span class="badge Charging" style="padding:.05rem .35rem">en cours</span>` : "–");
     const bornCell = s.is_external
       ? `${esc(s.location_label || "Externe")} <span class="badge ext" style="padding:.05rem .35rem">ext</span>`
       : s.charger_deleted
@@ -2491,7 +2507,7 @@ function renderHistory() {
       const canEditSession = isAdmin() || (currentUser.vehicle_ids && s.vehicle_id && currentUser.vehicle_ids.includes(s.vehicle_id));
       return `<tr>
       <td data-label="Borne">${bornCell}</td><td data-label="Conn.">${s.connector_id ?? "–"}</td><td data-label="Véhicule">${esc(s.vehicle_name || "–")}${s.vehicle_deleted ? ' <span class="badge off" style="padding:.05rem .35rem">suppr.</span>' : ""}</td>
-      <td data-label="Début">${formatDateTime(s.start_time)}</td><td data-label="Fin">${formatDateTime(s.stop_time)}</td><td data-label="Durée">${dur}</td>
+      <td data-label="Début">${formatDateTime(s.start_time)}</td><td data-label="Fin">${endCell}</td><td data-label="Charge">${chargeDur}</td><td data-label="Branché" class="muted">${pluggedDur}</td>
       <td data-label="kWh">${kWh(s.energy_wh)}</td><td data-label="P. max">${kW(s.power_max_w)}</td><td data-label="Coût">${eur(s.cost)}</td><td data-label="Tarif">${esc(s.tariff_plan_name || "–")}</td>
       <td data-label="km">${num(s.odometer_km)}</td><td data-label="km parc.">${num(s.km_since_last)}</td><td data-label="kWh/100">${s.kwh_per_100km != null ? s.kwh_per_100km : "–"}</td>
       <td data-label="% init.">${num(s.battery_percent_start)}</td><td data-label="% fin">${num(s.battery_percent_end)}${est}</td>

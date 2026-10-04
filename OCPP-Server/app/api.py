@@ -1853,6 +1853,10 @@ def charger_stats(charger_id: str, db: Session = Depends(get_db), user=Depends(g
 
 # --- Taux d'occupation de l'alimentation électrique ---
 
+# Au-delà de cet âge, le dernier relevé de puissance n'est plus considéré
+# comme représentatif (borne muette, coupure réseau...).
+OCCUPANCY_MAX_SAMPLE_AGE_S = 15 * 60
+
 @router.get("/occupancy")
 def power_occupancy(db: Session = Depends(get_db), user=Depends(get_current_user)):
     """Taux d'occupation de l'abonnement électrique à l'instant T : puissance
@@ -1889,6 +1893,21 @@ def power_occupancy(db: Session = Depends(get_db), user=Depends(get_current_user
             MeterValue.measurand == "Power.Active.Import",
         ).order_by(MeterValue.timestamp.desc()).first()
         power_w = last_power.value if last_power else 0.0
+        # Le dernier relevé ne vaut que tant que la charge est réellement en
+        # cours : en SuspendedEV/SuspendedEVSE/Finishing la borne n'envoie plus
+        # de MeterValues, donc le dernier relevé (ex. 5,9 kW) resterait compté
+        # indéfiniment alors que plus rien n'est délivré (observé le 04/10 :
+        # 98,2 % affiché pendant 9 h sur une charge suspendue). On exige donc
+        # un connecteur sur "Charging" et un relevé récent.
+        if power_w:
+            conn_row = db.query(ConnectorStatus).filter(
+                ConnectorStatus.charger_id == s.charger_id,
+                ConnectorStatus.connector_id == s.connector_id,
+            ).first() if s.charger_id else None
+            if conn_row is not None and conn_row.status != "Charging":
+                power_w = 0.0
+            elif last_power.timestamp and (datetime.utcnow() - last_power.timestamp).total_seconds() > OCCUPANCY_MAX_SAMPLE_AGE_S:
+                power_w = 0.0
         b = _bucket(plan)
         b["delivered_power_w"] += power_w
         b["active_sessions"] += 1

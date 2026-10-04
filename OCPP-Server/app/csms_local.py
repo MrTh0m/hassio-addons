@@ -183,6 +183,105 @@ class _EmptyResponse:
     pour lesquelles la bibliothèque n'a pas de classe call_result."""
 
 
+# Délai de grâce entre le passage d'un connecteur sur "Finishing" et la
+# clôture côté serveur d'une transaction toujours "active". En temps normal la
+# borne envoie son StopTransaction quelques secondes avant/après Finishing
+# (observé : 2 à 5 s). Observé le 04/10 sur la Schneider : un arrêt à distance
+# demandé pendant un état SuspendedEV fait passer le connecteur en Finishing
+# (RemoteStopTransaction accepté) mais AUCUN StopTransaction n'est envoyé, la
+# transaction restait donc "active" indéfiniment (Fin vide dans l'historique,
+# puissance du dernier relevé comptée dans l'occupation de l'abonnement).
+FINISHING_STOP_GRACE_S = 45
+
+
+async def finalize_orphan_transaction(charger_id: str, connector_id: int, stop_time: datetime | None = None) -> bool:
+    """Clôt côté serveur la transaction active d'un connecteur resté sur
+    "Finishing" sans StopTransaction reçu. En OCPP 1.6, "Finishing" signifie
+    que la session de charge est terminée, donc la transaction ne peut plus
+    être légitimement active.
+
+    Ne fait rien (retourne False) si le connecteur n'est plus sur Finishing ou
+    s'il n'y a pas de transaction active. meter_stop est le dernier relevé
+    d'énergie reçu pour cette transaction (à défaut meter_start). Si la borne
+    envoie finalement son StopTransaction plus tard, on_stop_transaction
+    retrouve la transaction par son id (même déjà terminée) et remplace
+    meter_stop/stop_time par les valeurs réelles de la borne."""
+    db = SessionLocal()
+    duration_min = None
+    last_energy_wh = None
+    last_cost = None
+    last_vehicle_id = None
+    txn_id = None
+    try:
+        row = db.query(ConnectorStatus).filter(
+            ConnectorStatus.charger_id == charger_id,
+            ConnectorStatus.connector_id == connector_id,
+        ).first()
+        if row is None or row.status != "Finishing":
+            return False
+        txn = db.query(Transaction).filter(
+            Transaction.charger_id == charger_id,
+            Transaction.connector_id == connector_id,
+            Transaction.status == "active",
+        ).order_by(Transaction.id.desc()).first()
+        if txn is None:
+            return False
+
+        end = stop_time or datetime.utcnow()
+        if txn.start_time and end < txn.start_time:
+            end = txn.start_time
+
+        if txn.meter_stop is None:
+            last_reg = db.query(MeterValue).filter(
+                MeterValue.transaction_id == txn.id,
+                MeterValue.charger_id == charger_id,
+                MeterValue.connector_id == connector_id,
+                MeterValue.measurand == "Energy.Active.Import.Register",
+            ).order_by(MeterValue.timestamp.desc()).first()
+            txn.meter_stop = last_reg.value if last_reg is not None else txn.meter_start
+
+        txn.stop_time = end
+        txn.status = "completed"
+        txn.deferred_until = None
+        if txn.charging_since:
+            txn.charging_seconds = (txn.charging_seconds or 0.0) + max(0.0, (end - txn.charging_since).total_seconds())
+            txn.charging_since = None
+        if txn.start_time:
+            duration_min = round((end - txn.start_time).total_seconds() / 60, 1)
+        db.flush()
+        freeze_transaction_cost(db, txn)
+        db.commit()
+        txn_id = txn.id
+        last_energy_wh = txn.energy_wh
+        last_cost = txn.cost
+        last_vehicle_id = txn.vehicle_id
+    finally:
+        db.close()
+
+    logger.info("Borne %s connecteur %s : transaction %s clôturée côté serveur (Finishing sans StopTransaction)",
+                charger_id, connector_id, txn_id)
+
+    await mqtt_bridge.publish_charge_control_state(charger_id, connector_id, False)
+    updates = {}
+    if duration_min is not None:
+        updates["session_duration_min"] = duration_min
+    if last_energy_wh is not None:
+        updates["last_session_energy_wh"] = last_energy_wh
+    if last_cost is not None:
+        updates["last_session_cost"] = last_cost
+    if updates:
+        await mqtt_bridge.publish_connector_state(charger_id, connector_id, **updates)
+    if last_vehicle_id:
+        await mqtt_bridge.publish_vehicle_state(last_vehicle_id, is_charging="OFF", charging_at="Aucune")
+        await mqtt_bridge.publish_vehicle_last_charge(last_vehicle_id)
+    sse_notify("transaction_stopped", {
+        "charger_id": charger_id,
+        "connector_id": connector_id,
+        "transaction_id": txn_id,
+    })
+    return True
+
+
 class LocalChargePoint(ChargePoint16):
 
     def _db(self):
@@ -307,6 +406,7 @@ class LocalChargePoint(ChargePoint16):
         last_cost = None
         last_vehicle_id = None
         do_auto_start = False
+        check_finishing = False
         try:
             charger = self._get_or_create_charger(db)
             charger.last_seen = datetime.utcnow()
@@ -322,6 +422,11 @@ class LocalChargePoint(ChargePoint16):
             entry.status = status
             entry.error_code = kwargs.get("error_code")
             entry.updated_at = datetime.utcnow()
+
+            # Première arrivée sur Finishing : on vérifiera dans un instant que
+            # la borne a bien envoyé son StopTransaction (voir
+            # FINISHING_STOP_GRACE_S), sinon on clôt la transaction nous-mêmes.
+            check_finishing = connector_id != 0 and status == "Finishing" and old_status != "Finishing"
 
             if connector_id == 0:
                 charger.status = status
@@ -448,6 +553,9 @@ class LocalChargePoint(ChargePoint16):
         if do_auto_start:
             asyncio.create_task(self._auto_start(connector_id))
 
+        if check_finishing:
+            asyncio.create_task(self._close_if_no_stop_after_finishing(connector_id, datetime.utcnow()))
+
         if light_transition:
             asyncio.create_task(self.apply_light_intensity())
 
@@ -570,6 +678,13 @@ class LocalChargePoint(ChargePoint16):
             transaction_id=txn_id,
             id_tag_info={"status": status_out},
         )
+
+    async def _close_if_no_stop_after_finishing(self, connector_id: int, finishing_at: datetime):
+        try:
+            await asyncio.sleep(FINISHING_STOP_GRACE_S)
+            await finalize_orphan_transaction(self.id, connector_id, stop_time=finishing_at)
+        except Exception:
+            logger.debug("Clôture serveur après Finishing échouée sur %s/%s", self.id, connector_id, exc_info=True)
 
     async def _suspend_for_schedule(self, connector_id: int):
         try:
