@@ -1,6 +1,6 @@
 import asyncio
 import logging
-from datetime import datetime, time as dtime, timezone
+from datetime import datetime, time as dtime, timedelta, timezone
 from dataclasses import dataclass
 
 from ocpp.routing import on
@@ -798,6 +798,16 @@ class LocalChargePoint(ChargePoint16):
 
             latest_register_wh = None
             for mv in meter_value:
+                # Date réelle du relevé annoncée par la borne (voir _ocpp_ts) :
+                # une file rejouée après coupure ne doit pas être datée de
+                # l'heure de réception. Garde-fou : pour un relevé rattaché à
+                # la session active, une date antérieure à son début (horloge de
+                # borne déréglée) ne peut pas être authentique ; on retombe
+                # alors sur l'heure de réception pour ne pas sortir ce relevé
+                # de la fenêtre de calcul d'énergie et de coût.
+                mv_ts = _ocpp_ts(mv.get("timestamp"))
+                if our_txn is not None and our_txn.start_time and mv_ts < our_txn.start_time - timedelta(minutes=1):
+                    mv_ts = datetime.utcnow()
                 for sv in mv.get("sampled_value", []):
                     try:
                         value = float(sv.get("value"))
@@ -814,6 +824,7 @@ class LocalChargePoint(ChargePoint16):
                         charger_id=self.id,
                         transaction_id=our_txn_id,
                         connector_id=connector_id,
+                        timestamp=mv_ts,
                         measurand=measurand,
                         value=stored_value,
                         unit=unit,
