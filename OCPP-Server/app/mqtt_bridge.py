@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 import os
+from collections import deque
 
 import aiomqtt
 
@@ -19,6 +20,22 @@ BASE_TOPIC = os.environ.get("MQTT_BASE_TOPIC", "ocppserver")
 _client: aiomqtt.Client | None = None
 _slug_to_id: dict[str, str] = {}
 
+# File d'attente des publications sortantes. Les gestionnaires OCPP n'attendent
+# jamais le broker : ils déposent leurs messages ici et rendent la main tout de
+# suite, un worker dédié (voir _publisher) les envoie en arrière-plan.
+# Bornée : si le broker est injoignable longtemps, les plus anciens sont
+# écartés (ce sont des états retenus, seul le dernier compte ; la découverte et
+# les états sont de toute façon republiés en entier à chaque reconnexion).
+OUTBOX_MAX = 2000
+_outbox: deque = deque(maxlen=OUTBOX_MAX)
+_wakeup: asyncio.Event | None = None
+
+# Durée max d'attente de la confirmation du broker pour UNE publication (la
+# valeur par défaut d'aiomqtt est de 10 s) et nombre d'échecs consécutifs
+# au-delà duquel la connexion MQTT est considérée comme morte et recréée.
+PUBLISH_TIMEOUT_S = 5
+MAX_CONSECUTIVE_PUBLISH_FAILURES = 3
+
 
 async def _safe_publish(topic: str, payload: str, retain: bool = True):
     """Enveloppe UNIQUE autour de _client.publish() : ne laisse JAMAIS une panne
@@ -32,13 +49,52 @@ async def _safe_publish(topic: str, payload: str, retain: bool = True):
     borne physique tant que le broker n'était pas revenu. Côté Home Assistant,
     une entité qui reste brièvement périmée est sans conséquence ; couper la
     connexion à une vraie borne en charge, si. La publication MQTT doit donc
-    rester strictement « best effort » du point de vue du protocole OCPP."""
+    rester strictement « best effort » du point de vue du protocole OCPP.
+
+    Second volet (incident du 10/10, borne déconnectée en boucle pendant une
+    charge) : rattraper les exceptions ne suffit pas, il ne faut pas non plus
+    ATTENDRE le broker. Un broker injoignable ou à moitié mort ne lève pas
+    d'erreur tout de suite : chaque publish() attend sa confirmation jusqu'au
+    délai d'aiomqtt (10 s). Un seul MeterValues déclenchait une dizaine de
+    publications à la suite, d'où des réponses OCPP rendues ~40 s trop tard,
+    au-delà du MessageTimeout (30 s) de la borne, qui coupait alors sa
+    connexion WebSocket. Cette fonction ne fait donc que déposer le message
+    dans une file d'attente, et rend la main immédiatement ; l'envoi réel
+    est fait par _publisher(), hors du chemin de réponse OCPP."""
     if _client is None:
         return
-    try:
-        await _client.publish(topic, payload, retain=retain)
-    except Exception:
-        logger.debug("Publication MQTT échouée sur %s (ignorée, ne doit jamais impacter l'OCPP)", topic, exc_info=True)
+    _outbox.append((topic, payload, retain))
+    if _wakeup is not None:
+        _wakeup.set()
+
+
+async def _publisher(client: aiomqtt.Client, wakeup: asyncio.Event):
+    """Worker d'envoi : vide la file d'attente vers le broker, un message à la
+    fois, avec un délai borné. Après plusieurs échecs consécutifs la connexion
+    est jugée morte : on lève, ce qui fait retomber run_mqtt_bridge dans sa
+    boucle de reconnexion (et ce n'est jamais visible côté OCPP)."""
+    failures = 0
+    while True:
+        while _outbox:
+            topic, payload, retain = _outbox.popleft()
+            try:
+                await client.publish(topic, payload, retain=retain, timeout=PUBLISH_TIMEOUT_S)
+                failures = 0
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                failures += 1
+                logger.debug("Publication MQTT échouée sur %s (%d/%d)", topic, failures,
+                             MAX_CONSECUTIVE_PUBLISH_FAILURES, exc_info=True)
+                if failures >= MAX_CONSECUTIVE_PUBLISH_FAILURES:
+                    raise ConnectionError("Broker MQTT ne répond plus aux publications")
+        await wakeup.wait()
+        wakeup.clear()
+
+
+async def _consume_commands(client: aiomqtt.Client):
+    async for message in client.messages:
+        await _handle_command(message)
 
 
 def _slug(charger_id: str) -> str:
@@ -450,7 +506,7 @@ async def republish_all():
 async def run_mqtt_bridge():
     """Boucle de fond : maintient la connexion MQTT et reconnecte
     automatiquement en cas de coupure."""
-    global _client
+    global _client, _wakeup
     if not MQTT_ENABLED:
         logger.info("Pont MQTT désactivé (MQTT_ENABLED=false)")
         return
@@ -460,13 +516,23 @@ async def run_mqtt_bridge():
                 hostname=MQTT_HOST, port=MQTT_PORT,
                 username=MQTT_USERNAME, password=MQTT_PASSWORD,
             ) as client:
+                # File repartie de zéro : republish_all() ci-dessous renvoie
+                # tout l'état courant, les anciens messages sont périmés.
+                _outbox.clear()
+                wakeup = asyncio.Event()
+                _wakeup = wakeup
                 _client = client
                 logger.info("Connecté au broker MQTT %s:%s", MQTT_HOST, MQTT_PORT)
                 await republish_all()
                 await client.subscribe(f"{BASE_TOPIC}/+/+/charge_control/set")
-                async for message in client.messages:
-                    await _handle_command(message)
+                # Envoi et réception de commandes tournent côte à côte ; si
+                # l'un échoue, l'autre est annulé et on se reconnecte.
+                async with asyncio.TaskGroup() as tg:
+                    tg.create_task(_publisher(client, wakeup))
+                    tg.create_task(_consume_commands(client))
         except Exception:
             logger.warning("Connexion MQTT indisponible, nouvelle tentative dans 10s", exc_info=True)
             _client = None
+            _wakeup = None
+            _outbox.clear()
             await asyncio.sleep(10)
