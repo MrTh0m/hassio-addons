@@ -18,7 +18,7 @@ from datetime import datetime
 
 # Taille maximale du tampon (nombre d'entrées conservées, toutes bornes
 # confondues). Au-delà, les plus anciennes sont écartées automatiquement.
-MAX_ENTRIES = 2000
+MAX_ENTRIES = 20000
 
 # Actions considérées comme « à fort volume » : journalisées seulement quand
 # l'utilisateur active explicitement leur capture.

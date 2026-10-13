@@ -27,6 +27,7 @@ from .models import (
 )
 from .pricing import resolve_plan_for_charger, price_at
 from .csms_local import CONNECTED_CHARGERS, SMART_CHARGING_SUPPORT, finalize_orphan_transaction
+from . import queue_watch
 
 logger = logging.getLogger("scheduler")
 
@@ -227,6 +228,10 @@ async def run_scheduler():
             await _evaluate_stuck_finishing_once()
         except Exception:
             logger.warning("Erreur dans la détection de connecteur bloqué sur Finishing", exc_info=True)
+        try:
+            await queue_watch.tick()
+        except Exception:
+            logger.warning("Erreur dans la surveillance de la file de la borne", exc_info=True)
         await asyncio.sleep(TICK_SECONDS)
 
 

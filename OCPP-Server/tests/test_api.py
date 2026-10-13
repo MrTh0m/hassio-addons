@@ -455,3 +455,44 @@ def test_id_reutilise_ne_pollue_pas_nouvelle_session(client, auth):
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+# --- Surveillance de la file de la borne (queue_watch) ---------------------
+
+@pytest.fixture
+def qw_db():
+    import app.queue_watch as qw, app.diagnostics as dg, app.csms_local as cl
+    saved = (qw.SessionLocal, dg.SessionLocal, cl.SessionLocal)
+    qw.SessionLocal = dg.SessionLocal = cl.SessionLocal = TestingSession
+    yield
+    qw.SessionLocal, dg.SessionLocal, cl.SessionLocal = saved
+
+
+def test_queue_watch_setting_default_off_and_toggle(client, auth, qw_db):
+    r = client.get("/api/settings/queue-watch", headers=auth)
+    assert r.status_code == 200
+    assert r.json()["auto_reset"] is False
+    r = client.put("/api/settings/queue-watch", json={"auto_reset": True}, headers=auth)
+    assert r.status_code == 200 and r.json()["auto_reset"] is True
+    assert client.get("/api/settings/queue-watch", headers=auth).json()["auto_reset"] is True
+
+
+def test_chargers_expose_uptime_and_queue_blocked(client, auth, qw_db):
+    db = TestingSession()
+    db.add(Charger(id="cq", mode=ChargerMode.local))
+    db.commit()
+    db.close()
+    r = client.get("/api/chargers", headers=auth)
+    assert r.status_code == 200
+    c = next(x for x in r.json() if x["id"] == "cq")
+    assert "uptime_s" in c and c["queue_blocked"] is None
+
+
+def test_dump_accepts_range_and_contains_readme(client, auth, qw_db):
+    import io, zipfile
+    r = client.get("/api/diagnostics/dump?hours=6&max_rows=1000", headers=auth)
+    assert r.status_code == 200
+    names = zipfile.ZipFile(io.BytesIO(r.content)).namelist()
+    assert "LISEZMOI.txt" in names and "file-borne.json" in names
+    r = client.get("/api/diagnostics/dump?since=2026-10-12T22:00:00Z&until=2026-10-13T01:00:00Z", headers=auth)
+    assert r.status_code == 200
