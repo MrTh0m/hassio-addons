@@ -1188,6 +1188,12 @@ function refreshCurrentView() {
 
 /* ========================= ACCUEIL ========================= */
 /* Durée de fonctionnement d'une borne depuis son dernier démarrage (secondes). */
+function uptimeLine(c) {
+  if (!c.connected) return "";
+  if (c.uptime_s != null) return `<div class="tiny muted" style="margin-top:.2rem">En marche depuis ${formatUptime(c.uptime_s)}</div>`;
+  if (c.connected_s != null) return `<div class="tiny muted" style="margin-top:.2rem" title="L'heure de démarrage de la borne n'est connue qu'après son prochain redémarrage">Connectée depuis ${formatUptime(c.connected_s)} (démarrage de la borne inconnu)</div>`;
+  return "";
+}
 function formatUptime(sec) {
   if (sec == null) return "";
   const m = Math.floor(sec / 60);
@@ -1590,7 +1596,7 @@ async function loadChargers() {
             ${c.queue_blocked ? `<span class="badge danger" title="${esc(c.queue_blocked.label)}">File bloquée</span>` : ""}
           </div>
           <div class="cluster center" style="gap:.35rem; margin-top:.45rem">${connBadges}</div>
-          ${c.connected && c.uptime_s != null ? `<div class="tiny muted" style="margin-top:.2rem">En marche depuis ${formatUptime(c.uptime_s)}</div>` : ""}
+          ${uptimeLine(c)}
           <div class="small muted" style="margin-top:.35rem">${esc(c.vendor || "")} ${esc(c.model || "")} ${c.ocpp_version ? "· OCPP " + esc(c.ocpp_version) : ""}</div>
           <div class="tiny muted" style="margin-top:.2rem">ID borne (chargePointId) : <code>${esc(c.id)}</code></div>
         </div>
@@ -2181,11 +2187,13 @@ function renderOccupancyChart(data) {
 async function openChargerStatsModal(chargerId) {
   openModalConnector = null;
   openModal(`<div class="empty">Chargement…</div>`);
-  const [data, charger, connectors] = await Promise.all([
+  const [data, charger, connectors, allCh] = await Promise.all([
     fetch(`api/chargers/${chargerId}/stats`, { headers: authHeaders() }).then(r => r.json()),
     fetch(`api/chargers/${chargerId}`, { headers: authHeaders() }).then(r => r.json()),
     fetch(`api/chargers/${chargerId}/connectors`, { headers: authHeaders() }).then(r => r.json()).then(a => a.filter(c => c.connector_id !== 0)),
+    fetch("api/chargers", { headers: authHeaders() }).then(r => r.json()).catch(() => []),
   ]);
+  const chInfo = allCh.find(x => x.id === chargerId) || {};
   const st = data.stats;
   const meta = [charger.vendor, charger.model].filter(Boolean).join(" ")
     + (charger.ocpp_version ? ` · OCPP ${charger.ocpp_version}` : "");
@@ -2198,6 +2206,7 @@ async function openChargerStatsModal(chargerId) {
       <button class="btn btn-sm btn-ghost" style="margin-left:auto" onclick="openChargerConfigModal('${esc(data.id)}')"><svg><use href="#i-cog"/></svg>Configurer</button>
     </div>
     ${meta ? `<div class="small muted" style="margin:0 0 .3rem">${esc(meta)}</div>` : ""}
+    ${uptimeLine(chInfo)}
     <div class="tiny muted" style="margin:0 0 .8rem">ID borne (chargePointId) : <code>${esc(data.id)}</code>${charger.mode === "relay" && charger.relay_url ? ` · relayé vers <code>${esc((charger.relay_url || "").replace(/\/+$/, "") + "/" + data.id)}</code>` : ""}</div>
     ${charger.mode === "relay" ? `<div class="card" style="border-left:3px solid var(--accent); background:var(--accent-soft); margin:0 0 .8rem"><div class="tiny">En mode relais, ce CSMS est <b>passif</b> : il observe et facture les charges mais ne pilote pas la borne. Le pilotage (démarrage/arrêt, délestage, programmation) reste assuré par le serveur officiel.</div></div>` : ""}
     <div class="stat-grid">

@@ -550,6 +550,7 @@ def list_chargers(db: Session = Depends(get_db), user=Depends(get_current_user))
             # écoulé depuis le dernier démarrage de la borne, et blocage
             # probable de sa file de messages (voir queue_watch.py).
             "uptime_s": queue_watch.uptime_seconds(c.id),
+            "connected_s": queue_watch.connected_seconds(c.id) if c.id in CONNECTED_CHARGERS else None,
             "queue_blocked": queue_watch.blocked_for(c.id) if c.id in CONNECTED_CHARGERS else None,
         }
         for c in chargers

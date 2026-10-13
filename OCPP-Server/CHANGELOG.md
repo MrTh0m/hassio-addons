@@ -1,3 +1,7 @@
+## 0.19.40
+
+- **Corrigé** : la durée de fonctionnement de la borne n'apparaissait nulle part après la mise à jour : elle n'est connue qu'avec le `BootNotification` ou le `StartupOfTheDevice` de la borne, donc seulement après son prochain redémarrage. En attendant, la page Bornes affiche « Connectée depuis ... (démarrage de la borne inconnu) », et la fiche de la borne affiche aussi la durée.
+
 ## 0.19.39
 
 - **Nouveau** : détection d'une file de messages de borne bloquée. Observé les 10/10 et 13/10 : après une coupure du serveur pendant la sauvegarde nocturne du Pi (plus de réponse pendant 10 à 15 min), la Schneider cesse d'envoyer ses messages de transaction (`MeterValues`, `StartTransaction`, `StopTransaction`) alors que `Heartbeat` et `StatusNotification` passent encore. Rien ne le signalait, et la charge suivante restait « prête » côté serveur sans démarrer. Le nouveau module `queue_watch.py` repère deux symptômes : plus aucun relevé pendant une charge (seuil : 4 fois l'intervalle de relevé, 2 min minimum) et démarrage à distance accepté mais jamais confirmé après 60 s. Le défaut reste affiché jusqu'à un signe de vie (redémarrage de la borne, relevé récent, `StartTransaction`, `StopTransaction`). Il est visible par **tous les utilisateurs** : bandeau sur l'accueil, pastille sur la carte de la borne, badge « File de messages de la borne bloquée » dans l'état de santé. Les administrateurs disposent d'un bouton « Redémarrer la borne ».
