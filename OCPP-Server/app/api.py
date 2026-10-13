@@ -34,6 +34,7 @@ from .csms_local import (
     sync_local_auth_list,
 )
 from . import mqtt_bridge
+from . import queue_watch
 
 
 def _rows_to_csv_bytes(rows: list, tz: Optional[ZoneInfo] = None) -> bytes:
@@ -235,6 +236,24 @@ def set_display_timezone(body: TimezoneUpdate, db: Session = Depends(get_db), us
     return {"display_timezone": body.timezone}
 
 
+class QueueWatchSettings(BaseModel):
+    auto_reset: bool
+
+
+@router.get("/settings/queue-watch")
+def get_queue_watch_settings(user=Depends(require_admin)):
+    """Réglage du redémarrage automatique d'une borne dont la file de messages
+    est bloquée (voir queue_watch.py). Désactivé par défaut."""
+    return {"auto_reset": queue_watch.auto_reset_enabled(),
+            "cooldown_min": queue_watch.AUTO_RESET_COOLDOWN_S // 60}
+
+
+@router.put("/settings/queue-watch")
+def set_queue_watch_settings(body: QueueWatchSettings, user=Depends(require_admin)):
+    queue_watch.set_auto_reset(body.auto_reset)
+    return {"auto_reset": queue_watch.auto_reset_enabled()}
+
+
 class ServerRestartBody(BaseModel):
     force: bool = False
 
@@ -329,28 +348,91 @@ def list_installed_packages(user=Depends(require_admin)):
     return pkgs
 
 
+DUMP_DEFAULT_HOURS = 72
+DUMP_HARD_CAP_ROWS = 500_000
+
+
+def _in_range(ts_iso: str, since: Optional[datetime], until: Optional[datetime]) -> bool:
+    try:
+        ts = datetime.fromisoformat(ts_iso.replace("Z", ""))
+    except (ValueError, AttributeError):
+        return True
+    return (since is None or ts >= since) and (until is None or ts <= until)
+
+
 @router.get("/diagnostics/dump")
-def diagnostics_dump(db: Session = Depends(get_db), user=Depends(require_admin)):
+def diagnostics_dump(
+    hours: Optional[float] = None, since: Optional[str] = None, until: Optional[str] = None,
+    max_rows: Optional[int] = None,
+    db: Session = Depends(get_db), user=Depends(require_admin),
+):
     """Regroupe en un seul zip tout ce qui sert habituellement à diagnostiquer
-    un problème (logs OCPP, logs serveur, statuts connecteurs, transactions
-    récentes, clés de config, bornes, relevés de compteur récents), pour ne
-    plus avoir à exporter chaque fichier séparément à la main comme on l'a
-    fait à plusieurs reprises en pratique."""
+    un problème (logs OCPP, logs serveur, statuts connecteurs, transactions,
+    clés de config, bornes, relevés de compteur, état de la surveillance de la
+    file de la borne), pour ne plus avoir à exporter chaque fichier
+    séparément à la main.
+
+    Étendue au choix de l'appelant :
+    - ``hours`` : les N dernières heures ;
+    - ``since`` / ``until`` : plage de dates ISO 8601 (UTC, suffixe Z) ;
+    - ``max_rows`` : nombre maximal de lignes PAR FICHIER (les plus récentes),
+      applicable seul ou en plus d'une plage.
+    Sans aucun paramètre : les DUMP_DEFAULT_HOURS dernières heures, sans limite
+    de lignes. Un fichier LISEZMOI.txt du zip rappelle l'étendue réellement
+    appliquée et signale toute troncature, y compris celle des journaux OCPP et
+    serveur, qui ne vivent qu'en mémoire (tampon circulaire)."""
     import zipfile
 
     tz = _get_display_tz(db)
+    until_dt = _parse_iso(until)
+    since_dt = _parse_iso(since)
+    if since_dt is None and hours is None and max_rows is None:
+        hours = DUMP_DEFAULT_HOURS
+    if since_dt is None and hours is not None:
+        from datetime import timedelta as _td
+        since_dt = datetime.utcnow() - _td(hours=max(0.0, hours))
+    cap = min(max_rows, DUMP_HARD_CAP_ROWS) if max_rows and max_rows > 0 else DUMP_HARD_CAP_ROWS
+    notes: list[str] = []
 
-    ocpp_entries = ocpp_logs.get_entries(limit=2000)
-    ocpp_entries = [{**e, "ts": _format_dt_for_export(e["ts"], tz)} for e in ocpp_entries]
+    def _fmt(dt):
+        return _format_dt_for_export(dt.isoformat(), tz) if dt else "(aucune borne)"
 
-    srv_entries = server_logs.get_entries(limit=2000)
-    srv_entries = [{**e, "ts": _format_dt_for_export(e["ts"], tz)} for e in srv_entries]
+    def _log_rows(entries: list, name: str, buffer_label: str) -> list:
+        kept = [e for e in entries if _in_range(e["ts"], since_dt, until_dt)]
+        truncated = len(kept) > cap
+        kept = kept[:cap]
+        oldest_in_buffer = entries[-1]["ts"] if entries else None
+        line = f"{name} : {len(kept)} ligne(s)"
+        if truncated:
+            line += f" (tronqué à {cap} lignes, les plus récentes)"
+        if oldest_in_buffer and since_dt is not None and _in_range(oldest_in_buffer, since_dt, None):
+            line += (f" ; ATTENTION le journal en mémoire ne remonte que jusqu'au "
+                     f"{_format_dt_for_export(oldest_in_buffer, tz)}, plus récent que le début demandé")
+        notes.append(line)
+        return [{**e, "ts": _format_dt_for_export(e["ts"], tz)} for e in kept]
+
+    ocpp_entries = _log_rows(ocpp_logs.get_entries(limit=10**7), "ocpp-logs.csv", "OCPP")
+    srv_entries = _log_rows(server_logs.get_entries(limit=10**7), "logs-serveur.csv", "serveur")
+
+    def _db_rows(model, column, order_col, name):
+        q = db.query(model)
+        if since_dt is not None:
+            q = q.filter(column >= since_dt)
+        if until_dt is not None:
+            q = q.filter(column <= until_dt)
+        total = q.count()
+        rows = q.order_by(order_col.desc()).limit(cap).all()
+        line = f"{name} : {len(rows)} ligne(s)"
+        if total > len(rows):
+            line += f" (tronqué : {total} dans la plage, les {len(rows)} plus récentes conservées)"
+        notes.append(line)
+        return rows
 
     connector_rows = db.query(ConnectorStatus).order_by(_order_column(ConnectorStatus)).all()
-    txn_rows = db.query(Transaction).order_by(Transaction.id.desc()).limit(2000).all()
+    txn_rows = _db_rows(Transaction, Transaction.start_time, Transaction.id, "transactions.csv")
     config_rows = db.query(ConfigurationKey).order_by(_order_column(ConfigurationKey)).all()
     charger_rows = db.query(Charger).all()
-    mv_rows = db.query(MeterValue).order_by(MeterValue.id.desc()).limit(3000).all()
+    mv_rows = _db_rows(MeterValue, MeterValue.timestamp, MeterValue.id, "meter_values.csv")
 
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
@@ -361,6 +443,24 @@ def diagnostics_dump(db: Session = Depends(get_db), user=Depends(require_admin))
         zf.writestr("configuration_keys.csv", _rows_to_csv_bytes([_serialize_row(r) for r in config_rows]))
         zf.writestr("chargers.csv", _rows_to_csv_bytes([_serialize_row(r) for r in charger_rows], tz=tz))
         zf.writestr("meter_values.csv", _rows_to_csv_bytes([_serialize_row(r) for r in mv_rows], tz=tz))
+        zf.writestr("file-borne.json", json.dumps(queue_watch.snapshot(), ensure_ascii=False, indent=2))
+        readme = [
+            "Dump de diagnostic OCPP-Server",
+            f"Généré le : {_fmt(datetime.utcnow())} ({tz.key if hasattr(tz, 'key') else tz})",
+            f"Début de plage : {_fmt(since_dt) if since_dt else 'aucun (tout)'}",
+            f"Fin de plage : {_fmt(until_dt) if until_dt else 'maintenant'}",
+            f"Lignes max par fichier : {cap if (max_rows and max_rows > 0) else 'aucune limite choisie (plafond de sécurité ' + str(DUMP_HARD_CAP_ROWS) + ')'}",
+            "",
+            "Contenu :",
+            *notes,
+            "connector_statuses.csv, configuration_keys.csv, chargers.csv : état courant complet",
+            "file-borne.json : état de la surveillance de la file de la borne (blocage détecté, heure de démarrage, compteurs de relevés par connecteur)",
+            "",
+            "Rappel : les journaux OCPP et serveur sont gardés en mémoire (tampon circulaire) et perdus au redémarrage de l'add-on ; "
+            "les MeterValues ne figurent dans ocpp-logs.csv que si leur capture est activée (Débug > Logs OCPP), "
+            "mais ils sont toujours dans meter_values.csv (base de données).",
+        ]
+        zf.writestr("LISEZMOI.txt", "\n".join(readme))
     buf.seek(0)
     filename = _export_filename("dump-diagnostic", tz, ext="zip")
     return Response(
@@ -446,6 +546,11 @@ def list_chargers(db: Session = Depends(get_db), user=Depends(get_current_user))
             "relay_url": c.relay_url,
             "tariff_plan_id": c.tariff_plan_id,
             "active": c.deleted_at is None,
+            # Visibles par tous les utilisateurs (l'accueil les affiche) : temps
+            # écoulé depuis le dernier démarrage de la borne, et blocage
+            # probable de sa file de messages (voir queue_watch.py).
+            "uptime_s": queue_watch.uptime_seconds(c.id),
+            "queue_blocked": queue_watch.blocked_for(c.id) if c.id in CONNECTED_CHARGERS else None,
         }
         for c in chargers
     ]
@@ -992,6 +1097,9 @@ def _serialize_session(s: Transaction, db: Session, prev_odometer: Optional[floa
         # Charge intentionnellement suspendue en attente d'une programmation :
         # la transaction est ouverte (câble verrouillé) mais aucun kWh ne transite.
         "deferred_until": getattr(s, "deferred_until", None),
+        # "reconciled" | "finishing" : clôturée par le serveur faute de
+        # StopTransaction, données de fin possiblement incomplètes.
+        "close_reason": s.close_reason,
     }
 
 

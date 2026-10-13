@@ -438,6 +438,7 @@
 
       <!-- ACCUEIL -->
       <section class="view active" id="view-home">
+        <div id="home-alerts"></div>
         <div class="section-title">Occupation de l'alimentation</div>
         <div id="home-occupancy"></div>
         <div class="section-title">Charge en cours</div>
@@ -767,6 +768,7 @@ function startSSE() {
       const evt = JSON.parse(e.data);
       // Ne rafraîchit que si aucun champ/modale n'est en cours d'édition
       if (evt.type === "connected") return;
+      if (evt.type === "queue_auto_reset") toast("Borne redémarrée automatiquement (file de messages bloquée)", "ok");
       if (!isFocusWithin("view-home") && currentView === "home") loadHome();
       if (!isFocusWithin("view-chargers") && currentView === "chargers") loadChargers();
       // Si une modale est ouverte et porte sur un connecteur, on la rafraîchit
@@ -1154,6 +1156,11 @@ function renderHealthBannerInto(container) {
               `${esc(it.charger_name)} · conn. ${it.connector_id} · depuis ${it.since_min} min ` +
               `<button class="linkbtn" onclick="event.stopPropagation(); triggerChargerReset('${esc(it.charger_id)}', false)">Redémarrer la borne</button>`
             ).join("<br>")
+          : h.key === "file_borne_bloquee"
+          ? h.items.slice(0, 6).map(it =>
+              `${esc(it.charger_name)} · conn. ${it.connector_id} · ${esc(it.reason)} · depuis ${it.since_min} min${it.uptime_h != null ? " · borne démarrée il y a " + it.uptime_h + " h" : ""} ` +
+              (isAdmin() ? `<button class="linkbtn" onclick="event.stopPropagation(); triggerChargerReset('${esc(it.charger_id)}', false)">Redémarrer la borne</button>` : "")
+            ).join("<br>")
           : h.items.slice(0, 6).map(it => esc(Object.values(it).filter(v => v !== null && v !== undefined).join(" · "))).join("<br>");
         return `<div class="health-card ${h.severity === "danger" ? "danger" : "warn"}" onclick="this.classList.toggle('open')">
           <div class="cluster center" style="justify-content:space-between;gap:.5rem">
@@ -1180,6 +1187,34 @@ function refreshCurrentView() {
 }
 
 /* ========================= ACCUEIL ========================= */
+/* Durée de fonctionnement d'une borne depuis son dernier démarrage (secondes). */
+function formatUptime(sec) {
+  if (sec == null) return "";
+  const m = Math.floor(sec / 60);
+  if (m < 60) return `${m} min`;
+  const h = Math.floor(m / 60);
+  if (h < 48) return `${h} h ${String(m % 60).padStart(2, "0")}`;
+  return `${Math.floor(h / 24)} j ${h % 24} h`;
+}
+/* Bandeau visible par tous les utilisateurs : la file de messages d'une borne
+   est probablement bloquée (voir queue_watch.py). Seul l'admin voit le bouton
+   de redémarrage. */
+function renderQueueAlerts(chargers) {
+  const el = document.getElementById("home-alerts");
+  if (!el) return;
+  const blocked = chargers.filter(c => c.active && c.queue_blocked);
+  el.innerHTML = blocked.map(c => `
+    <div class="card" style="border-left:3px solid var(--danger); background:var(--danger-soft); margin-bottom:.6rem">
+      <div class="spread" style="align-items:center; gap:.6rem; flex-wrap:wrap">
+        <div class="small">
+          <b>${esc(chargerLabel(c))} : file de messages probablement bloquée</b><br>
+          <span class="muted">${esc(c.queue_blocked.label)}${c.queue_blocked.connector_id ? " (connecteur " + c.queue_blocked.connector_id + ")" : ""}. La charge peut ne pas démarrer ou ne plus être suivie. Un redémarrage de la borne la débloque.</span>
+        </div>
+        ${isAdmin() ? `<button class="btn btn-sm" onclick="triggerChargerReset('${esc(c.id)}', false)">Redémarrer la borne</button>` : ""}
+      </div>
+    </div>`).join("");
+}
+
 async function loadHome() {
   const [active, recent, allChargers, occupancy] = await Promise.all([
     fetch("api/history?status_filter=active&limit=20", { headers: authHeaders() }).then(r => r.json()),
@@ -1199,6 +1234,7 @@ async function loadHome() {
     condByCharger[c.id] = conds.filter(cd => cd.enabled);
   }));
   const lastCompleted = recent.find(s => s.status === "completed");
+  renderQueueAlerts(allChargers);
   if (!isFocusWithin("home-occupancy")) renderOccupancy(occupancy);
   if (!isFocusWithin("home-current")) await renderHomeCurrent(active, chargers, condByCharger);
   if (!isFocusWithin("home-available")) await renderHomeAvailable(chargers, active, condByCharger);
@@ -1551,8 +1587,10 @@ async function loadChargers() {
             <span class="badge ${c.mode}">${c.mode}</span>
             <span class="badge ${c.connected ? "ok" : "off"}"><span class="dot"></span>${c.connected ? "connectée" : "hors ligne"}</span>
             ${schedBadge}
+            ${c.queue_blocked ? `<span class="badge danger" title="${esc(c.queue_blocked.label)}">File bloquée</span>` : ""}
           </div>
           <div class="cluster center" style="gap:.35rem; margin-top:.45rem">${connBadges}</div>
+          ${c.connected && c.uptime_s != null ? `<div class="tiny muted" style="margin-top:.2rem">En marche depuis ${formatUptime(c.uptime_s)}</div>` : ""}
           <div class="small muted" style="margin-top:.35rem">${esc(c.vendor || "")} ${esc(c.model || "")} ${c.ocpp_version ? "· OCPP " + esc(c.ocpp_version) : ""}</div>
           <div class="tiny muted" style="margin-top:.2rem">ID borne (chargePointId) : <code>${esc(c.id)}</code></div>
         </div>
@@ -2507,7 +2545,7 @@ function renderHistory() {
       const canEditSession = isAdmin() || (currentUser.vehicle_ids && s.vehicle_id && currentUser.vehicle_ids.includes(s.vehicle_id));
       return `<tr>
       <td data-label="Borne">${bornCell}</td><td data-label="Conn.">${s.connector_id ?? "–"}</td><td data-label="Véhicule">${esc(s.vehicle_name || "–")}${s.vehicle_deleted ? ' <span class="badge off" style="padding:.05rem .35rem">suppr.</span>' : ""}</td>
-      <td data-label="Début">${formatDateTime(s.start_time)}</td><td data-label="Fin">${endCell}</td><td data-label="Charge">${chargeDur}</td><td data-label="Branché" class="muted">${pluggedDur}</td>
+      <td data-label="Début">${formatDateTime(s.start_time)}</td><td data-label="Fin">${endCell}${s.close_reason ? ` <span class="badge warn" style="padding:.05rem .35rem" title="Session clôturée par le serveur faute de fin reçue de la borne : les données de fin (énergie, coût) peuvent être incomplètes. Elles sont corrigées automatiquement si les relevés arrivent en retard.">auto</span>` : ""}</td><td data-label="Charge">${chargeDur}</td><td data-label="Branché" class="muted">${pluggedDur}</td>
       <td data-label="kWh">${kWh(s.energy_wh)}</td><td data-label="P. max">${kW(s.power_max_w)}</td><td data-label="Coût">${eur(s.cost)}</td><td data-label="Tarif">${esc(s.tariff_plan_name || "–")}</td>
       <td data-label="km">${num(s.odometer_km)}</td><td data-label="km parc.">${num(s.km_since_last)}</td><td data-label="kWh/100">${s.kwh_per_100km != null ? s.kwh_per_100km : "–"}</td>
       <td data-label="% init.">${num(s.battery_percent_start)}</td><td data-label="% fin">${num(s.battery_percent_end)}${est}</td>
@@ -2735,6 +2773,13 @@ async function openSettingsModal() {
       <p class="tiny muted" style="margin:.4rem 0 .6rem">S'applique à l'affichage des horodatages (Logs OCPP, Logs serveur, dates partout dans l'app) et aux exports CSV. Les données restent stockées en UTC en base, seule la présentation change.</p>
       <button class="btn btn-sm" onclick="saveDisplayTimezone()">Enregistrer</button>
     </div>
+    <div class="card form-card" style="margin-top:.6rem">
+      <label class="cluster center" style="gap:.5rem; cursor:pointer">
+        <input type="checkbox" id="set-auto-reset" disabled onchange="toggleAutoReset(this.checked)">
+        <span>Redémarrage automatique d'une borne dont la file de messages est bloquée</span>
+      </label>
+      <p class="tiny muted" style="margin:.4rem 0 0">Désactivé par défaut. Quand il est activé, le serveur redémarre la borne (reset logiciel) uniquement si aucune charge n'est en cours sur elle, et au plus une fois toutes les 30 minutes. Sans cette option, le défaut est seulement signalé à tous les utilisateurs.</p>
+    </div>
     <div class="card form-card" style="margin-top:.6rem; border-left:3px solid var(--warn)">
       <div class="spread">
         <div><b>Redémarrer le serveur</b><div class="tiny muted">Redémarre l'add-on via Home Assistant. Les bornes se déconnectent puis se reconnectent d'elles-mêmes, l'application se recharge automatiquement quand le serveur est de retour (environ 30 s à 1 min).</div></div>
@@ -2759,7 +2804,22 @@ async function openSettingsModal() {
 
   openModal(html);
 
-  if (adminOnly) loadSettingsUsers();
+  if (adminOnly) { loadSettingsUsers(); loadAutoResetSetting(); }
+}
+
+async function loadAutoResetSetting() {
+  const cb = document.getElementById("set-auto-reset");
+  if (!cb) return;
+  try {
+    const d = await fetch("api/settings/queue-watch", { headers: authHeaders() }).then(r => r.json());
+    cb.checked = !!d.auto_reset;
+    cb.disabled = false;
+  } catch (e) {}
+}
+async function toggleAutoReset(on) {
+  const { ok } = await apiCall("api/settings/queue-watch", { method: "PUT", headers: jsonHeaders(), body: JSON.stringify({ auto_reset: on }) },
+    on ? "Redémarrage automatique activé" : "Redémarrage automatique désactivé");
+  if (!ok) { const cb = document.getElementById("set-auto-reset"); if (cb) cb.checked = !on; }
 }
 
 async function changeMyPassword() {
@@ -3021,7 +3081,53 @@ function exportOcppConfig(chargerId, displayName) {
   downloadFile(`api/chargers/${chargerId}/config/export`, `config-ocpp-${displayName || chargerId}.csv`);
 }
 function exportDump() {
-  downloadFile("api/diagnostics/dump", "dump-diagnostic.zip");
+  const html = `<div class="modal-head"><h2>Exporter un dump de diagnostic</h2>
+    <button class="btn btn-icon btn-ghost" onclick="closeModal()"><svg><use href="#i-close"/></svg></button></div>
+    <div class="small muted" style="margin-bottom:.6rem">Choisissez la période à inclure. Le fichier LISEZMOI.txt du zip précise la plage appliquée et les éventuelles limites.</div>
+    <label class="field"><span>Période</span>
+      <select id="dump-mode" onchange="dumpModeChanged()">
+        <option value="hours">Dernières heures</option>
+        <option value="range">Plage de dates précise</option>
+      </select>
+    </label>
+    <div id="dump-hours-box" class="cluster" style="margin-top:.6rem">
+      <label class="field"><span>Nombre d'heures</span><input id="dump-hours" type="number" min="1" max="720" value="72" style="width:110px"></label>
+    </div>
+    <div id="dump-range-box" class="cluster" style="margin-top:.6rem; display:none">
+      <label class="field"><span>Du</span><input id="dump-since" type="datetime-local"></label>
+      <label class="field"><span>Au</span><input id="dump-until" type="datetime-local"></label>
+    </div>
+    <div class="cluster" style="margin-top:.6rem">
+      <label class="field"><span>Lignes max par fichier (vide = pas de limite, plafond serveur 500 000)</span><input id="dump-rows" type="number" min="100" step="100" placeholder="illimité" style="width:150px"></label>
+    </div>
+    <div class="cluster" style="margin-top:1rem; justify-content:flex-end">
+      <button class="btn btn-sm" onclick="closeModal()">Annuler</button>
+      <button class="btn btn-sm btn-primary" onclick="runDumpExport()"><svg><use href="#i-download"/></svg>Télécharger</button>
+    </div>`;
+  openModal(html);
+}
+function dumpModeChanged() {
+  const range = document.getElementById("dump-mode").value === "range";
+  document.getElementById("dump-hours-box").style.display = range ? "none" : "";
+  document.getElementById("dump-range-box").style.display = range ? "" : "none";
+}
+function runDumpExport() {
+  const params = new URLSearchParams();
+  if (document.getElementById("dump-mode").value === "range") {
+    const a = document.getElementById("dump-since").value;
+    const b = document.getElementById("dump-until").value;
+    if (!a && !b) { toast("Renseignez au moins une date", "err"); return; }
+    if (a) params.set("since", new Date(a).toISOString());
+    if (b) params.set("until", new Date(b).toISOString());
+  } else {
+    const h = parseInt(document.getElementById("dump-hours").value, 10);
+    if (!h || h < 1) { toast("Nombre d'heures invalide", "err"); return; }
+    params.set("hours", h);
+  }
+  const rows = parseInt(document.getElementById("dump-rows").value, 10);
+  if (rows > 0) params.set("max_rows", rows);
+  closeModal();
+  downloadFile(`api/diagnostics/dump?${params.toString()}`, "dump-diagnostic.zip");
 }
 
 function exportDbTableCsv() {

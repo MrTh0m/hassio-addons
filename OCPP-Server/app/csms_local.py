@@ -17,6 +17,7 @@ from .models import Charger, ChargerMode, Transaction, MeterValue, Configuration
 from .pricing import freeze_transaction_cost, compute_session_cost, resolve_plan_for_charger
 from . import mqtt_bridge
 from . import ocpp_logs
+from . import queue_watch
 from .sse import sse_notify
 
 logger = logging.getLogger("csms_local")
@@ -183,6 +184,20 @@ class _EmptyResponse:
     pour lesquelles la bibliothèque n'a pas de classe call_result."""
 
 
+def _last_register_wh(db, charger_id: str, connector_id: int, transaction_id: int, fallback):
+    """Dernier relevé d'énergie reçu pour cette transaction (à défaut
+    ``fallback``, en général meter_start). Sert de meter_stop provisoire quand
+    le serveur clôt lui-même une transaction faute de StopTransaction : mieux
+    que meter_stop = meter_start, qui effaçait toute l'énergie mesurée."""
+    last_reg = db.query(MeterValue).filter(
+        MeterValue.transaction_id == transaction_id,
+        MeterValue.charger_id == charger_id,
+        MeterValue.connector_id == connector_id,
+        MeterValue.measurand == "Energy.Active.Import.Register",
+    ).order_by(MeterValue.timestamp.desc()).first()
+    return last_reg.value if last_reg is not None else fallback
+
+
 # Délai de grâce entre le passage d'un connecteur sur "Finishing" et la
 # clôture côté serveur d'une transaction toujours "active". En temps normal la
 # borne envoie son StopTransaction quelques secondes avant/après Finishing
@@ -232,16 +247,11 @@ async def finalize_orphan_transaction(charger_id: str, connector_id: int, stop_t
             end = txn.start_time
 
         if txn.meter_stop is None:
-            last_reg = db.query(MeterValue).filter(
-                MeterValue.transaction_id == txn.id,
-                MeterValue.charger_id == charger_id,
-                MeterValue.connector_id == connector_id,
-                MeterValue.measurand == "Energy.Active.Import.Register",
-            ).order_by(MeterValue.timestamp.desc()).first()
-            txn.meter_stop = last_reg.value if last_reg is not None else txn.meter_start
+            txn.meter_stop = _last_register_wh(db, charger_id, connector_id, txn.id, txn.meter_start)
 
         txn.stop_time = end
         txn.status = "completed"
+        txn.close_reason = "finishing"
         txn.deferred_until = None
         if txn.charging_since:
             txn.charging_seconds = (txn.charging_seconds or 0.0) + max(0.0, (end - txn.charging_since).total_seconds())
@@ -308,6 +318,7 @@ class LocalChargePoint(ChargePoint16):
         # La borne vient de (re)démarrer : tout changement de configuration qui
         # attendait un reboot est désormais supposé appliqué.
         PENDING_REBOOT_KEYS.pop(self.id, None)
+        queue_watch.note_boot(self.id)
         db = self._db()
         try:
             charger = self._get_or_create_charger(db)
@@ -379,6 +390,9 @@ class LocalChargePoint(ChargePoint16):
                          payload={"type": kwargs.get("type"),
                                   "timestamp": kwargs.get("timestamp"),
                                   "techInfo": kwargs.get("tech_info")})
+        if kwargs.get("type") == "StartupOfTheDevice":
+            # Heure réelle de démarrage de la borne (sert à l'uptime affiché).
+            queue_watch.note_boot(self.id, _ocpp_ts(kwargs.get("timestamp")), from_device=True)
         return _EmptyResponse()
 
     @on(Action.authorize)
@@ -468,8 +482,9 @@ class LocalChargePoint(ChargePoint16):
                 if stale:
                     stale.stop_time = datetime.utcnow()
                     if stale.meter_stop is None:
-                        stale.meter_stop = stale.meter_start
+                        stale.meter_stop = _last_register_wh(db, self.id, connector_id, stale.id, stale.meter_start)
                     stale.status = "completed"
+                    stale.close_reason = "reconciled"
                     if stale.start_time:
                         closed_duration_min = round((stale.stop_time - stale.start_time).total_seconds() / 60, 1)
                     db.flush()
@@ -567,6 +582,7 @@ class LocalChargePoint(ChargePoint16):
                          summary=f"conn {connector_id}, idTag={id_tag}",
                          payload={"connectorId": connector_id, "idTag": id_tag, "meterStart": meter_start, **kwargs},
                          connector_id=connector_id)
+        queue_watch.note_start_transaction(self.id, connector_id)
         db = self._db()
         deferred_label = None
         vehicle_id_for_mqtt = None
@@ -697,6 +713,7 @@ class LocalChargePoint(ChargePoint16):
         ocpp_logs.record(self.id, "in", "StopTransaction",
                          summary=f"txn {transaction_id}",
                          payload={"transactionId": transaction_id, "meterStop": meter_stop, **kwargs})
+        queue_watch.note_stop_transaction(self.id)
         db = self._db()
         duration_min = None
         connector_id = None
@@ -715,6 +732,7 @@ class LocalChargePoint(ChargePoint16):
                 if txn.start_time and txn.stop_time < txn.start_time:
                     txn.stop_time = txn.start_time
                 txn.status = "completed"
+                txn.close_reason = None  # vrai arrêt reçu : données de fin fiables
                 txn.deferred_until = None
                 # Filet de sécurité : si un StopTransaction arrive alors que le
                 # connecteur était encore signalé "Charging" (pas de transition
@@ -768,7 +786,20 @@ class LocalChargePoint(ChargePoint16):
                          summary=f"conn {connector_id}",
                          payload={"connectorId": connector_id, "transactionId": transaction_id, "meterValue": meter_value},
                          connector_id=connector_id)
+        # Suivi de la file de la borne (voir queue_watch) : dernier relevé reçu,
+        # compteur par transaction, et trace d'un relevé rejoué en retard même
+        # quand la capture complète des MeterValues est désactivée.
+        stamps = [_ocpp_ts(mv.get("timestamp")) for mv in meter_value]
+        if queue_watch.note_meter_values(self.id, connector_id, transaction_id, stamps):
+            lag_s = int((datetime.utcnow() - max(stamps)).total_seconds()) if stamps else 0
+            ocpp_logs.record(self.id, "in", "MeterValues.replay",
+                             summary=f"conn {connector_id}, txn {transaction_id}, retard {lag_s} s",
+                             payload={"connectorId": connector_id, "transactionId": transaction_id,
+                                      "timestamps": [t.isoformat() + "Z" for t in stamps]},
+                             connector_id=connector_id)
         db = self._db()
+        late_txn = None
+        late_hit = False
         mqtt_updates = {}
         vehicle_id_for_mqtt = None
         try:
@@ -793,6 +824,21 @@ class LocalChargePoint(ChargePoint16):
             # n'envoient pas transactionId du tout (nos simulateurs par exemple).
             if our_txn is not None and transaction_id is not None and transaction_id != our_txn.id:
                 our_txn = None
+            # Relevés rejoués APRÈS la clôture de leur transaction (clôturée par
+            # le serveur faute de StopTransaction, file de la borne bloquée,
+            # voir queue_watch) : on les rattache à cette transaction, au lieu
+            # de les laisser orphelins, pour que l'énergie et le coût soient
+            # recalculés avec les vraies mesures. Gardes : même borne, même
+            # connecteur, transactionId identique à NOTRE id, et date du relevé
+            # dans la fenêtre de la session (marge de compute_session_cost).
+            if our_txn is None and transaction_id is not None:
+                late_txn = db.query(Transaction).filter(
+                    Transaction.id == transaction_id,
+                    Transaction.charger_id == self.id,
+                    Transaction.connector_id == connector_id,
+                    Transaction.status == "completed",
+                    Transaction.is_external.is_(False),
+                ).first()
             our_txn_id = our_txn.id if our_txn else None
             vehicle_id_for_mqtt = our_txn.vehicle_id if our_txn else None
 
@@ -808,6 +854,11 @@ class LocalChargePoint(ChargePoint16):
                 mv_ts = _ocpp_ts(mv.get("timestamp"))
                 if our_txn is not None and our_txn.start_time and mv_ts < our_txn.start_time - timedelta(minutes=1):
                     mv_ts = datetime.utcnow()
+                row_txn_id = our_txn_id
+                if late_txn is not None and late_txn.start_time and mv_ts >= late_txn.start_time - timedelta(minutes=1) \
+                        and mv_ts <= (late_txn.stop_time or datetime.utcnow()) + timedelta(minutes=10):
+                    row_txn_id = late_txn.id
+                    late_hit = True
                 for sv in mv.get("sampled_value", []):
                     try:
                         value = float(sv.get("value"))
@@ -822,7 +873,7 @@ class LocalChargePoint(ChargePoint16):
                             unit = "Wh"
                     db.add(MeterValue(
                         charger_id=self.id,
-                        transaction_id=our_txn_id,
+                        transaction_id=row_txn_id,
                         connector_id=connector_id,
                         timestamp=mv_ts,
                         measurand=measurand,
@@ -868,6 +919,15 @@ class LocalChargePoint(ChargePoint16):
                 except Exception:
                     logger.debug("Calcul du coût en direct échoué pour %s/%s", self.id, connector_id, exc_info=True)
 
+            if late_hit and late_txn is not None:
+                try:
+                    db.flush()
+                    freeze_transaction_cost(db, late_txn)
+                    logger.info("Borne %s : relevés tardifs rattachés à la transaction %s (énergie %.0f Wh, coût %s)",
+                                self.id, late_txn.id, late_txn.energy_wh or 0, late_txn.cost)
+                except Exception:
+                    logger.debug("Recalcul de la transaction %s après relevés tardifs échoué", late_txn.id, exc_info=True)
+
             db.commit()
         finally:
             db.close()
@@ -900,6 +960,8 @@ class LocalChargePoint(ChargePoint16):
                          summary=f"conn {connector_id} -> {resp.status}",
                          payload={"connectorId": connector_id, "status": resp.status},
                          connector_id=connector_id)
+        queue_watch.note_remote_start(
+            self.id, connector_id, getattr(resp.status, "value", resp.status) == "Accepted")
         return resp
 
     async def _auto_start(self, connector_id: int):

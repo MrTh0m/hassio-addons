@@ -15,7 +15,7 @@ from datetime import datetime, timedelta
 
 from .db import SessionLocal
 from .models import Charger, ConnectorStatus, Transaction, Vehicle
-from . import ocpp_logs, server_logs
+from . import ocpp_logs, queue_watch, server_logs
 from .csms_local import CONNECTED_CHARGERS, PENDING_REBOOT_KEYS
 
 # Cohérent avec le seuil déjà utilisé côté planificateur (scheduler.py) pour
@@ -36,6 +36,7 @@ IMPLAUSIBLE_KWH_100KM_LOW = 5
 IMPLAUSIBLE_KWH_100KM_HIGH = 40
 STUCK_PREPARING_AFTER_FAILED_START_MIN = 10
 UNAUTHORIZED_SESSION_LOOKBACK_H = 24
+SERVER_CLOSED_LOOKBACK_D = 7
 
 
 def _badge(key, label, severity, count, items=None, detail=None):
@@ -414,7 +415,61 @@ def _check_bornes_hors_ligne():
         db.close()
 
 
+def _check_file_borne_bloquee():
+    """File de messages de transaction de la borne probablement bloquée
+    (incidents des 10/10 et 13/10, voir queue_watch.py) : plus de relevé de
+    compteur pendant une charge, ou démarrage à distance accepté sans suite.
+    C'est le symptôme visible par tous les utilisateurs sur l'accueil ; ce
+    badge en donne le détail (cause, depuis quand, uptime de la borne)."""
+    queue_watch.evaluate()
+    db = SessionLocal()
+    try:
+        items = []
+        for cid, entry in queue_watch.BLOCKED.items():
+            charger = db.query(Charger).filter(Charger.id == cid).first()
+            uptime = queue_watch.uptime_seconds(cid)
+            items.append({
+                "charger_id": cid,
+                "charger_name": (charger.display_name if charger else None) or cid,
+                "connector_id": entry["connector_id"],
+                "reason": queue_watch.REASON_LABELS.get(entry["reason"], entry["reason"]),
+                "detail": entry.get("detail"),
+                "since_min": round((datetime.utcnow() - entry["detected_at"]).total_seconds() / 60, 1),
+                "uptime_h": round(uptime / 3600, 1) if uptime is not None else None,
+            })
+        return _badge("file_borne_bloquee", "File de messages de la borne bloquée (relevés ou démarrage)",
+                      "danger" if items else "ok", len(items), items)
+    finally:
+        db.close()
+
+
+def _check_sessions_cloturees_serveur():
+    """Sessions clôturées par le serveur faute de StopTransaction (champ
+    Transaction.close_reason) : énergie et coût de fin potentiellement
+    incomplets tant que la borne n'a pas rejoué son arrêt (reset de la
+    borne)."""
+    db = SessionLocal()
+    try:
+        cutoff = datetime.utcnow() - timedelta(days=SERVER_CLOSED_LOOKBACK_D)
+        rows = db.query(Transaction).filter(
+            Transaction.close_reason.isnot(None),
+            Transaction.start_time >= cutoff,
+        ).order_by(Transaction.start_time.desc()).all()
+        items = [{
+            "id": t.id, "charger_id": t.charger_id, "connector_id": t.connector_id,
+            "close_reason": t.close_reason,
+            "stop_time": t.stop_time.isoformat() + "Z" if t.stop_time else None,
+        } for t in rows]
+        return _badge("sessions_cloturees_serveur",
+                      "Sessions clôturées par le serveur (données de fin possiblement incomplètes)",
+                      "warn" if items else "ok", len(items), items)
+    finally:
+        db.close()
+
+
 _CHECKS = [
+    _check_file_borne_bloquee,
+    _check_sessions_cloturees_serveur,
     _check_connecteurs_bloques,
     _check_connecteur_bloque_apres_echec,
     _check_charge_active_non_suivie,
