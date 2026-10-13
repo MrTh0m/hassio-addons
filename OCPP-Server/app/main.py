@@ -20,6 +20,7 @@ from .relay import run_relay
 from .scheduler import run_scheduler
 from . import mqtt_bridge
 from . import server_logs
+from . import queue_watch
 from .sse import sse_stream
 from .auth import get_current_user, oauth2_scheme
 from fastapi import Depends
@@ -149,7 +150,7 @@ async def on_startup():
     asyncio.create_task(run_scheduler())
 
 
-APP_VERSION = "0.19.39"
+APP_VERSION = "0.19.40"
 
 
 @app.get("/healthz")
@@ -243,6 +244,7 @@ async def ocpp_endpoint(websocket: WebSocket, charge_point_id: str):
                 except Exception:
                     pass
             CONNECTED_CHARGERS[charge_point_id] = cp
+            queue_watch.note_connect(charge_point_id)
             try:
                 asyncio.create_task(_refresh_connector_statuses(cp, charge_point_id))
                 await cp.start()

@@ -65,6 +65,7 @@ LAST_METER_RX: dict[tuple, datetime] = {}      # (borne, connecteur) -> dernièr
 METER_STATS: dict[tuple, dict] = {}            # (borne, connecteur) -> compteurs de relevés
 REMOTE_START_ACCEPTED: dict[tuple, datetime] = {}
 BOOT_AT: dict[str, datetime] = {}              # borne -> dernier démarrage connu
+CONNECTED_AT: dict[str, datetime] = {}         # borne -> début de la connexion WebSocket en cours
 BLOCKED: dict[str, dict] = {}                  # borne -> blocage constaté
 LAST_AUTO_RESET: dict[str, datetime] = {}      # borne -> dernier reset automatique
 
@@ -174,6 +175,19 @@ def boot_at(charger_id: str) -> datetime | None:
     finally:
         db.close()
     return None
+
+
+def note_connect(charger_id: str) -> None:
+    CONNECTED_AT[charger_id] = _utcnow()
+
+
+def connected_seconds(charger_id: str) -> int | None:
+    """Durée de la connexion WebSocket en cours (repli quand l'heure de
+    démarrage de la borne est inconnue : elle n'arrive qu'avec un
+    BootNotification ou un StartupOfTheDevice, donc pas avant son prochain
+    redémarrage)."""
+    at = CONNECTED_AT.get(charger_id)
+    return max(0, int((_utcnow() - at).total_seconds())) if at else None
 
 
 def uptime_seconds(charger_id: str) -> int | None:
