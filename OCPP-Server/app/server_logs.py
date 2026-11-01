@@ -24,7 +24,7 @@ import threading
 from collections import deque
 from datetime import datetime
 
-MAX_ENTRIES = 2000
+MAX_ENTRIES = 20000
 
 _buffer: "deque[dict]" = deque(maxlen=MAX_ENTRIES)
 _lock = threading.Lock()

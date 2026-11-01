@@ -44,6 +44,34 @@ def _to_wh(value: float, unit: str | None) -> float:
     return value
 
 
+def _increasing_steps(points):
+    """Paliers d'énergie croissants entre relevés triés par date.
+
+    Le registre d'énergie d'une borne ne fait que croître : un relevé dont la
+    valeur est inférieure au maximum déjà vu est donc hors séquence (relevé
+    rejoué après coup, horodatage de borne incohérent) et ignoré, au lieu de
+    « descendre » puis de remonter en recomptant la même énergie. Observé le
+    09/10 : une session de 228 Wh affichait 456 Wh (et le double en coût),
+    car l'arrêt rejoué (323618 Wh) précédait dans le temps des relevés
+    (323390 → 323618 Wh) reçus ensuite pour la même session.
+    """
+    steps = []
+    prev = None
+    for t, e in points:
+        if prev is None:
+            prev = (t, e)
+            continue
+        if e < prev[1]:
+            continue
+        if e > prev[1]:
+            steps.append((prev, (t, e)))
+        # À valeur égale, on avance quand même l'ancre dans le temps : un
+        # plateau (charge suspendue) ne doit pas étaler le palier suivant sur
+        # toute sa durée, pour garder l'attribution tarifaire par tranche.
+        prev = (t, e)
+    return steps
+
+
 def compute_session_cost(transaction, meter_values, plan, ignore_meter_stop: bool = False) -> dict:
     """Calcule le coût d'une session en découpant son énergie par tranche de
     temps entre relevés successifs, et en appliquant le tarif actif à chaque
@@ -85,9 +113,12 @@ def compute_session_cost(transaction, meter_values, plan, ignore_meter_stop: boo
     if not ignore_meter_stop and transaction.meter_stop is not None and transaction.stop_time:
         points.append((transaction.stop_time, float(transaction.meter_stop)))
 
-    points.sort(key=lambda p: p[0])
+    # Tri par date puis par valeur : à date égale (ex. relevé de départ et
+    # d'arrêt portant le même horodatage rejoué), le plus petit passe d'abord.
+    points.sort(key=lambda p: (p[0], p[1]))
+    steps = _increasing_steps(points)
 
-    if len(points) < 2:
+    if not steps:
         return {"cost": None, "energy_wh": 0.0}
 
     # Somme des paliers d'énergie CROISSANTS entre relevés consécutifs, pas
@@ -100,21 +131,15 @@ def compute_session_cost(transaction, meter_values, plan, ignore_meter_stop: boo
     # Max corrects, calculés eux via cette même logique de paliers). Même
     # principe de robustesse que la boucle de coût ci-dessous (qui ignore
     # déjà les deltas négatifs), gardé cohérent avec elle.
-    total_wh = 0.0
-    for (t1, e1), (t2, e2) in zip(points, points[1:]):
-        delta = e2 - e1
-        if delta > 0:
-            total_wh += delta
+    total_wh = sum(e2 - e1 for (_, e1), (_, e2) in steps)
 
     if plan is None:
         return {"cost": None, "energy_wh": total_wh}
 
     cost = 0.0
     has_price_info = False
-    for (t1, e1), (t2, e2) in zip(points, points[1:]):
+    for (t1, e1), (t2, e2) in steps:
         delta = e2 - e1
-        if delta <= 0:
-            continue
         mid = t1 + (t2 - t1) / 2
         price = price_at(plan, mid)
         if price is None:

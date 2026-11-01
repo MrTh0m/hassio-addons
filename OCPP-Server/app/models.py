@@ -178,6 +178,14 @@ class Transaction(Base):
     # invisible, seul ce champ distingue qu'elle n'était pas autorisée.
     unauthorized = Column(Boolean, default=False, nullable=True)
 
+    # Renseigné quand la transaction a été clôturée par le SERVEUR faute de
+    # StopTransaction (file de la borne bloquée, voir queue_watch.py) :
+    # "reconciled" (connecteur revenu à Available/Preparing) ou "finishing"
+    # (resté sur Finishing sans arrêt reçu). Les données de fin (énergie,
+    # coût) peuvent alors être incomplètes. Remis à NULL dès que le vrai
+    # StopTransaction de la borne arrive (par exemple rejoué après un reset).
+    close_reason = Column(String, nullable=True)
+
     is_external = Column(Boolean, default=False)
     location_label = Column(String, nullable=True)
 

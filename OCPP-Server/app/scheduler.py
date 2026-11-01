@@ -26,7 +26,8 @@ from .models import (
     ConnectorStatus, Transaction,
 )
 from .pricing import resolve_plan_for_charger, price_at
-from .csms_local import CONNECTED_CHARGERS, SMART_CHARGING_SUPPORT
+from .csms_local import CONNECTED_CHARGERS, SMART_CHARGING_SUPPORT, finalize_orphan_transaction
+from . import queue_watch
 
 logger = logging.getLogger("scheduler")
 
@@ -227,6 +228,10 @@ async def run_scheduler():
             await _evaluate_stuck_finishing_once()
         except Exception:
             logger.warning("Erreur dans la détection de connecteur bloqué sur Finishing", exc_info=True)
+        try:
+            await queue_watch.tick()
+        except Exception:
+            logger.warning("Erreur dans la surveillance de la file de la borne", exc_info=True)
         await asyncio.sleep(TICK_SECONDS)
 
 
@@ -289,11 +294,19 @@ async def _evaluate_stuck_finishing_once():
             ConnectorStatus.connector_id != 0,
             ConnectorStatus.updated_at < cutoff,
         ).all()
-        targets = [(row.charger_id, row.connector_id) for row in stuck]
+        targets = [(row.charger_id, row.connector_id, row.updated_at) for row in stuck]
     finally:
         db.close()
 
-    for charger_id, connector_id in targets:
+    for charger_id, connector_id, since in targets:
+        # Filet de sécurité (ex. serveur redémarré pendant le délai de grâce de
+        # csms_local) : une transaction encore "active" sur un connecteur bloqué
+        # sur Finishing n'a plus de raison de l'être, la borne n'a pas envoyé
+        # son StopTransaction.
+        try:
+            await finalize_orphan_transaction(charger_id, connector_id, stop_time=since)
+        except Exception:
+            logger.debug("Clôture de transaction orpheline échouée sur %s/%s", charger_id, connector_id, exc_info=True)
         cp = CONNECTED_CHARGERS.get(charger_id)
         if not cp:
             continue

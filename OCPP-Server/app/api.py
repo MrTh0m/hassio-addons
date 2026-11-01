@@ -34,6 +34,7 @@ from .csms_local import (
     sync_local_auth_list,
 )
 from . import mqtt_bridge
+from . import queue_watch
 
 
 def _rows_to_csv_bytes(rows: list, tz: Optional[ZoneInfo] = None) -> bytes:
@@ -235,6 +236,24 @@ def set_display_timezone(body: TimezoneUpdate, db: Session = Depends(get_db), us
     return {"display_timezone": body.timezone}
 
 
+class QueueWatchSettings(BaseModel):
+    auto_reset: bool
+
+
+@router.get("/settings/queue-watch")
+def get_queue_watch_settings(user=Depends(require_admin)):
+    """Réglage du redémarrage automatique d'une borne dont la file de messages
+    est bloquée (voir queue_watch.py). Désactivé par défaut."""
+    return {"auto_reset": queue_watch.auto_reset_enabled(),
+            "cooldown_min": queue_watch.AUTO_RESET_COOLDOWN_S // 60}
+
+
+@router.put("/settings/queue-watch")
+def set_queue_watch_settings(body: QueueWatchSettings, user=Depends(require_admin)):
+    queue_watch.set_auto_reset(body.auto_reset)
+    return {"auto_reset": queue_watch.auto_reset_enabled()}
+
+
 class ServerRestartBody(BaseModel):
     force: bool = False
 
@@ -329,28 +348,91 @@ def list_installed_packages(user=Depends(require_admin)):
     return pkgs
 
 
+DUMP_DEFAULT_HOURS = 72
+DUMP_HARD_CAP_ROWS = 500_000
+
+
+def _in_range(ts_iso: str, since: Optional[datetime], until: Optional[datetime]) -> bool:
+    try:
+        ts = datetime.fromisoformat(ts_iso.replace("Z", ""))
+    except (ValueError, AttributeError):
+        return True
+    return (since is None or ts >= since) and (until is None or ts <= until)
+
+
 @router.get("/diagnostics/dump")
-def diagnostics_dump(db: Session = Depends(get_db), user=Depends(require_admin)):
+def diagnostics_dump(
+    hours: Optional[float] = None, since: Optional[str] = None, until: Optional[str] = None,
+    max_rows: Optional[int] = None,
+    db: Session = Depends(get_db), user=Depends(require_admin),
+):
     """Regroupe en un seul zip tout ce qui sert habituellement à diagnostiquer
-    un problème (logs OCPP, logs serveur, statuts connecteurs, transactions
-    récentes, clés de config, bornes, relevés de compteur récents), pour ne
-    plus avoir à exporter chaque fichier séparément à la main comme on l'a
-    fait à plusieurs reprises en pratique."""
+    un problème (logs OCPP, logs serveur, statuts connecteurs, transactions,
+    clés de config, bornes, relevés de compteur, état de la surveillance de la
+    file de la borne), pour ne plus avoir à exporter chaque fichier
+    séparément à la main.
+
+    Étendue au choix de l'appelant :
+    - ``hours`` : les N dernières heures ;
+    - ``since`` / ``until`` : plage de dates ISO 8601 (UTC, suffixe Z) ;
+    - ``max_rows`` : nombre maximal de lignes PAR FICHIER (les plus récentes),
+      applicable seul ou en plus d'une plage.
+    Sans aucun paramètre : les DUMP_DEFAULT_HOURS dernières heures, sans limite
+    de lignes. Un fichier LISEZMOI.txt du zip rappelle l'étendue réellement
+    appliquée et signale toute troncature, y compris celle des journaux OCPP et
+    serveur, qui ne vivent qu'en mémoire (tampon circulaire)."""
     import zipfile
 
     tz = _get_display_tz(db)
+    until_dt = _parse_iso(until)
+    since_dt = _parse_iso(since)
+    if since_dt is None and hours is None and max_rows is None:
+        hours = DUMP_DEFAULT_HOURS
+    if since_dt is None and hours is not None:
+        from datetime import timedelta as _td
+        since_dt = datetime.utcnow() - _td(hours=max(0.0, hours))
+    cap = min(max_rows, DUMP_HARD_CAP_ROWS) if max_rows and max_rows > 0 else DUMP_HARD_CAP_ROWS
+    notes: list[str] = []
 
-    ocpp_entries = ocpp_logs.get_entries(limit=2000)
-    ocpp_entries = [{**e, "ts": _format_dt_for_export(e["ts"], tz)} for e in ocpp_entries]
+    def _fmt(dt):
+        return _format_dt_for_export(dt.isoformat(), tz) if dt else "(aucune borne)"
 
-    srv_entries = server_logs.get_entries(limit=2000)
-    srv_entries = [{**e, "ts": _format_dt_for_export(e["ts"], tz)} for e in srv_entries]
+    def _log_rows(entries: list, name: str, buffer_label: str) -> list:
+        kept = [e for e in entries if _in_range(e["ts"], since_dt, until_dt)]
+        truncated = len(kept) > cap
+        kept = kept[:cap]
+        oldest_in_buffer = entries[-1]["ts"] if entries else None
+        line = f"{name} : {len(kept)} ligne(s)"
+        if truncated:
+            line += f" (tronqué à {cap} lignes, les plus récentes)"
+        if oldest_in_buffer and since_dt is not None and _in_range(oldest_in_buffer, since_dt, None):
+            line += (f" ; ATTENTION le journal en mémoire ne remonte que jusqu'au "
+                     f"{_format_dt_for_export(oldest_in_buffer, tz)}, plus récent que le début demandé")
+        notes.append(line)
+        return [{**e, "ts": _format_dt_for_export(e["ts"], tz)} for e in kept]
+
+    ocpp_entries = _log_rows(ocpp_logs.get_entries(limit=10**7), "ocpp-logs.csv", "OCPP")
+    srv_entries = _log_rows(server_logs.get_entries(limit=10**7), "logs-serveur.csv", "serveur")
+
+    def _db_rows(model, column, order_col, name):
+        q = db.query(model)
+        if since_dt is not None:
+            q = q.filter(column >= since_dt)
+        if until_dt is not None:
+            q = q.filter(column <= until_dt)
+        total = q.count()
+        rows = q.order_by(order_col.desc()).limit(cap).all()
+        line = f"{name} : {len(rows)} ligne(s)"
+        if total > len(rows):
+            line += f" (tronqué : {total} dans la plage, les {len(rows)} plus récentes conservées)"
+        notes.append(line)
+        return rows
 
     connector_rows = db.query(ConnectorStatus).order_by(_order_column(ConnectorStatus)).all()
-    txn_rows = db.query(Transaction).order_by(Transaction.id.desc()).limit(2000).all()
+    txn_rows = _db_rows(Transaction, Transaction.start_time, Transaction.id, "transactions.csv")
     config_rows = db.query(ConfigurationKey).order_by(_order_column(ConfigurationKey)).all()
     charger_rows = db.query(Charger).all()
-    mv_rows = db.query(MeterValue).order_by(MeterValue.id.desc()).limit(3000).all()
+    mv_rows = _db_rows(MeterValue, MeterValue.timestamp, MeterValue.id, "meter_values.csv")
 
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
@@ -361,6 +443,24 @@ def diagnostics_dump(db: Session = Depends(get_db), user=Depends(require_admin))
         zf.writestr("configuration_keys.csv", _rows_to_csv_bytes([_serialize_row(r) for r in config_rows]))
         zf.writestr("chargers.csv", _rows_to_csv_bytes([_serialize_row(r) for r in charger_rows], tz=tz))
         zf.writestr("meter_values.csv", _rows_to_csv_bytes([_serialize_row(r) for r in mv_rows], tz=tz))
+        zf.writestr("file-borne.json", json.dumps(queue_watch.snapshot(), ensure_ascii=False, indent=2))
+        readme = [
+            "Dump de diagnostic OCPP-Server",
+            f"Généré le : {_fmt(datetime.utcnow())} ({tz.key if hasattr(tz, 'key') else tz})",
+            f"Début de plage : {_fmt(since_dt) if since_dt else 'aucun (tout)'}",
+            f"Fin de plage : {_fmt(until_dt) if until_dt else 'maintenant'}",
+            f"Lignes max par fichier : {cap if (max_rows and max_rows > 0) else 'aucune limite choisie (plafond de sécurité ' + str(DUMP_HARD_CAP_ROWS) + ')'}",
+            "",
+            "Contenu :",
+            *notes,
+            "connector_statuses.csv, configuration_keys.csv, chargers.csv : état courant complet",
+            "file-borne.json : état de la surveillance de la file de la borne (blocage détecté, heure de démarrage, compteurs de relevés par connecteur)",
+            "",
+            "Rappel : les journaux OCPP et serveur sont gardés en mémoire (tampon circulaire) et perdus au redémarrage de l'add-on ; "
+            "les MeterValues ne figurent dans ocpp-logs.csv que si leur capture est activée (Débug > Logs OCPP), "
+            "mais ils sont toujours dans meter_values.csv (base de données).",
+        ]
+        zf.writestr("LISEZMOI.txt", "\n".join(readme))
     buf.seek(0)
     filename = _export_filename("dump-diagnostic", tz, ext="zip")
     return Response(
@@ -446,6 +546,12 @@ def list_chargers(db: Session = Depends(get_db), user=Depends(get_current_user))
             "relay_url": c.relay_url,
             "tariff_plan_id": c.tariff_plan_id,
             "active": c.deleted_at is None,
+            # Visibles par tous les utilisateurs (l'accueil les affiche) : temps
+            # écoulé depuis le dernier démarrage de la borne, et blocage
+            # probable de sa file de messages (voir queue_watch.py).
+            "uptime_s": queue_watch.uptime_seconds(c.id),
+            "connected_s": queue_watch.connected_seconds(c.id) if c.id in CONNECTED_CHARGERS else None,
+            "queue_blocked": queue_watch.blocked_for(c.id) if c.id in CONNECTED_CHARGERS else None,
         }
         for c in chargers
     ]
@@ -992,6 +1098,9 @@ def _serialize_session(s: Transaction, db: Session, prev_odometer: Optional[floa
         # Charge intentionnellement suspendue en attente d'une programmation :
         # la transaction est ouverte (câble verrouillé) mais aucun kWh ne transite.
         "deferred_until": getattr(s, "deferred_until", None),
+        # "reconciled" | "finishing" : clôturée par le serveur faute de
+        # StopTransaction, données de fin possiblement incomplètes.
+        "close_reason": s.close_reason,
     }
 
 
@@ -1036,6 +1145,108 @@ def _serialize_sessions_with_km(sessions, db: Session) -> list[dict]:
         if s.vehicle_id and s.odometer_km is not None:
             last_odo[s.vehicle_id] = s.odometer_km
     return [_serialize_session(s, db, prev_by_id.get(s.id)) for s in sessions]
+
+
+# --- Agrégats mensuels / annuels (fiches voiture et borne, accueil) ---
+
+def _monthly_from_rows(rows: list, tz: ZoneInfo) -> list:
+    """Regroupe des charges terminées par mois CIVIL dans le fuseau d'affichage.
+
+    `rows` : dicts {start (datetime UTC naïf), energy_wh, cost, charging_min,
+    km, external, power_max_w}. Les mois sans charge entre la première charge et
+    le mois courant sont renvoyés à zéro, pour que « mois précédent » soit
+    toujours le mois calendaire précédent. Les km d'une charge sont ceux
+    parcourus depuis la charge précédente du véhicule (rattachés au mois de la
+    charge qui les révèle). kwh_per_100km n'utilise que l'énergie des charges
+    pour lesquelles un kilométrage est connu, pour rester cohérent."""
+    def _zero():
+        return {"charge_count": 0, "external_count": 0, "energy_wh": 0.0, "cost": 0.0,
+                "charging_min": 0.0, "km": 0.0, "km_energy_wh": 0.0, "power_max_w": None}
+
+    buckets: dict = {}
+    for r in rows:
+        d = r["start"].replace(tzinfo=ZoneInfo("UTC")).astimezone(tz)
+        b = buckets.setdefault((d.year, d.month), _zero())
+        b["charge_count"] += 1
+        if r.get("external"):
+            b["external_count"] += 1
+        energy = r.get("energy_wh") or 0.0
+        b["energy_wh"] += energy
+        b["cost"] += r.get("cost") or 0.0
+        b["charging_min"] += r.get("charging_min") or 0.0
+        if r.get("km"):
+            b["km"] += r["km"]
+            b["km_energy_wh"] += energy
+        pm = r.get("power_max_w")
+        if pm and (b["power_max_w"] is None or pm > b["power_max_w"]):
+            b["power_max_w"] = pm
+    if not buckets:
+        return []
+    now = datetime.utcnow().replace(tzinfo=ZoneInfo("UTC")).astimezone(tz)
+    first, last = min(buckets), max(max(buckets), (now.year, now.month))
+    out = []
+    y, m = first
+    while (y, m) <= last:
+        b = buckets.get((y, m)) or _zero()
+        out.append({
+            "month": f"{y:04d}-{m:02d}",
+            "charge_count": b["charge_count"],
+            "external_count": b["external_count"],
+            "energy_kwh": round(b["energy_wh"] / 1000.0, 2),
+            "cost": round(b["cost"], 2),
+            "charging_min": round(b["charging_min"], 1),
+            "km": round(b["km"], 1),
+            "kwh_per_100km": round(b["km_energy_wh"] / 1000.0 / b["km"] * 100, 2) if b["km"] else None,
+            "power_max_w": round(b["power_max_w"], 1) if b["power_max_w"] else None,
+        })
+        m += 1
+        if m > 12:
+            y, m = y + 1, 1
+    return out
+
+
+def _monthly_from_serialized(serialized: list, tz: ZoneInfo) -> list:
+    """Agrégat mensuel à partir de sessions déjà sérialisées (charges terminées)."""
+    rows = []
+    for s in serialized:
+        if s["status"] != "completed" or not s["start_time"]:
+            continue
+        rows.append({
+            "start": datetime.fromisoformat(s["start_time"]),
+            "energy_wh": s["energy_wh"], "cost": s["cost"],
+            "charging_min": s["charging_duration_min"],
+            "km": s["km_since_last"], "external": s["is_external"],
+            "power_max_w": s["power_max_w"],
+        })
+    return _monthly_from_rows(rows, tz)
+
+
+@router.get("/summary")
+def home_summary(db: Session = Depends(get_db), user=Depends(get_current_user)):
+    """Chiffres clés de l'accueil : agrégat mensuel de toutes les charges
+    terminées visibles par l'utilisateur (un non-admin ne voit que ses
+    véhicules). Le client en déduit mois courant, mois précédent et année en
+    cours. Calcul léger : lit directement les transactions sans les sérialiser."""
+    tz = _get_display_tz(db)
+    allowed_ids = _user_vehicle_ids(db, user)
+    q = db.query(Transaction).filter(Transaction.start_time.isnot(None))
+    if allowed_ids is not None:
+        q = q.filter(Transaction.vehicle_id.in_(allowed_ids))
+    txns = q.order_by(Transaction.start_time.asc()).all()
+    last_odo: dict = {}
+    km_by_id: dict = {}
+    for t in txns:
+        if t.vehicle_id and t.odometer_km is not None:
+            prev = last_odo.get(t.vehicle_id)
+            if prev is not None and t.odometer_km - prev > 0:
+                km_by_id[t.id] = t.odometer_km - prev
+            last_odo[t.vehicle_id] = t.odometer_km
+    rows = [{
+        "start": t.start_time, "energy_wh": t.energy_wh, "cost": t.cost,
+        "charging_min": (t.charging_seconds or 0.0) / 60.0,
+        "km": km_by_id.get(t.id), "external": bool(t.is_external),
+    } for t in txns if t.status == "completed"]
+    return {"timezone": str(tz), "monthly": _monthly_from_rows(rows, tz)}
 
 
 class SessionUpdate(BaseModel):
@@ -1430,6 +1641,7 @@ def vehicle_stats(vehicle_id: int, db: Session = Depends(get_db), user=Depends(g
         "active": vehicle.deleted_at is None,
         "charger_ids": _vehicle_charger_ids(db, vehicle.id),
         "stats": stats,
+        "monthly": _monthly_from_serialized(serialized, _get_display_tz(db)),
         "sessions": serialized,
     }
 
@@ -1847,11 +2059,16 @@ def charger_stats(charger_id: str, db: Session = Depends(get_db), user=Depends(g
             "total_cost": round(total_cost, 2),
             "power_max_w": round(max(powers), 1) if powers else None,
         },
+        "monthly": _monthly_from_serialized(serialized, _get_display_tz(db)),
         "sessions": serialized,
     }
 
 
 # --- Taux d'occupation de l'alimentation électrique ---
+
+# Au-delà de cet âge, le dernier relevé de puissance n'est plus considéré
+# comme représentatif (borne muette, coupure réseau...).
+OCCUPANCY_MAX_SAMPLE_AGE_S = 15 * 60
 
 @router.get("/occupancy")
 def power_occupancy(db: Session = Depends(get_db), user=Depends(get_current_user)):
@@ -1889,6 +2106,21 @@ def power_occupancy(db: Session = Depends(get_db), user=Depends(get_current_user
             MeterValue.measurand == "Power.Active.Import",
         ).order_by(MeterValue.timestamp.desc()).first()
         power_w = last_power.value if last_power else 0.0
+        # Le dernier relevé ne vaut que tant que la charge est réellement en
+        # cours : en SuspendedEV/SuspendedEVSE/Finishing la borne n'envoie plus
+        # de MeterValues, donc le dernier relevé (ex. 5,9 kW) resterait compté
+        # indéfiniment alors que plus rien n'est délivré (observé le 04/10 :
+        # 98,2 % affiché pendant 9 h sur une charge suspendue). On exige donc
+        # un connecteur sur "Charging" et un relevé récent.
+        if power_w:
+            conn_row = db.query(ConnectorStatus).filter(
+                ConnectorStatus.charger_id == s.charger_id,
+                ConnectorStatus.connector_id == s.connector_id,
+            ).first() if s.charger_id else None
+            if conn_row is not None and conn_row.status != "Charging":
+                power_w = 0.0
+            elif last_power.timestamp and (datetime.utcnow() - last_power.timestamp).total_seconds() > OCCUPANCY_MAX_SAMPLE_AGE_S:
+                power_w = 0.0
         b = _bucket(plan)
         b["delivered_power_w"] += power_w
         b["active_sessions"] += 1

@@ -339,6 +339,7 @@
   .stat { background: var(--surface-2); border-radius: var(--r-sm); padding: .6rem .7rem; }
   .stat .sv { font-size: 1.15rem; font-weight: 700; }
   .stat .sl { font-size: .72rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: .04em; }
+  .delta { font-size: .72rem; color: var(--text-muted); margin-top: .1rem; font-weight: 400; line-height: 1.25; }
   .clickable { cursor: pointer; }
   .clickable:hover { background: var(--surface-2); }
   code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: .85em; background: var(--surface-3); padding: .05rem .35rem; border-radius: 5px; }
@@ -438,6 +439,11 @@
 
       <!-- ACCUEIL -->
       <section class="view active" id="view-home">
+        <div id="home-alerts"></div>
+        <div id="home-summary-wrap" style="display:none">
+          <div class="section-title">Chiffres clés</div>
+          <div class="card" id="home-summary"></div>
+        </div>
         <div class="section-title">Occupation de l'alimentation</div>
         <div id="home-occupancy"></div>
         <div class="section-title">Charge en cours</div>
@@ -458,7 +464,10 @@
 
       <!-- VÉHICULES -->
       <section class="view" id="view-vehicles">
-        <div class="card form-card" id="veh-add-card">
+        <div class="cluster" id="veh-add-bar" style="justify-content:flex-end; margin-bottom:.6rem">
+          <button class="btn btn-sm" id="veh-add-toggle" onclick="toggleVehicleAdd()"><svg><use href="#i-plus"/></svg>Ajouter une voiture</button>
+        </div>
+        <div class="card form-card" id="veh-add-card" style="display:none">
           <p class="small muted" style="margin:.1rem 0 .8rem">
             Un véhicule peut être associé à un badge (idTag). Une charge démarrée avec ce badge — ou
             démarrée pour ce véhicule depuis l'appli — lui est rattachée automatiquement, pour le suivi des coûts.
@@ -522,7 +531,7 @@
         <div class="card" style="margin-top:.8rem">
           <div class="table-wrap"><table class="responsive wide" id="history-table">
             <thead><tr>
-              <th>Borne</th><th>Conn.</th><th>Véhicule</th><th>Début</th><th>Fin</th><th>Durée</th>
+              <th>Borne</th><th>Conn.</th><th>Véhicule</th><th>Début</th><th>Fin</th><th title="Temps pendant lequel la charge a réellement délivré de l'énergie">Charge</th><th title="Durée totale branché (pauses incluses)">Branché</th>
               <th>kWh</th><th>P. max</th><th>Coût</th><th>Tarif</th><th>km</th><th>km parc.</th>
               <th>kWh/100</th><th>% init.</th><th>% fin</th><th>Recharge</th><th></th>
             </tr></thead>
@@ -746,8 +755,11 @@ function applyRoleUI() {
   const tariffBtn = document.querySelector(".navitem[data-nav='tariffs']");
   if (tariffBtn) tariffBtn.style.display = hasPerm("can_manage_tariffs") ? "" : "none";
   // Formulaire ajout de véhicule
+  // Le formulaire reste replié tant qu'on n'a pas cliqué « Ajouter une voiture ».
+  const vehAddBar = document.getElementById("veh-add-bar");
+  if (vehAddBar) vehAddBar.style.display = hasPerm("can_manage_vehicles") ? "" : "none";
   const vehAdd = document.getElementById("veh-add-card");
-  if (vehAdd) vehAdd.style.display = hasPerm("can_manage_vehicles") ? "" : "none";
+  if (vehAdd && !hasPerm("can_manage_vehicles")) vehAdd.style.display = "none";
   // Si la vue actuelle n'est plus accessible, rediriger vers l'accueil
   if (currentView === "logs" && !debugToolsVisible()) switchView("home");
   if (currentView === "server-logs" && !debugToolsVisible()) switchView("home");
@@ -767,6 +779,7 @@ function startSSE() {
       const evt = JSON.parse(e.data);
       // Ne rafraîchit que si aucun champ/modale n'est en cours d'édition
       if (evt.type === "connected") return;
+      if (evt.type === "queue_auto_reset") toast("Borne redémarrée automatiquement (file de messages bloquée)", "ok");
       if (!isFocusWithin("view-home") && currentView === "home") loadHome();
       if (!isFocusWithin("view-chargers") && currentView === "chargers") loadChargers();
       // Si une modale est ouverte et porte sur un connecteur, on la rafraîchit
@@ -809,6 +822,20 @@ function formatDateTime(iso) {
 function formatDuration(min) {
   if (min == null) return "–";
   return `${Math.floor(min / 60)}h${String(Math.round(min % 60)).padStart(2, "0")}`;
+}
+/* Durées d'une session. La CHARGE EFFECTIVE (connecteur en "Charging") est la
+   valeur principale ; la durée totale "branché" (qui inclut les pauses
+   véhicule/borne et l'attente avant le débranchement) est secondaire, en gris
+   et libellée explicitement pour ne jamais être confondue avec la première.
+   Sans suivi de charge effective (ancienne session), seule la durée branchée
+   est connue et elle est présentée comme telle. Rien pour une charge externe
+   (début = fin, aucune durée réelle). */
+function sessionDurationsHtml(s) {
+  if (s.is_external) return "";
+  const pluggedTip = "Durée totale branché : inclut les pauses (véhicule plein, délestage) et l'attente avant le débranchement";
+  const plugged = `<span class="muted" title="${pluggedTip}">Branché <b>${formatDuration(s.duration_min)}</b></span>`;
+  if (s.charging_duration_min == null) return plugged;
+  return `<span title="Temps pendant lequel la charge a réellement délivré de l'énergie">Charge <b>${formatDuration(s.charging_duration_min)}</b></span>${plugged}`;
 }
 function kWh(wh) { return (wh / 1000).toFixed(2); }
 function eur(c) { return c != null ? c.toFixed(2) + " €" : "–"; }
@@ -1140,6 +1167,11 @@ function renderHealthBannerInto(container) {
               `${esc(it.charger_name)} · conn. ${it.connector_id} · depuis ${it.since_min} min ` +
               `<button class="linkbtn" onclick="event.stopPropagation(); triggerChargerReset('${esc(it.charger_id)}', false)">Redémarrer la borne</button>`
             ).join("<br>")
+          : h.key === "file_borne_bloquee"
+          ? h.items.slice(0, 6).map(it =>
+              `${esc(it.charger_name)} · conn. ${it.connector_id} · ${esc(it.reason)} · depuis ${it.since_min} min${it.uptime_h != null ? " · borne démarrée il y a " + it.uptime_h + " h" : ""} ` +
+              (isAdmin() ? `<button class="linkbtn" onclick="event.stopPropagation(); triggerChargerReset('${esc(it.charger_id)}', false)">Redémarrer la borne</button>` : "")
+            ).join("<br>")
           : h.items.slice(0, 6).map(it => esc(Object.values(it).filter(v => v !== null && v !== undefined).join(" · "))).join("<br>");
         return `<div class="health-card ${h.severity === "danger" ? "danger" : "warn"}" onclick="this.classList.toggle('open')">
           <div class="cluster center" style="justify-content:space-between;gap:.5rem">
@@ -1166,13 +1198,49 @@ function refreshCurrentView() {
 }
 
 /* ========================= ACCUEIL ========================= */
+/* Durée de fonctionnement d'une borne depuis son dernier démarrage (secondes). */
+function uptimeLine(c) {
+  if (!c.connected) return "";
+  if (c.uptime_s != null) return `<div class="tiny muted" style="margin-top:.2rem">En marche depuis ${formatUptime(c.uptime_s)}</div>`;
+  if (c.connected_s != null) return `<div class="tiny muted" style="margin-top:.2rem" title="L'heure de démarrage de la borne n'est connue qu'après son prochain redémarrage">Connectée depuis ${formatUptime(c.connected_s)} (démarrage de la borne inconnu)</div>`;
+  return "";
+}
+function formatUptime(sec) {
+  if (sec == null) return "";
+  const m = Math.floor(sec / 60);
+  if (m < 60) return `${m} min`;
+  const h = Math.floor(m / 60);
+  if (h < 48) return `${h} h ${String(m % 60).padStart(2, "0")}`;
+  return `${Math.floor(h / 24)} j ${h % 24} h`;
+}
+/* Bandeau visible par tous les utilisateurs : la file de messages d'une borne
+   est probablement bloquée (voir queue_watch.py). Seul l'admin voit le bouton
+   de redémarrage. */
+function renderQueueAlerts(chargers) {
+  const el = document.getElementById("home-alerts");
+  if (!el) return;
+  const blocked = chargers.filter(c => c.active && c.queue_blocked);
+  el.innerHTML = blocked.map(c => `
+    <div class="card" style="border-left:3px solid var(--danger); background:var(--danger-soft); margin-bottom:.6rem">
+      <div class="spread" style="align-items:center; gap:.6rem; flex-wrap:wrap">
+        <div class="small">
+          <b>${esc(chargerLabel(c))} : file de messages probablement bloquée</b><br>
+          <span class="muted">${esc(c.queue_blocked.label)}${c.queue_blocked.connector_id ? " (connecteur " + c.queue_blocked.connector_id + ")" : ""}. La charge peut ne pas démarrer ou ne plus être suivie. Un redémarrage de la borne la débloque.</span>
+        </div>
+        ${isAdmin() ? `<button class="btn btn-sm" onclick="triggerChargerReset('${esc(c.id)}', false)">Redémarrer la borne</button>` : ""}
+      </div>
+    </div>`).join("");
+}
+
 async function loadHome() {
-  const [active, recent, allChargers, occupancy] = await Promise.all([
+  const [active, recent, allChargers, occupancy, summary] = await Promise.all([
     fetch("api/history?status_filter=active&limit=20", { headers: authHeaders() }).then(r => r.json()),
     fetch("api/history?limit=10", { headers: authHeaders() }).then(r => r.json()),
     fetch("api/chargers", { headers: authHeaders() }).then(r => r.json()),
     fetch("api/occupancy", { headers: authHeaders() }).then(r => r.json()),
+    fetch("api/summary", { headers: authHeaders() }).then(r => r.ok ? r.json() : null).catch(() => null),
   ]);
+  renderHomeSummary(summary);
   // Une borne désactivée n'est plus pilotable : on l'exclut de l'accueil (cartes
   // « disponible pour démarrer », programmation), elle reste visible dans la
   // page Bornes (grisée) et dans l'historique.
@@ -1185,10 +1253,30 @@ async function loadHome() {
     condByCharger[c.id] = conds.filter(cd => cd.enabled);
   }));
   const lastCompleted = recent.find(s => s.status === "completed");
+  renderQueueAlerts(allChargers);
   if (!isFocusWithin("home-occupancy")) renderOccupancy(occupancy);
   if (!isFocusWithin("home-current")) await renderHomeCurrent(active, chargers, condByCharger);
   if (!isFocusWithin("home-available")) await renderHomeAvailable(chargers, active, condByCharger);
   if (!editingLast && !isFocusWithin("home-last")) renderHomeLast(lastCompleted);
+}
+
+/* Chiffres clés de l'accueil : mois en cours (écart vs mois précédent) et année
+   en cours (écart vs même période de l'année précédente). */
+function renderHomeSummary(sum) {
+  const wrap = document.getElementById("home-summary-wrap"), el = document.getElementById("home-summary");
+  const monthly = (sum && sum.monthly) || [];
+  if (!wrap || !el) return;
+  if (!monthly.some(m => m.charge_count)) { wrap.style.display = "none"; return; }
+  const hasKm = monthly.some(m => m.km > 0);
+  const keys = Object.keys(PERIOD_METRICS).filter(k => !PERIOD_METRICS[k].needsKm || hasKm);
+  const months = periodRows(monthly, "month"), years = periodRows(monthly, "year");
+  const cy = years[years.length - 1], mf = periodFocus(months, "month"), cm = mf.row;
+  el.innerHTML = `
+    <div class="tiny muted" style="margin-bottom:.3rem">${mf.idle ? `Dernier mois avec des charges · ${esc(cm.label)}` : `Ce mois-ci · ${esc(cm.label)}`} <span>· écart vs mois précédent</span></div>
+    ${periodStatsGrid(cm, keys, "Écart par rapport au mois précédent")}
+    <div class="tiny muted" style="margin:.8rem 0 .3rem">Année ${esc(cy.label)}${cy.partial ? " (à date)" : ""} <span>· écart vs ${cy.partial ? "même période de l'an dernier" : "année précédente"}</span></div>
+    ${periodStatsGrid(cy, keys, "Écart par rapport à l'année précédente")}`;
+  wrap.style.display = "";
 }
 
 /* Résume les conditions de programmation applicables à un connecteur donné
@@ -1299,9 +1387,7 @@ async function renderHomeCurrent(active, chargers, condByCharger) {
             ${condBadge}
           </div>
           <div class="metrics">
-            <span>Depuis <b>${formatDuration(s.duration_min)}</b></span>
-            ${(s.charging_duration_min != null && s.duration_min != null && (s.duration_min - s.charging_duration_min) > 0.5)
-              ? `<span class="warn" style="color:var(--warn)">Charge effective <b>${formatDuration(s.charging_duration_min)}</b></span>` : ""}
+            ${sessionDurationsHtml(s)}
             <span><b>${kWh(s.energy_wh)}</b> kWh</span>
             <span><b>${eur(s.cost)}</b></span>
             ${recharge}
@@ -1425,7 +1511,7 @@ function renderHomeLast(s) {
         <b>${esc(s.charger_display_name || s.charger_id || s.location_label || "Externe")}${s.connector_id != null ? ` · Conn. ${s.connector_id}` : ""}</b>${s.vehicle_name ? ` <span class="badge accent">${esc(s.vehicle_name)}</span>` : ""}${s.vehicle_deleted ? ` <span class="badge off" title="Ce véhicule a été supprimé définitivement">véhicule supprimé</span>` : ""}${s.is_external ? ` <span class="badge ext"><svg style="width:.85em;height:.85em"><use href="#i-ext"/></svg> externe</span>` : ""}${s.charger_deleted ? ` <span class="badge off" title="Cette borne a été supprimée définitivement">borne supprimée</span>` : ""}
         <div class="metrics">
           <span>${formatDateTime(s.start_time)} → ${formatDateTime(s.stop_time)}</span>
-          <span><b>${formatDuration(s.duration_min)}</b></span>
+          ${sessionDurationsHtml(s)}
           <span><b>${kWh(s.energy_wh)}</b> kWh</span>
           <span><b>${eur(s.cost)}</b></span>
           ${recharge}
@@ -1539,8 +1625,10 @@ async function loadChargers() {
             <span class="badge ${c.mode}">${c.mode}</span>
             <span class="badge ${c.connected ? "ok" : "off"}"><span class="dot"></span>${c.connected ? "connectée" : "hors ligne"}</span>
             ${schedBadge}
+            ${c.queue_blocked ? `<span class="badge danger" title="${esc(c.queue_blocked.label)}">File bloquée</span>` : ""}
           </div>
           <div class="cluster center" style="gap:.35rem; margin-top:.45rem">${connBadges}</div>
+          ${uptimeLine(c)}
           <div class="small muted" style="margin-top:.35rem">${esc(c.vendor || "")} ${esc(c.model || "")} ${c.ocpp_version ? "· OCPP " + esc(c.ocpp_version) : ""}</div>
           <div class="tiny muted" style="margin-top:.2rem">ID borne (chargePointId) : <code>${esc(c.id)}</code></div>
         </div>
@@ -2131,11 +2219,13 @@ function renderOccupancyChart(data) {
 async function openChargerStatsModal(chargerId) {
   openModalConnector = null;
   openModal(`<div class="empty">Chargement…</div>`);
-  const [data, charger, connectors] = await Promise.all([
+  const [data, charger, connectors, allCh] = await Promise.all([
     fetch(`api/chargers/${chargerId}/stats`, { headers: authHeaders() }).then(r => r.json()),
     fetch(`api/chargers/${chargerId}`, { headers: authHeaders() }).then(r => r.json()),
     fetch(`api/chargers/${chargerId}/connectors`, { headers: authHeaders() }).then(r => r.json()).then(a => a.filter(c => c.connector_id !== 0)),
+    fetch("api/chargers", { headers: authHeaders() }).then(r => r.json()).catch(() => []),
   ]);
+  const chInfo = allCh.find(x => x.id === chargerId) || {};
   const st = data.stats;
   const meta = [charger.vendor, charger.model].filter(Boolean).join(" ")
     + (charger.ocpp_version ? ` · OCPP ${charger.ocpp_version}` : "");
@@ -2148,6 +2238,7 @@ async function openChargerStatsModal(chargerId) {
       <button class="btn btn-sm btn-ghost" style="margin-left:auto" onclick="openChargerConfigModal('${esc(data.id)}')"><svg><use href="#i-cog"/></svg>Configurer</button>
     </div>
     ${meta ? `<div class="small muted" style="margin:0 0 .3rem">${esc(meta)}</div>` : ""}
+    ${uptimeLine(chInfo)}
     <div class="tiny muted" style="margin:0 0 .8rem">ID borne (chargePointId) : <code>${esc(data.id)}</code>${charger.mode === "relay" && charger.relay_url ? ` · relayé vers <code>${esc((charger.relay_url || "").replace(/\/+$/, "") + "/" + data.id)}</code>` : ""}</div>
     ${charger.mode === "relay" ? `<div class="card" style="border-left:3px solid var(--accent); background:var(--accent-soft); margin:0 0 .8rem"><div class="tiny">En mode relais, ce CSMS est <b>passif</b> : il observe et facture les charges mais ne pilote pas la borne. Le pilotage (démarrage/arrêt, délestage, programmation) reste assuré par le serveur officiel.</div></div>` : ""}
     <div class="stat-grid">
@@ -2157,6 +2248,7 @@ async function openChargerStatsModal(chargerId) {
       <div class="stat"><div class="sv">${kW(st.power_max_w)}</div><div class="sl">Puissance max</div></div>
     </div>`;
 
+  html += `<div class="section-title">Cumuls mensuels et annuels</div><div id="period-host"></div>`;
   html += `<div class="section-title">Connecteurs</div>`;
   html += connectors.length ? connectors.map(cc => { const connSt = effectiveConnectorStatus(charger, cc.status); return `
     <div class="card" style="margin:.35rem 0; padding:.55rem .8rem">
@@ -2168,6 +2260,7 @@ async function openChargerStatsModal(chargerId) {
 
   html += renderChargerSessionsTable(data.sessions);
   openModal(html);
+  initPeriod("period-host", data.monthly, { withKm: false, withPower: true });
 }
 
 /* Historique côté borne : uniquement des grandeurs de borne (pas de km ni
@@ -2177,15 +2270,16 @@ function renderChargerSessionsTable(sessions) {
     <td>${formatDateTime(s.start_time)}</td>
     <td>${s.connector_id ?? "–"}</td>
     <td>${esc(s.vehicle_name || "–")}${s.vehicle_deleted ? ' <span class="badge off" style="padding:.05rem .35rem">suppr.</span>' : ""}</td>
-    <td>${formatDuration(s.duration_min)}</td>
+    <td>${s.is_external ? "–" : (s.charging_duration_min != null ? formatDuration(s.charging_duration_min) : "–")}</td>
+    <td class="muted">${s.is_external ? "–" : formatDuration(s.duration_min)}</td>
     <td>${kWh(s.energy_wh)}</td>
     <td>${kW(s.power_max_w)}</td>
     <td>${eur(s.cost)}</td>
     <td><span class="badge ${s.status === "active" ? "Charging" : "off"}">${s.status === "active" ? "en cours" : "terminée"}</span></td>
   </tr>`).join("");
   return `<div class="section-title">Historique des charges</div><div class="table-wrap"><table><thead><tr>
-    <th>Début</th><th>Conn.</th><th>Véhicule</th><th>Durée</th><th>kWh</th><th>P. max</th><th>Coût</th><th>Statut</th>
-  </tr></thead><tbody>${rows || `<tr><td colspan="8"><span class="empty">Aucune charge</span></td></tr>`}</tbody></table></div>`;
+    <th>Début</th><th>Conn.</th><th>Véhicule</th><th title="Temps pendant lequel la charge a réellement délivré de l'énergie">Charge</th><th title="Durée totale branché (pauses incluses)">Branché</th><th>kWh</th><th>P. max</th><th>Coût</th><th>Statut</th>
+  </tr></thead><tbody>${rows || `<tr><td colspan="9"><span class="empty">Aucune charge</span></td></tr>`}</tbody></table></div>`;
 }
 
 /* --- Tableau de sessions réutilisable (fiche véhicule) --- */
@@ -2244,6 +2338,17 @@ function renderVehicles() {
     </tr>`;
   }).join("");
 }
+function toggleVehicleAdd(forceOpen) {
+  const card = document.getElementById("veh-add-card");
+  if (!card) return;
+  const open = forceOpen != null ? forceOpen : card.style.display === "none";
+  card.style.display = open ? "" : "none";
+  const btn = document.getElementById("veh-add-toggle");
+  if (btn) btn.innerHTML = open
+    ? `<svg><use href="#i-close"/></svg>Fermer`
+    : `<svg><use href="#i-plus"/></svg>Ajouter une voiture`;
+  if (open) { const n = document.getElementById("veh-name"); if (n) n.focus(); }
+}
 async function createVehicle() {
   const name = document.getElementById("veh-name").value.trim();
   if (!name) { toast("Nom requis", "err"); return; }
@@ -2254,6 +2359,7 @@ async function createVehicle() {
   if (ok) {
     ["veh-name", "veh-idtag", "veh-battery"].forEach(i => document.getElementById(i).value = "");
     document.querySelectorAll(".veh-chr:checked").forEach(e => e.checked = false);
+    toggleVehicleAdd(false);
     loadVehicles();
   }
 }
@@ -2347,8 +2453,135 @@ async function openVehicleStatsModal(vehicleId) {
       <div class="stat"><div class="sv">${st.avg_kwh_per_100km != null ? st.avg_kwh_per_100km : "–"}</div><div class="sl">kWh/100km moy.</div></div>
       <div class="stat"><div class="sv">${st.last_odometer_km != null ? st.last_odometer_km : "–"}</div><div class="sl">Odomètre</div></div>
     </div>`;
+  html += `<div class="section-title">Historique mensuel et annuel</div><div id="period-host"></div>`;
   html += renderSessionsTable(data.sessions, true);
   openModal(html);
+  initPeriod("period-host", data.monthly, { withKm: true });
+}
+
+/* ========================= SYNTHÈSE MENSUELLE / ANNUELLE =========================
+   Alimentée par `monthly` (voir _monthly_from_rows dans api.py) : un élément par
+   mois civil, du premier mois d'activité jusqu'au mois courant (mois vides à zéro).
+   Utilisée par la fiche véhicule, la fiche borne et les chiffres clés de l'accueil. */
+const MONTHS_FR = ["janvier", "février", "mars", "avril", "mai", "juin", "juillet", "août", "septembre", "octobre", "novembre", "décembre"];
+const MONTHS_FR_SHORT = ["janv.", "févr.", "mars", "avr.", "mai", "juin", "juil.", "août", "sept.", "oct.", "nov.", "déc."];
+function monthLabel(key) { const [y, m] = key.split("-"); return `${MONTHS_FR[+m - 1]} ${y}`; }
+function monthLabelShort(key) { const [y, m] = key.split("-"); return `${MONTHS_FR_SHORT[+m - 1]} ${y}`; }
+function fmtMinutes(v) { const t = Math.round(v); return `${Math.floor(t / 60)}h${String(t % 60).padStart(2, "0")}`; }
+const PERIOD_METRICS = {
+  charge_count: { label: "Charges", fmt: v => String(Math.round(v)) },
+  energy_kwh: { label: "Énergie", fmt: v => v.toFixed(1) + " kWh" },
+  cost: { label: "Coût", fmt: v => v.toFixed(2) + " €" },
+  charging_min: { label: "Temps de charge", fmt: fmtMinutes },
+  km: { label: "Distance", fmt: v => Math.round(v) + " km", needsKm: true },
+};
+function periodSum(list) {
+  const a = { charge_count: 0, energy_kwh: 0, cost: 0, charging_min: 0, km: 0, power_max_w: null };
+  list.forEach(m => {
+    Object.keys(PERIOD_METRICS).forEach(k => { a[k] += m[k] || 0; });
+    if (m.power_max_w && (a.power_max_w == null || m.power_max_w > a.power_max_w)) a.power_max_w = m.power_max_w;
+  });
+  return a;
+}
+/* Lignes d'affichage (chronologiques). Mois : comparaison au mois civil précédent.
+   Année : comparaison à l'année précédente ; pour l'année en cours, à période
+   égale (mêmes mois écoulés), sinon l'écart serait toujours négatif. */
+function periodRows(monthly, mode) {
+  if (mode === "month") {
+    return monthly.map((m, i) => ({ key: m.month, label: monthLabel(m.month), short: monthLabelShort(m.month), vals: periodSum([m]), prev: i > 0 ? periodSum([monthly[i - 1]]) : null }));
+  }
+  const by = {};
+  monthly.forEach(m => { const y = m.month.slice(0, 4); (by[y] = by[y] || []).push(m); });
+  const years = Object.keys(by).sort();
+  const curMonthNum = monthly.length ? +monthly[monthly.length - 1].month.slice(5) : 12;
+  return years.map((y, i) => {
+    const isCurrent = i === years.length - 1;
+    const prevList = by[String(+y - 1)];
+    let prev = null;
+    if (prevList) prev = periodSum(isCurrent ? prevList.filter(m => +m.month.slice(5) <= curMonthNum) : prevList);
+    return { key: y, label: y, short: y, vals: periodSum(by[y]), prev, partial: isCurrent && curMonthNum < 12 };
+  });
+}
+/* Ligne mise en avant. En début de mois (aucune charge encore), comparer un mois
+   vide au précédent afficherait -100 % partout : on présente alors le dernier
+   mois comportant des charges, face à celui d'avant. */
+function periodFocus(rows, mode) {
+  const last = rows[rows.length - 1];
+  if (mode === "month" && last.vals.charge_count === 0) {
+    const active = rows.slice().reverse().find(r => r.vals.charge_count > 0);
+    if (active) return { row: active, idle: true };
+  }
+  return { row: last, idle: false };
+}
+function deltaHtml(cur, prev, key) {
+  if (prev == null) return "";
+  const M = PERIOD_METRICS[key], d = cur - prev;
+  if (Math.abs(d) < 1e-9) return `<div class="delta">= identique</div>`;
+  const sign = d > 0 ? "+" : "-";
+  const pct = prev > 0 ? ` (${sign}${Math.abs(d / prev * 100).toFixed(0)} %)` : "";
+  return `<div class="delta">${d > 0 ? "▲" : "▼"} ${sign}${M.fmt(Math.abs(d))}${pct}</div>`;
+}
+function periodStatsGrid(row, keys, tip) {
+  return `<div class="stat-grid" style="grid-template-columns:repeat(auto-fit,minmax(125px,1fr))">${keys.map(k => `<div class="stat" title="${esc(tip)}">
+    <div class="sv">${PERIOD_METRICS[k].fmt(row.vals[k])}</div><div class="sl">${PERIOD_METRICS[k].label}</div>
+    ${deltaHtml(row.vals[k], row.prev ? row.prev[k] : null, k)}</div>`).join("")}</div>`;
+}
+function periodChartSvg(rows, key, mode) {
+  const M = PERIOD_METRICS[key], data = rows.slice(-12), n = data.length;
+  const W = 640, H = 170, padB = 22, padT = 18;
+  const vals = data.map(r => r.vals[key]), max = Math.max(...vals, 0) || 1;
+  const slot = (W - 8) / n, bw = Math.min(42, slot * 0.62);
+  let g = "";
+  data.forEach((r, i) => {
+    const h = vals[i] / max * (H - padT - padB), x = 4 + i * slot + (slot - bw) / 2, y = H - padB - h;
+    const opacity = i === n - 1 ? 1 : 0.45;
+    const lab = mode === "month"
+      ? MONTHS_FR_SHORT[+r.key.slice(5) - 1] + (i === 0 || r.key.endsWith("-01") ? " " + r.key.slice(2, 4) : "")
+      : r.key;
+    g += `<g><title>${esc(r.label)} : ${esc(M.fmt(vals[i]))}</title>
+      <rect x="${x}" y="${y}" width="${bw}" height="${Math.max(h, vals[i] > 0 ? 1 : 0)}" rx="3" fill="var(--primary)" opacity="${opacity}"/>
+      ${vals[i] > 0 ? `<text x="${x + bw / 2}" y="${y - 4}" text-anchor="middle" font-size="${n > 8 ? 9 : 10}" fill="var(--text-muted)">${esc(M.fmt(vals[i]))}</text>` : ""}
+      <text x="${x + bw / 2}" y="${H - 6}" text-anchor="middle" font-size="10" fill="var(--text-muted)">${esc(lab)}</text></g>`;
+  });
+  return `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;display:block;margin:.4rem 0" role="img" aria-label="${esc(M.label)} par ${mode === "month" ? "mois" : "année"}">${g}</svg>`;
+}
+let periodState = null;
+function initPeriod(hostId, monthly, opts) {
+  const withKm = !!(opts && opts.withKm) && (monthly || []).some(m => m.km > 0);
+  periodState = { hostId, monthly: monthly || [], mode: "month", metric: withKm ? "km" : "energy_kwh", withKm, withPower: !!(opts && opts.withPower) };
+  renderPeriod();
+}
+function periodSet(field, value) { if (periodState) { periodState[field] = value; renderPeriod(); } }
+function renderPeriod() {
+  const st = periodState, host = st && document.getElementById(st.hostId);
+  if (!host) return;
+  if (!st.monthly.length) { host.innerHTML = `<div class="empty">Aucune charge terminée pour l'instant.</div>`; return; }
+  const keys = Object.keys(PERIOD_METRICS).filter(k => !PERIOD_METRICS[k].needsKm || st.withKm);
+  const rows = periodRows(st.monthly, st.mode), cur = rows[rows.length - 1];
+  const isMonth = st.mode === "month";
+  const focus = periodFocus(rows, st.mode);
+  const seg = (m, txt) => `<button class="btn btn-sm ${st.mode === m ? "btn-primary" : ""}" onclick="periodSet('mode','${m}')">${txt}</button>`;
+  const chip = k => `<button class="btn btn-sm ${st.metric === k ? "btn-primary" : "btn-ghost"}" onclick="periodSet('metric','${k}')">${PERIOD_METRICS[k].label}</button>`;
+  const curTitle = isMonth
+    ? (focus.idle ? `Dernier mois avec des charges · ${focus.row.label} (aucune charge ce mois-ci pour l'instant)` : `Mois en cours · ${cur.label}`)
+    : `Année ${cur.label}${cur.partial ? " (à date)" : ""}`;
+  const tip = isMonth ? "Écart par rapport au mois précédent" : (cur.partial ? "Écart par rapport à la même période de l'année précédente" : "Écart par rapport à l'année précédente");
+  const head = `<tr><th>Période</th>${keys.map(k => `<th>${PERIOD_METRICS[k].label}</th>`).join("")}<th>€/kWh</th>${st.withPower ? "<th>P. max</th>" : ""}</tr>`;
+  const body = rows.slice().reverse().map(r => `<tr>
+    <td style="white-space:nowrap"><b>${esc(r.short)}</b>${r === cur ? ` <span class="tiny muted">${isMonth ? "en cours" : (r.partial ? "à date" : "")}</span>` : ""}</td>
+    ${keys.map(k => `<td style="white-space:nowrap">${PERIOD_METRICS[k].fmt(r.vals[k])}${deltaHtml(r.vals[k], r.prev ? r.prev[k] : null, k)}</td>`).join("")}
+    <td style="white-space:nowrap">${r.vals.energy_kwh > 0 ? (r.vals.cost / r.vals.energy_kwh).toFixed(3) + " €" : "–"}</td>
+    ${st.withPower ? `<td style="white-space:nowrap">${kW(r.vals.power_max_w)}</td>` : ""}</tr>`).join("");
+  host.innerHTML = `
+    <div class="cluster" style="gap:.4rem; margin-bottom:.6rem">${seg("month", "Par mois")}${seg("year", "Par année")}</div>
+    <div class="tiny muted" style="margin-bottom:.3rem">${esc(curTitle)} <span title="${esc(tip)}">· ${esc(tip.toLowerCase())}</span></div>
+    ${periodStatsGrid(focus.row, keys, tip)}
+    <div class="cluster" style="gap:.3rem; margin-top:.9rem">${keys.map(chip).join("")}</div>
+    ${periodChartSvg(rows, st.metric, st.mode)}
+    <div class="table-wrap"><table><thead>${head}</thead><tbody>${body}</tbody></table></div>
+    <div class="tiny muted" style="margin-top:.3rem">${isMonth
+      ? "Mois civils dans le fuseau d'affichage. Les km d'une charge sont ceux parcourus depuis la charge précédente de ce véhicule."
+      : (cur.partial ? "L'année en cours est comparée à la même période de l'année précédente." : "")}</div>`;
 }
 
 /* ========================= ABONNEMENTS ========================= */
@@ -2478,9 +2711,12 @@ async function loadHistory() {
 }
 function renderHistory() {
   const tb = document.querySelector("#history-table tbody");
-  if (!cachedHistory.length) { tb.innerHTML = `<tr><td colspan="17"><span class="empty">Aucune session</span></td></tr>`; return; }
+  if (!cachedHistory.length) { tb.innerHTML = `<tr><td colspan="18"><span class="empty">Aucune session</span></td></tr>`; return; }
   tb.innerHTML = cachedHistory.map(s => {
     const dur = formatDuration(s.duration_min);
+    const chargeDur = s.is_external ? "–" : (s.charging_duration_min != null ? formatDuration(s.charging_duration_min) : "–");
+    const pluggedDur = s.is_external ? "–" : dur;
+    const endCell = s.stop_time ? formatDateTime(s.stop_time) : (s.status === "active" ? `<span class="badge Charging" style="padding:.05rem .35rem">en cours</span>` : "–");
     const bornCell = s.is_external
       ? `${esc(s.location_label || "Externe")} <span class="badge ext" style="padding:.05rem .35rem">ext</span>`
       : s.charger_deleted
@@ -2491,7 +2727,7 @@ function renderHistory() {
       const canEditSession = isAdmin() || (currentUser.vehicle_ids && s.vehicle_id && currentUser.vehicle_ids.includes(s.vehicle_id));
       return `<tr>
       <td data-label="Borne">${bornCell}</td><td data-label="Conn.">${s.connector_id ?? "–"}</td><td data-label="Véhicule">${esc(s.vehicle_name || "–")}${s.vehicle_deleted ? ' <span class="badge off" style="padding:.05rem .35rem">suppr.</span>' : ""}</td>
-      <td data-label="Début">${formatDateTime(s.start_time)}</td><td data-label="Fin">${formatDateTime(s.stop_time)}</td><td data-label="Durée">${dur}</td>
+      <td data-label="Début">${formatDateTime(s.start_time)}</td><td data-label="Fin">${endCell}${s.close_reason ? ` <span class="badge warn" style="padding:.05rem .35rem" title="Session clôturée par le serveur faute de fin reçue de la borne : les données de fin (énergie, coût) peuvent être incomplètes. Elles sont corrigées automatiquement si les relevés arrivent en retard.">auto</span>` : ""}</td><td data-label="Charge">${chargeDur}</td><td data-label="Branché" class="muted">${pluggedDur}</td>
       <td data-label="kWh">${kWh(s.energy_wh)}</td><td data-label="P. max">${kW(s.power_max_w)}</td><td data-label="Coût">${eur(s.cost)}</td><td data-label="Tarif">${esc(s.tariff_plan_name || "–")}</td>
       <td data-label="km">${num(s.odometer_km)}</td><td data-label="km parc.">${num(s.km_since_last)}</td><td data-label="kWh/100">${s.kwh_per_100km != null ? s.kwh_per_100km : "–"}</td>
       <td data-label="% init.">${num(s.battery_percent_start)}</td><td data-label="% fin">${num(s.battery_percent_end)}${est}</td>
@@ -2719,6 +2955,13 @@ async function openSettingsModal() {
       <p class="tiny muted" style="margin:.4rem 0 .6rem">S'applique à l'affichage des horodatages (Logs OCPP, Logs serveur, dates partout dans l'app) et aux exports CSV. Les données restent stockées en UTC en base, seule la présentation change.</p>
       <button class="btn btn-sm" onclick="saveDisplayTimezone()">Enregistrer</button>
     </div>
+    <div class="card form-card" style="margin-top:.6rem">
+      <label class="cluster center" style="gap:.5rem; cursor:pointer">
+        <input type="checkbox" id="set-auto-reset" disabled onchange="toggleAutoReset(this.checked)">
+        <span>Redémarrage automatique d'une borne dont la file de messages est bloquée</span>
+      </label>
+      <p class="tiny muted" style="margin:.4rem 0 0">Désactivé par défaut. Quand il est activé, le serveur redémarre la borne (reset logiciel) uniquement si aucune charge n'est en cours sur elle, et au plus une fois toutes les 30 minutes. Sans cette option, le défaut est seulement signalé à tous les utilisateurs.</p>
+    </div>
     <div class="card form-card" style="margin-top:.6rem; border-left:3px solid var(--warn)">
       <div class="spread">
         <div><b>Redémarrer le serveur</b><div class="tiny muted">Redémarre l'add-on via Home Assistant. Les bornes se déconnectent puis se reconnectent d'elles-mêmes, l'application se recharge automatiquement quand le serveur est de retour (environ 30 s à 1 min).</div></div>
@@ -2743,7 +2986,22 @@ async function openSettingsModal() {
 
   openModal(html);
 
-  if (adminOnly) loadSettingsUsers();
+  if (adminOnly) { loadSettingsUsers(); loadAutoResetSetting(); }
+}
+
+async function loadAutoResetSetting() {
+  const cb = document.getElementById("set-auto-reset");
+  if (!cb) return;
+  try {
+    const d = await fetch("api/settings/queue-watch", { headers: authHeaders() }).then(r => r.json());
+    cb.checked = !!d.auto_reset;
+    cb.disabled = false;
+  } catch (e) {}
+}
+async function toggleAutoReset(on) {
+  const { ok } = await apiCall("api/settings/queue-watch", { method: "PUT", headers: jsonHeaders(), body: JSON.stringify({ auto_reset: on }) },
+    on ? "Redémarrage automatique activé" : "Redémarrage automatique désactivé");
+  if (!ok) { const cb = document.getElementById("set-auto-reset"); if (cb) cb.checked = !on; }
 }
 
 async function changeMyPassword() {
@@ -3004,8 +3262,97 @@ async function downloadFile(url, fallbackFilename) {
 function exportOcppConfig(chargerId, displayName) {
   downloadFile(`api/chargers/${chargerId}/config/export`, `config-ocpp-${displayName || chargerId}.csv`);
 }
+/* Dump de diagnostic : choix de la période par raccourcis (dernières heures,
+   aujourd'hui, hier, tout) ou plage précise avec sélecteurs date/heure. Le
+   résumé sous les choix indique la plage réellement demandée. */
+const DUMP_PRESETS = [
+  ["1h", "1 h"], ["6h", "6 h"], ["24h", "24 h"], ["72h", "3 jours"], ["168h", "7 jours"], ["720h", "30 jours"],
+  ["today", "Aujourd'hui"], ["yesterday", "Hier"], ["all", "Tout"], ["custom", "Personnalisé"],
+];
+let dumpPreset = "72h";
+function dumpLocalInput(d) {
+  const p = n => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+function dumpMidnight(offsetDays) {
+  const d = new Date(); d.setHours(0, 0, 0, 0); d.setDate(d.getDate() + offsetDays); return d;
+}
+/* Renvoie { since, until } (Date ou null) pour le raccourci choisi, ou null si invalide. */
+function dumpRange() {
+  const now = new Date(), m = /^(\d+)h$/.exec(dumpPreset);
+  if (m) return { since: new Date(now.getTime() - (+m[1]) * 3600e3), until: null, hours: +m[1] };
+  if (dumpPreset === "today") return { since: dumpMidnight(0), until: null };
+  if (dumpPreset === "yesterday") return { since: dumpMidnight(-1), until: dumpMidnight(0) };
+  if (dumpPreset === "all") return { since: null, until: null, all: true };
+  const a = document.getElementById("dump-since").value, b = document.getElementById("dump-until").value;
+  const since = a ? new Date(a) : null, until = b ? new Date(b) : null;
+  if (since && until && since >= until) return null;
+  return { since, until };
+}
+function dumpFmt(d) { return d.toLocaleString("fr-FR", { weekday: "short", day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }); }
+function dumpRefresh() {
+  document.querySelectorAll("#dump-presets button").forEach(btn => {
+    btn.classList.toggle("btn-primary", btn.dataset.preset === dumpPreset);
+  });
+  document.getElementById("dump-range-box").style.display = dumpPreset === "custom" ? "" : "none";
+  const r = dumpRange(), sum = document.getElementById("dump-summary");
+  if (!r) { sum.innerHTML = `<span style="color:var(--danger)">La date de début doit précéder la date de fin.</span>`; return; }
+  const from = r.since ? `du <b>${esc(dumpFmt(r.since))}</b>` : "depuis le <b>début</b>";
+  const to = r.until ? `au <b>${esc(dumpFmt(r.until))}</b>` : "jusqu'à <b>maintenant</b>";
+  sum.innerHTML = `Plage : ${from} ${to}.`;
+}
+function dumpSetPreset(p) {
+  dumpPreset = p;
+  if (p === "custom") {
+    const s = document.getElementById("dump-since"), u = document.getElementById("dump-until");
+    if (!s.value) s.value = dumpLocalInput(new Date(Date.now() - 24 * 3600e3));
+    if (!u.value) u.value = dumpLocalInput(new Date());
+  }
+  dumpRefresh();
+}
 function exportDump() {
-  downloadFile("api/diagnostics/dump", "dump-diagnostic.zip");
+  dumpPreset = "72h";
+  const chips = DUMP_PRESETS.map(([k, label]) => `<button class="btn btn-sm" data-preset="${k}" onclick="dumpSetPreset('${k}')">${label}</button>`).join("");
+  const html = `<div class="modal-head"><h2>Exporter un dump de diagnostic</h2>
+    <button class="btn btn-icon btn-ghost" onclick="closeModal()"><svg><use href="#i-close"/></svg></button></div>
+    <div class="small muted" style="margin-bottom:.6rem">Choisissez la période à inclure. Le fichier LISEZMOI.txt du zip précise la plage appliquée et les éventuelles limites.</div>
+    <div class="small" style="margin-bottom:.3rem"><b>Période</b></div>
+    <div class="cluster" id="dump-presets" style="gap:.35rem">${chips}</div>
+    <div id="dump-range-box" class="cluster" style="margin-top:.7rem; display:none">
+      <label class="field"><span>Du</span><input id="dump-since" type="datetime-local" onchange="dumpRefresh()"></label>
+      <label class="field"><span>Au (vide = maintenant)</span><input id="dump-until" type="datetime-local" onchange="dumpRefresh()"></label>
+    </div>
+    <div class="small" id="dump-summary" style="margin-top:.7rem"></div>
+    <label class="field" style="margin-top:.8rem"><span>Lignes max par fichier</span>
+      <select id="dump-rows">
+        <option value="">Illimité (plafond serveur 500 000)</option>
+        <option value="5000">5 000 (les plus récentes)</option>
+        <option value="20000">20 000 (les plus récentes)</option>
+        <option value="100000">100 000 (les plus récentes)</option>
+      </select>
+    </label>
+    <div class="cluster" style="margin-top:1rem; justify-content:flex-end">
+      <button class="btn btn-sm" onclick="closeModal()">Annuler</button>
+      <button class="btn btn-sm btn-primary" onclick="runDumpExport()"><svg><use href="#i-download"/></svg>Télécharger</button>
+    </div>`;
+  openModal(html);
+  dumpRefresh();
+}
+function runDumpExport() {
+  const r = dumpRange();
+  if (!r) { toast("La date de début doit précéder la date de fin", "err"); return; }
+  if (dumpPreset === "custom" && !r.since && !r.until) { toast("Renseignez au moins une date", "err"); return; }
+  const params = new URLSearchParams();
+  if (r.hours) params.set("hours", r.hours);
+  else if (r.all) params.set("since", "2000-01-01T00:00:00Z");
+  else {
+    if (r.since) params.set("since", r.since.toISOString());
+    if (r.until) params.set("until", r.until.toISOString());
+  }
+  const rows = parseInt(document.getElementById("dump-rows").value, 10);
+  if (rows > 0) params.set("max_rows", rows);
+  closeModal();
+  downloadFile(`api/diagnostics/dump?${params.toString()}`, "dump-diagnostic.zip");
 }
 
 function exportDbTableCsv() {
