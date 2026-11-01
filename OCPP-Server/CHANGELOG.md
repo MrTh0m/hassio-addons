@@ -1,3 +1,12 @@
+## 0.19.41
+
+- **Amélioré** : l'export du dump de diagnostic propose des raccourcis de période (1 h, 6 h, 24 h, 3 jours, 7 jours, 30 jours, aujourd'hui, hier, tout) et une plage personnalisée avec sélecteurs date et heure, plus un résumé de la plage demandée et une liste de limites de lignes. Remplace le champ « nombre d'heures » saisi à la main.
+- **Nouveau** : historique mensuel et annuel dans la fiche véhicule (bouton i). Pour chaque mois ou année : nombre de charges, énergie, coût, €/kWh, temps de charge effectif et distance, avec l'écart par rapport à la période précédente (valeur et pourcentage), un graphique au choix de la grandeur et un tableau chronologique. L'année en cours est comparée à la même période de l'année précédente. Les mois civils suivent le fuseau d'affichage ; les mois sans charge sont affichés à zéro pour que « mois précédent » soit toujours le mois calendaire précédent. Les km d'une charge sont ceux parcourus depuis la charge précédente du véhicule.
+- **Nouveau** : mêmes cumuls mensuels et annuels dans la fiche borne, avec la puissance maximale observée.
+- **Nouveau** : encart « Chiffres clés » en haut de l'accueil : mois en cours (écart vs mois précédent) et année en cours (écart vs même période de l'an dernier). Tant qu'aucune charge n'a eu lieu dans le mois, l'encart présente le dernier mois comportant des charges, pour éviter un « -100 % » trompeur en début de mois. Nouvelle route `GET /api/summary` (un non-admin ne voit que ses véhicules) ; `GET /api/vehicles/{id}/stats` et `GET /api/chargers/{id}/stats` renvoient en plus un champ `monthly`.
+- **Amélioré** : le formulaire d'ajout de véhicule est replié par défaut ; un bouton « Ajouter une voiture » l'ouvre, et il se referme après l'ajout.
+- Tests dédiés (`test_monthly_stats.py`) : agrégation et mois vides, bascule de mois selon le fuseau, charges externes et valeurs inconnues, km depuis la charge précédente, routes véhicule, borne et résumé.
+
 ## 0.19.40
 
 - **Corrigé** : la durée de fonctionnement de la borne n'apparaissait nulle part après la mise à jour : elle n'est connue qu'avec le `BootNotification` ou le `StartupOfTheDevice` de la borne, donc seulement après son prochain redémarrage. En attendant, la page Bornes affiche « Connectée depuis ... (démarrage de la borne inconnu) », et la fiche de la borne affiche aussi la durée.

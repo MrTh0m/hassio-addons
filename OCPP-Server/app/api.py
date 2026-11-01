@@ -1147,6 +1147,108 @@ def _serialize_sessions_with_km(sessions, db: Session) -> list[dict]:
     return [_serialize_session(s, db, prev_by_id.get(s.id)) for s in sessions]
 
 
+# --- Agrégats mensuels / annuels (fiches voiture et borne, accueil) ---
+
+def _monthly_from_rows(rows: list, tz: ZoneInfo) -> list:
+    """Regroupe des charges terminées par mois CIVIL dans le fuseau d'affichage.
+
+    `rows` : dicts {start (datetime UTC naïf), energy_wh, cost, charging_min,
+    km, external, power_max_w}. Les mois sans charge entre la première charge et
+    le mois courant sont renvoyés à zéro, pour que « mois précédent » soit
+    toujours le mois calendaire précédent. Les km d'une charge sont ceux
+    parcourus depuis la charge précédente du véhicule (rattachés au mois de la
+    charge qui les révèle). kwh_per_100km n'utilise que l'énergie des charges
+    pour lesquelles un kilométrage est connu, pour rester cohérent."""
+    def _zero():
+        return {"charge_count": 0, "external_count": 0, "energy_wh": 0.0, "cost": 0.0,
+                "charging_min": 0.0, "km": 0.0, "km_energy_wh": 0.0, "power_max_w": None}
+
+    buckets: dict = {}
+    for r in rows:
+        d = r["start"].replace(tzinfo=ZoneInfo("UTC")).astimezone(tz)
+        b = buckets.setdefault((d.year, d.month), _zero())
+        b["charge_count"] += 1
+        if r.get("external"):
+            b["external_count"] += 1
+        energy = r.get("energy_wh") or 0.0
+        b["energy_wh"] += energy
+        b["cost"] += r.get("cost") or 0.0
+        b["charging_min"] += r.get("charging_min") or 0.0
+        if r.get("km"):
+            b["km"] += r["km"]
+            b["km_energy_wh"] += energy
+        pm = r.get("power_max_w")
+        if pm and (b["power_max_w"] is None or pm > b["power_max_w"]):
+            b["power_max_w"] = pm
+    if not buckets:
+        return []
+    now = datetime.utcnow().replace(tzinfo=ZoneInfo("UTC")).astimezone(tz)
+    first, last = min(buckets), max(max(buckets), (now.year, now.month))
+    out = []
+    y, m = first
+    while (y, m) <= last:
+        b = buckets.get((y, m)) or _zero()
+        out.append({
+            "month": f"{y:04d}-{m:02d}",
+            "charge_count": b["charge_count"],
+            "external_count": b["external_count"],
+            "energy_kwh": round(b["energy_wh"] / 1000.0, 2),
+            "cost": round(b["cost"], 2),
+            "charging_min": round(b["charging_min"], 1),
+            "km": round(b["km"], 1),
+            "kwh_per_100km": round(b["km_energy_wh"] / 1000.0 / b["km"] * 100, 2) if b["km"] else None,
+            "power_max_w": round(b["power_max_w"], 1) if b["power_max_w"] else None,
+        })
+        m += 1
+        if m > 12:
+            y, m = y + 1, 1
+    return out
+
+
+def _monthly_from_serialized(serialized: list, tz: ZoneInfo) -> list:
+    """Agrégat mensuel à partir de sessions déjà sérialisées (charges terminées)."""
+    rows = []
+    for s in serialized:
+        if s["status"] != "completed" or not s["start_time"]:
+            continue
+        rows.append({
+            "start": datetime.fromisoformat(s["start_time"]),
+            "energy_wh": s["energy_wh"], "cost": s["cost"],
+            "charging_min": s["charging_duration_min"],
+            "km": s["km_since_last"], "external": s["is_external"],
+            "power_max_w": s["power_max_w"],
+        })
+    return _monthly_from_rows(rows, tz)
+
+
+@router.get("/summary")
+def home_summary(db: Session = Depends(get_db), user=Depends(get_current_user)):
+    """Chiffres clés de l'accueil : agrégat mensuel de toutes les charges
+    terminées visibles par l'utilisateur (un non-admin ne voit que ses
+    véhicules). Le client en déduit mois courant, mois précédent et année en
+    cours. Calcul léger : lit directement les transactions sans les sérialiser."""
+    tz = _get_display_tz(db)
+    allowed_ids = _user_vehicle_ids(db, user)
+    q = db.query(Transaction).filter(Transaction.start_time.isnot(None))
+    if allowed_ids is not None:
+        q = q.filter(Transaction.vehicle_id.in_(allowed_ids))
+    txns = q.order_by(Transaction.start_time.asc()).all()
+    last_odo: dict = {}
+    km_by_id: dict = {}
+    for t in txns:
+        if t.vehicle_id and t.odometer_km is not None:
+            prev = last_odo.get(t.vehicle_id)
+            if prev is not None and t.odometer_km - prev > 0:
+                km_by_id[t.id] = t.odometer_km - prev
+            last_odo[t.vehicle_id] = t.odometer_km
+    rows = [{
+        "start": t.start_time, "energy_wh": t.energy_wh, "cost": t.cost,
+        "charging_min": (t.charging_seconds or 0.0) / 60.0,
+        "km": km_by_id.get(t.id), "external": bool(t.is_external),
+    } for t in txns if t.status == "completed"]
+    return {"timezone": str(tz), "monthly": _monthly_from_rows(rows, tz)}
+
+
 class SessionUpdate(BaseModel):
     vehicle_id: Optional[int] = None
     odometer_km: Optional[float] = None
@@ -1539,6 +1641,7 @@ def vehicle_stats(vehicle_id: int, db: Session = Depends(get_db), user=Depends(g
         "active": vehicle.deleted_at is None,
         "charger_ids": _vehicle_charger_ids(db, vehicle.id),
         "stats": stats,
+        "monthly": _monthly_from_serialized(serialized, _get_display_tz(db)),
         "sessions": serialized,
     }
 
@@ -1956,6 +2059,7 @@ def charger_stats(charger_id: str, db: Session = Depends(get_db), user=Depends(g
             "total_cost": round(total_cost, 2),
             "power_max_w": round(max(powers), 1) if powers else None,
         },
+        "monthly": _monthly_from_serialized(serialized, _get_display_tz(db)),
         "sessions": serialized,
     }
 
