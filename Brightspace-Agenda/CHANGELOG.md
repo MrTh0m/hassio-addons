@@ -1,5 +1,25 @@
 # Changelog - addon Brightspace Agenda
 
+## 1.2.0 - 2026-11-11
+
+Mise à jour de l'application embarquée vers la **v43** (branche `main` du
+dépôt app au 11/11/2026). Aucun changement dans l'addon lui-même : la version
+est incrémentée pour que Home Assistant propose la mise à jour et que le
+`git clone` du build soit rejoué (le code de l'app est récupéré au build, un
+nouveau commit sur `main` seul ne déclenche donc aucune mise à jour).
+
+Nouveautés de l'app depuis la 1.1.0 :
+
+- v42 : proxy CORS perso et diagnostic des proxys (mode Local).
+- v43 : type de devoir (individuel / collectif) modifiable d'un clic sur la
+  pastille ; listes Devoirs, Live Sessions et Ateliers centrées sur
+  aujourd'hui, avec bouton « Afficher 5 précédents ».
+- API `upcoming` (intégration HACS) : `individuels` et `collectifs` comptent
+  les devoirs restants de chaque type, types forcés inclus ; nouveau champ
+  `devoir_type`.
+
+Données : `state.json` gagne une map `devoir_types`, sans migration.
+
 ## 1.1.0 - 2026-07-25
 
 Auto-connexion en mode connecté sous le panneau Ingress : les requêtes
