@@ -1,3 +1,21 @@
+## 0.19.43
+
+- **Nouveau** : entité « Connecteur N véhicule » (liste de choix) dans Home Assistant, en mode local. Elle désigne le véhicule de la prochaine charge : une charge démarrée depuis l'interrupteur « autoriser la charge » de Home Assistant, ou par le démarrage automatique, lui est rattachée comme un démarrage depuis l'interface (jusqu'ici ces charges partaient sans véhicule, avec l'idTag `MQTT` ou `WEBADMIN`). Les choix proposés sont les véhicules actifs associés à la borne (à défaut, tous les véhicules actifs) et « Aucun ». Par défaut : le véhicule de la dernière charge sur ce connecteur, ou l'unique véhicule possible. Pendant une session, la liste affiche le véhicule de la session et ne peut pas être modifiée.
+- **Nouveau** : quatre capteurs par véhicule pour le mois civil en cours : « Charges du mois », « Énergie du mois », « Coût du mois » et « Distance du mois ». Même règle de calcul que l'historique mensuel de la fiche véhicule ; rafraîchis à chaque fin de charge, à chaque édition d'une charge et toutes les heures (remise à zéro au changement de mois).
+- ⚠️ Le choix du véhicule est gardé en mémoire : après un redémarrage du serveur, le choix par défaut est recalculé.
+- Tests dédiés (`test_mqtt_vehicle_select.py`).
+
+## 0.19.42
+
+- **Corrigé** : côté Home Assistant, un connecteur libre affichait encore l'énergie, le coût, la durée et le début de la dernière session, en doublon de « dernière charge », jusqu'à la charge suivante. Ces valeurs repassent à zéro (début de session : inconnu) dès que le connecteur revient à `Available`. En `Finishing` (câble encore branché) le bilan de la session reste affiché. Même remise à zéro côté véhicule à la fin de la session.
+- **Corrigé** : la tension résiduelle remontée par la borne hors session (quelques volts) n'est plus publiée ; la tension passe à inconnu, la puissance et le courant à 0 quand le connecteur est libre.
+- **Amélioré** : les énergies (totale, session, dernière charge) s'affichent en kWh dans Home Assistant et la durée de charge est déclarée comme une durée. Les topics MQTT, les valeurs publiées (Wh) et les identifiants des entités ne changent pas : la conversion est faite par Home Assistant, aucune entité n'est recréée.
+- **Nouveau** : capteur « En ligne » par borne (connexion OCPP au serveur), publié à la connexion et à la déconnexion.
+- **Nouveau** : trois capteurs par véhicule, calculés sur la dernière charge : « Consommation estimée » (kWh/100 km), « Coût aux 100 km » et « Dernière charge part de batterie » (%). Les deux premiers demandent l'odomètre de la charge et de la précédente, et au moins 10 km entre les deux ; sinon ils passent à inconnu.
+- **Amélioré** : « Statut borne » et « Capacité batterie » sont rangés dans les entités de diagnostic.
+- ⚠️ Le tableau de bord Énergie de Home Assistant convertit de lui-même l'historique de « énergie totale » de Wh en kWh. Une carte ou une automatisation qui lisait ces capteurs en Wh doit être adaptée.
+- Tests dédiés (`test_mqtt_entities.py`).
+
 ## 0.19.41
 
 - **Amélioré** : l'export du dump de diagnostic propose des raccourcis de période (1 h, 6 h, 24 h, 3 jours, 7 jours, 30 jours, aujourd'hui, hier, tout) et une plage personnalisée avec sélecteurs date et heure, plus un résumé de la plage demandée et une liste de limites de lignes. Remplace le champ « nombre d'heures » saisi à la main.

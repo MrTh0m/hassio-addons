@@ -3,6 +3,7 @@ import json
 import logging
 import os
 from collections import deque
+from datetime import datetime, timezone
 
 import aiomqtt
 
@@ -110,6 +111,325 @@ def _device_info(charger_id: str, display_name: str | None = None) -> dict:
     }
 
 
+# Valeur à publier pour repasser un capteur HA à « Inconnu » (convention des
+# capteurs MQTT de Home Assistant). publish_state() ignore les valeurs Python
+# None (« ne rien publier »), d'où cette chaîne explicite.
+UNKNOWN = "None"
+
+# Les topics et unique_id gardent leur suffixe historique « _wh » et les
+# valeurs publiées restent en Wh (rien ne change pour les entités déjà
+# créées côté HA ni pour les éventuels abonnés tiers) ; c'est la découverte
+# qui demande à HA de convertir et d'afficher en kWh.
+_WH_TO_KWH = "{{ (value | float(0) / 1000) | round(3) }}"
+
+
+def _connector_sensors(connector_id: int) -> dict:
+    n = f"Connecteur {connector_id}"
+    return {
+        "status": {"name": f"{n} statut", "icon": "mdi:ev-plug-type2"},
+        "power_w": {"name": f"{n} puissance", "unit": "W", "device_class": "power", "state_class": "measurement", "precision": 0},
+        "current_a": {"name": f"{n} courant", "unit": "A", "device_class": "current", "state_class": "measurement", "precision": 1},
+        "voltage_v": {"name": f"{n} tension", "unit": "V", "device_class": "voltage", "state_class": "measurement", "precision": 0},
+        "energy_wh": {"name": f"{n} énergie totale", "unit": "kWh", "device_class": "energy", "state_class": "total_increasing", "value_template": _WH_TO_KWH, "precision": 1},
+        "session_energy_wh": {"name": f"{n} énergie session", "unit": "kWh", "device_class": "energy", "state_class": "total_increasing", "value_template": _WH_TO_KWH, "precision": 2},
+        "session_cost": {"name": f"{n} coût session", "unit": "EUR", "device_class": "monetary", "state_class": "total", "precision": 2},
+        "session_duration_min": {"name": f"{n} durée de charge", "unit": "min", "device_class": "duration", "icon": "mdi:timer-outline"},
+        "session_start_time": {"name": f"{n} début de session", "device_class": "timestamp"},
+        "last_session_energy_wh": {"name": f"{n} dernière charge énergie", "unit": "kWh", "device_class": "energy", "value_template": _WH_TO_KWH, "precision": 2},
+        "last_session_cost": {"name": f"{n} dernière charge coût", "unit": "EUR", "device_class": "monetary", "precision": 2},
+    }
+
+
+_VEHICLE_SENSORS = {
+    "charging_at": {"name": "En charge sur", "icon": "mdi:ev-station"},
+    "session_energy_wh": {"name": "Énergie session", "unit": "kWh", "device_class": "energy", "state_class": "total_increasing", "value_template": _WH_TO_KWH, "precision": 2},
+    "session_cost": {"name": "Coût session", "unit": "EUR", "device_class": "monetary", "state_class": "total", "precision": 2},
+    "session_duration_min": {"name": "Durée de charge", "unit": "min", "device_class": "duration", "icon": "mdi:timer-outline"},
+    "session_start_time": {"name": "Début de session", "device_class": "timestamp"},
+    "last_session_energy_wh": {"name": "Dernière charge énergie", "unit": "kWh", "device_class": "energy", "value_template": _WH_TO_KWH, "precision": 2},
+    "last_session_cost": {"name": "Dernière charge coût", "unit": "EUR", "device_class": "monetary", "precision": 2},
+    "last_session_charger": {"name": "Dernière charge borne", "icon": "mdi:ev-station"},
+    "last_session_battery_pct": {"name": "Dernière charge part de batterie", "unit": "%", "icon": "mdi:battery-charging", "precision": 0},
+    "odometer_km": {"name": "Odomètre (dernière charge)", "unit": "km", "device_class": "distance"},
+    "km_since_last": {"name": "Km depuis la charge précédente", "unit": "km", "device_class": "distance"},
+    "consumption_kwh_100km": {"name": "Consommation estimée", "unit": "kWh/100km", "icon": "mdi:speedometer", "precision": 1},
+    "cost_per_100km": {"name": "Coût aux 100 km", "unit": "EUR/100km", "icon": "mdi:cash", "precision": 2},
+    "battery_capacity_kwh": {"name": "Capacité batterie", "unit": "kWh", "device_class": "energy_storage", "entity_category": "diagnostic"},
+    # Cumuls du mois civil en cours (fuseau d'affichage), charges terminées.
+    "month_charge_count": {"name": "Charges du mois", "icon": "mdi:counter"},
+    "month_energy_kwh": {"name": "Énergie du mois", "unit": "kWh", "device_class": "energy", "precision": 1},
+    "month_cost": {"name": "Coût du mois", "unit": "EUR", "device_class": "monetary", "precision": 2},
+    "month_km": {"name": "Distance du mois", "unit": "km", "device_class": "distance", "precision": 0},
+}
+
+
+def _sensor_payload(meta: dict, unique_id: str, state_topic: str, device: dict) -> dict:
+    payload = {
+        "name": meta["name"],
+        "unique_id": unique_id,
+        "state_topic": state_topic,
+        "device": device,
+    }
+    renamed = {"unit": "unit_of_measurement", "precision": "suggested_display_precision"}
+    for opt in ("unit", "device_class", "state_class", "icon", "entity_category", "value_template", "precision"):
+        if opt in meta:
+            payload[renamed.get(opt, opt)] = meta[opt]
+    return payload
+
+
+# En dessous de cette distance, la consommation et le coût aux 100 km ne
+# veulent rien dire (un simple complément de charge après 2 km donnerait des
+# centaines de kWh/100 km).
+MIN_KM_FOR_EFFICIENCY = 10
+
+
+def vehicle_efficiency(energy_wh, cost, km_since_last, battery_capacity_kwh) -> dict:
+    """Indicateurs dérivés de la dernière charge d'un véhicule. Estimations :
+    elles supposent que la charge a rendu à la batterie ce que les km
+    parcourus depuis la charge précédente avaient consommé. Une valeur non
+    calculable est renvoyée à UNKNOWN, pour ne pas laisser une ancienne
+    estimation affichée à côté d'une charge qui n'a rien à voir."""
+    out = {"consumption_kwh_100km": UNKNOWN, "cost_per_100km": UNKNOWN, "last_session_battery_pct": UNKNOWN}
+    if km_since_last and km_since_last >= MIN_KM_FOR_EFFICIENCY:
+        if energy_wh:
+            out["consumption_kwh_100km"] = round(energy_wh / 1000 / km_since_last * 100, 1)
+        if cost is not None:
+            out["cost_per_100km"] = round(cost / km_since_last * 100, 2)
+    if battery_capacity_kwh and energy_wh is not None:
+        out["last_session_battery_pct"] = round(energy_wh / 1000 / battery_capacity_kwh * 100)
+    return out
+
+
+def vehicle_month_totals(db, vehicle_id: int, tz, now: datetime | None = None) -> dict:
+    """Cumuls du mois civil en cours pour un véhicule : même règle que les
+    agrégats mensuels de l'interface (api._monthly_from_rows). Seules les
+    charges terminées comptent, rattachées au mois de leur début dans le
+    fuseau d'affichage ; les km d'une charge sont ceux parcourus depuis la
+    charge précédente du véhicule."""
+    from .models import Transaction
+
+    local_now = (now or datetime.utcnow()).replace(tzinfo=timezone.utc).astimezone(tz)
+    count, energy_wh, cost, km_total = 0, 0.0, 0.0, 0.0
+    prev_odo = None
+    txns = db.query(Transaction).filter(
+        Transaction.vehicle_id == vehicle_id,
+        Transaction.start_time.isnot(None),
+    ).order_by(Transaction.start_time.asc()).all()
+    for txn in txns:
+        km = None
+        if txn.odometer_km is not None:
+            if prev_odo is not None and txn.odometer_km - prev_odo > 0:
+                km = txn.odometer_km - prev_odo
+            prev_odo = txn.odometer_km
+        if txn.status != "completed":
+            continue
+        start = txn.start_time.replace(tzinfo=timezone.utc).astimezone(tz)
+        if (start.year, start.month) != (local_now.year, local_now.month):
+            continue
+        count += 1
+        energy_wh += txn.energy_wh or 0.0
+        cost += txn.cost or 0.0
+        km_total += km or 0.0
+    return {
+        "month_charge_count": count,
+        "month_energy_kwh": round(energy_wh / 1000.0, 2),
+        "month_cost": round(cost, 2),
+        "month_km": round(km_total, 1),
+    }
+
+
+async def publish_vehicle_month(vehicle_id: int):
+    if _client is None:
+        return
+    from .db import SessionLocal
+    from .api import _get_display_tz
+
+    db = SessionLocal()
+    try:
+        values = vehicle_month_totals(db, vehicle_id, _get_display_tz(db))
+    finally:
+        db.close()
+    await publish_vehicle_state(vehicle_id, **values)
+
+
+# --- Choix du véhicule pour la prochaine charge (entité select par connecteur) ---
+
+NO_VEHICLE = "Aucun"
+# Véhicule choisi dans Home Assistant, par (borne, connecteur). En mémoire :
+# au redémarrage, le choix par défaut est recalculé (voir vehicle_select_view).
+SELECTED_VEHICLE: dict[tuple[str, int], int] = {}
+# Connecteurs dont le choix par défaut a déjà été proposé : au-delà, un
+# « Aucun » choisi par l'utilisateur est respecté et n'est pas remplacé.
+_select_defaulted: set[tuple[str, int]] = set()
+
+
+def _eligible_vehicles(db, charger_id: str) -> list:
+    """Véhicules actifs associés à la borne ; à défaut d'association, tous
+    les véhicules actifs (même tolérance que le démarrage depuis l'interface)."""
+    from .models import Vehicle, VehicleCharger
+
+    active = db.query(Vehicle).filter(Vehicle.deleted_at.is_(None))
+    linked = active.join(VehicleCharger, VehicleCharger.vehicle_id == Vehicle.id).filter(
+        VehicleCharger.charger_id == charger_id
+    ).order_by(Vehicle.name).all()
+    return linked or active.order_by(Vehicle.name).all()
+
+
+def vehicle_select_view(db, charger_id: str, connector_id: int) -> tuple[list, str]:
+    """Options et valeur courante du select « véhicule » d'un connecteur.
+    Pendant une session, la valeur est le véhicule de la session. Sinon c'est
+    le choix fait dans HA ; la première fois, le véhicule de la dernière
+    charge sur ce connecteur est proposé (ou l'unique véhicule possible)."""
+    from .models import Transaction, Vehicle
+
+    key = (charger_id, connector_id)
+    names = {v.id: v.name for v in _eligible_vehicles(db, charger_id)}
+    options = [NO_VEHICLE] + list(dict.fromkeys(names.values()))
+
+    active = db.query(Transaction).filter(
+        Transaction.charger_id == charger_id,
+        Transaction.connector_id == connector_id,
+        Transaction.status == "active",
+    ).order_by(Transaction.id.desc()).first()
+    if active is not None:
+        name = names.get(active.vehicle_id)
+        if name is None and active.vehicle_id:
+            vehicle = db.query(Vehicle).filter(Vehicle.id == active.vehicle_id).first()
+            if vehicle:
+                name = vehicle.name
+                if name not in options:
+                    options.append(name)
+        return options, name or NO_VEHICLE
+
+    selected = SELECTED_VEHICLE.get(key)
+    if selected not in names:
+        selected = None
+        if key not in _select_defaulted:
+            last = db.query(Transaction).filter(
+                Transaction.charger_id == charger_id,
+                Transaction.connector_id == connector_id,
+                Transaction.vehicle_id.isnot(None),
+                Transaction.status == "completed",
+            ).order_by(Transaction.start_time.desc()).first()
+            if last is not None and last.vehicle_id in names:
+                selected = last.vehicle_id
+            elif len(names) == 1:
+                selected = next(iter(names))
+    _select_defaulted.add(key)
+    if selected is None:
+        SELECTED_VEHICLE.pop(key, None)
+        return options, NO_VEHICLE
+    SELECTED_VEHICLE[key] = selected
+    return options, names[selected]
+
+
+async def publish_vehicle_select(charger_id: str, connector_id: int):
+    """Publie (découverte + valeur) le select « véhicule » d'un connecteur.
+    Mode local uniquement : en mode relais le serveur ne démarre pas les
+    charges, l'entité est retirée."""
+    if _client is None or connector_id == 0:
+        return
+    from .db import SessionLocal
+    from .models import Charger
+
+    slug = _slug(charger_id)
+    c = f"connector{connector_id}"
+    config_topic = f"{DISCOVERY_PREFIX}/select/{slug}_{c}_vehicle/config"
+    view = None
+    display_name = None
+    db = SessionLocal()
+    try:
+        charger = db.query(Charger).filter(Charger.id == charger_id).first()
+        if charger is not None and charger.mode.value == "local":
+            view = vehicle_select_view(db, charger_id, connector_id)
+            display_name = charger.display_name
+    finally:
+        db.close()
+    if view is None:
+        await _safe_publish(config_topic, "", retain=True)
+        return
+    options, state = view
+    _slug_to_id[slug] = charger_id
+    payload = {
+        "name": f"Connecteur {connector_id} véhicule",
+        "unique_id": f"ocppserver_{slug}_{c}_vehicle",
+        "state_topic": f"{BASE_TOPIC}/{slug}/{c}/vehicle/state",
+        "command_topic": f"{BASE_TOPIC}/{slug}/{c}/vehicle/set",
+        "options": options,
+        "icon": "mdi:car-electric",
+        "device": _device_info(charger_id, display_name),
+    }
+    await _safe_publish(config_topic, json.dumps(payload), retain=True)
+    await publish_connector_state(charger_id, connector_id, **{"vehicle/state": state})
+
+
+async def refresh_vehicle_selects():
+    """Republie tous les selects « véhicule » : à appeler quand la liste des
+    véhicules change (création, renommage, désactivation, association)."""
+    if _client is None:
+        return
+    from .db import SessionLocal
+    from .models import ConnectorStatus
+
+    db = SessionLocal()
+    try:
+        pairs = [(cs.charger_id, cs.connector_id) for cs in db.query(ConnectorStatus).all() if cs.connector_id != 0]
+    finally:
+        db.close()
+    for charger_id, connector_id in pairs:
+        await publish_vehicle_select(charger_id, connector_id)
+
+
+async def _handle_vehicle_select(charger_id: str, connector_id: int, name: str):
+    from .db import SessionLocal
+    from .models import Transaction
+
+    key = (charger_id, connector_id)
+    db = SessionLocal()
+    try:
+        has_active = db.query(Transaction).filter(
+            Transaction.charger_id == charger_id,
+            Transaction.connector_id == connector_id,
+            Transaction.status == "active",
+        ).first() is not None
+        # Pendant une session le véhicule est celui de la session : le choix
+        # est ignoré, et la republication ci-dessous remet la bonne valeur.
+        if not has_active:
+            match = next((v for v in _eligible_vehicles(db, charger_id) if v.name == name), None)
+            _select_defaulted.add(key)
+            if match is not None:
+                SELECTED_VEHICLE[key] = match.id
+            else:
+                SELECTED_VEHICLE.pop(key, None)
+    finally:
+        db.close()
+    await publish_vehicle_select(charger_id, connector_id)
+
+
+def start_identity(charger_id: str, connector_id: int, default_tag: str) -> str:
+    """idTag à utiliser pour un démarrage à distance lancé sans véhicule
+    explicite (interrupteur HA, démarrage automatique). Si un véhicule est
+    choisi pour ce connecteur, la charge lui est rattachée exactement comme
+    un démarrage depuis l'interface (voir api.start_charge)."""
+    vehicle_id = SELECTED_VEHICLE.get((charger_id, connector_id))
+    if not vehicle_id:
+        return default_tag
+    from .db import SessionLocal
+    from .models import Vehicle
+    from .csms_local import PENDING_REMOTE_STARTS
+
+    db = SessionLocal()
+    try:
+        vehicle = db.query(Vehicle).filter(Vehicle.id == vehicle_id, Vehicle.deleted_at.is_(None)).first()
+        if vehicle is None:
+            return default_tag
+        tag = vehicle.id_tag or f"REMOTE-{vehicle.id}"
+    finally:
+        db.close()
+    PENDING_REMOTE_STARTS[(charger_id, connector_id)] = vehicle_id
+    return tag
+
+
 async def publish_discovery(charger_id: str, mode: str, display_name: str | None = None):
     """Publie le capteur de statut global de la borne (connecteur 0, la
     borne elle-même au sens de la norme, pas un connecteur physique).
@@ -128,8 +448,25 @@ async def publish_discovery(charger_id: str, mode: str, display_name: str | None
         "state_topic": f"{BASE_TOPIC}/{slug}/status",
         "device": device,
         "icon": "mdi:ev-station",
+        # Sur une borne à un seul connecteur, ce statut double celui du
+        # connecteur : rangé en diagnostic pour ne pas encombrer les cartes.
+        "entity_category": "diagnostic",
     }
     await _safe_publish(f"{DISCOVERY_PREFIX}/sensor/{slug}_status/config", json.dumps(payload), retain=True)
+
+    # Lien OCPP borne <-> serveur (WebSocket). Les autres entités gardent leur
+    # dernière valeur connue quand la borne est hors ligne ; c'est ce capteur
+    # qui permet à une carte de les afficher comme « Indisponible ».
+    online = {
+        "name": "En ligne",
+        "unique_id": f"ocppserver_{slug}_online",
+        "state_topic": f"{BASE_TOPIC}/{slug}/online",
+        "payload_on": "ON", "payload_off": "OFF",
+        "device_class": "connectivity",
+        "entity_category": "diagnostic",
+        "device": device,
+    }
+    await _safe_publish(f"{DISCOVERY_PREFIX}/binary_sensor/{slug}_online/config", json.dumps(online), retain=True)
 
     # Nettoyage d'une entité obsolète : jusqu'en 0.7.0, le switch de pilotage
     # était publié au niveau de la borne (ocppserver_{slug}_charge_control).
@@ -162,29 +499,8 @@ async def publish_connector_discovery(charger_id: str, connector_id: int, mode: 
     device = _device_info(charger_id, display_name)
     c = f"connector{connector_id}"
 
-    sensors = {
-        "status": {"name": f"Connecteur {connector_id} statut", "icon": "mdi:ev-plug-type2"},
-        "power_w": {"name": f"Connecteur {connector_id} puissance", "unit": "W", "device_class": "power", "state_class": "measurement"},
-        "current_a": {"name": f"Connecteur {connector_id} courant", "unit": "A", "device_class": "current", "state_class": "measurement"},
-        "voltage_v": {"name": f"Connecteur {connector_id} tension", "unit": "V", "device_class": "voltage", "state_class": "measurement"},
-        "energy_wh": {"name": f"Connecteur {connector_id} énergie totale", "unit": "Wh", "device_class": "energy", "state_class": "total_increasing"},
-        "session_energy_wh": {"name": f"Connecteur {connector_id} énergie session", "unit": "Wh", "device_class": "energy", "state_class": "total_increasing"},
-        "session_cost": {"name": f"Connecteur {connector_id} coût session", "unit": "EUR", "device_class": "monetary", "state_class": "total"},
-        "session_duration_min": {"name": f"Connecteur {connector_id} durée de charge", "unit": "min", "icon": "mdi:timer-outline"},
-        "session_start_time": {"name": f"Connecteur {connector_id} début de session", "device_class": "timestamp"},
-        "last_session_energy_wh": {"name": f"Connecteur {connector_id} dernière charge énergie", "unit": "Wh", "device_class": "energy"},
-        "last_session_cost": {"name": f"Connecteur {connector_id} dernière charge coût", "unit": "EUR", "device_class": "monetary"},
-    }
-    for key, meta in sensors.items():
-        payload = {
-            "name": meta["name"],
-            "unique_id": f"ocppserver_{slug}_{c}_{key}",
-            "state_topic": f"{BASE_TOPIC}/{slug}/{c}/{key}",
-            "device": device,
-        }
-        for opt in ("unit", "device_class", "state_class", "icon"):
-            if opt in meta:
-                payload["unit_of_measurement" if opt == "unit" else opt] = meta[opt]
+    for key, meta in _connector_sensors(connector_id).items():
+        payload = _sensor_payload(meta, f"ocppserver_{slug}_{c}_{key}", f"{BASE_TOPIC}/{slug}/{c}/{key}", device)
         await _safe_publish(f"{DISCOVERY_PREFIX}/sensor/{slug}_{c}_{key}/config", json.dumps(payload), retain=True)
 
     switch_topic = f"{DISCOVERY_PREFIX}/switch/{slug}_{c}_charge_control/config"
@@ -235,29 +551,8 @@ async def publish_vehicle_discovery(vehicle_id: int, name: str):
     }
     await _safe_publish(f"{DISCOVERY_PREFIX}/binary_sensor/{v}_is_charging/config", json.dumps(payload), retain=True)
 
-    sensors = {
-        "charging_at": {"name": "En charge sur", "icon": "mdi:ev-station"},
-        "session_energy_wh": {"name": "Énergie session", "unit": "Wh", "device_class": "energy", "state_class": "total_increasing"},
-        "session_cost": {"name": "Coût session", "unit": "EUR", "device_class": "monetary", "state_class": "total"},
-        "session_duration_min": {"name": "Durée de charge", "unit": "min", "icon": "mdi:timer-outline"},
-        "session_start_time": {"name": "Début de session", "device_class": "timestamp"},
-        "last_session_energy_wh": {"name": "Dernière charge énergie", "unit": "Wh", "device_class": "energy"},
-        "last_session_cost": {"name": "Dernière charge coût", "unit": "EUR", "device_class": "monetary"},
-        "last_session_charger": {"name": "Dernière charge borne", "icon": "mdi:ev-station"},
-        "odometer_km": {"name": "Odomètre (dernière charge)", "unit": "km", "device_class": "distance"},
-        "km_since_last": {"name": "Km depuis la charge précédente", "unit": "km", "device_class": "distance"},
-        "battery_capacity_kwh": {"name": "Capacité batterie", "unit": "kWh", "device_class": "energy"},
-    }
-    for key, meta in sensors.items():
-        payload = {
-            "name": meta["name"],
-            "unique_id": f"ocppserver_{v}_{key}",
-            "state_topic": f"{BASE_TOPIC}/{v}/{key}",
-            "device": device,
-        }
-        for opt in ("unit", "device_class", "state_class", "icon"):
-            if opt in meta:
-                payload["unit_of_measurement" if opt == "unit" else opt] = meta[opt]
+    for key, meta in _VEHICLE_SENSORS.items():
+        payload = _sensor_payload(meta, f"ocppserver_{v}_{key}", f"{BASE_TOPIC}/{v}/{key}", device)
         await _safe_publish(f"{DISCOVERY_PREFIX}/sensor/{v}_{key}/config", json.dumps(payload), retain=True)
 
 
@@ -270,11 +565,7 @@ async def unpublish_vehicle_discovery(vehicle_id: int):
         return
     v = f"vehicle{vehicle_id}"
     await _safe_publish(f"{DISCOVERY_PREFIX}/binary_sensor/{v}_is_charging/config", "", retain=True)
-    for key in (
-        "charging_at", "session_energy_wh", "session_cost", "session_duration_min",
-        "session_start_time", "last_session_energy_wh", "last_session_cost",
-        "last_session_charger", "odometer_km", "km_since_last", "battery_capacity_kwh",
-    ):
+    for key in _VEHICLE_SENSORS:
         await _safe_publish(f"{DISCOVERY_PREFIX}/sensor/{v}_{key}/config", "", retain=True)
 
 
@@ -289,18 +580,18 @@ async def unpublish_charger_discovery(charger_id: str, connector_ids: list[int])
         return
     slug = _slug(charger_id)
     await _safe_publish(f"{DISCOVERY_PREFIX}/sensor/{slug}_status/config", "", retain=True)
+    await _safe_publish(f"{DISCOVERY_PREFIX}/binary_sensor/{slug}_online/config", "", retain=True)
     await _safe_publish(f"{DISCOVERY_PREFIX}/switch/{slug}_charge_control/config", "", retain=True)
     for connector_id in connector_ids:
         if connector_id == 0:
             continue
         c = f"connector{connector_id}"
-        for key in (
-            "status", "power_w", "current_a", "voltage_v", "energy_wh",
-            "session_energy_wh", "session_cost", "session_duration_min",
-            "session_start_time", "last_session_energy_wh", "last_session_cost",
-        ):
+        for key in _connector_sensors(connector_id):
             await _safe_publish(f"{DISCOVERY_PREFIX}/sensor/{slug}_{c}_{key}/config", "", retain=True)
         await _safe_publish(f"{DISCOVERY_PREFIX}/switch/{slug}_{c}_charge_control/config", "", retain=True)
+        await _safe_publish(f"{DISCOVERY_PREFIX}/select/{slug}_{c}_vehicle/config", "", retain=True)
+        SELECTED_VEHICLE.pop((charger_id, connector_id), None)
+        _select_defaulted.discard((charger_id, connector_id))
     _slug_to_id.pop(slug, None)
 
 
@@ -325,8 +616,11 @@ async def publish_vehicle_last_charge(vehicle_id: int):
     ce deuxième appelant est le cas d'usage le plus fréquent en pratique."""
     if _client is None:
         return
+    # Les cumuls du mois dépendent des mêmes événements (fin de session,
+    # édition d'une charge ou de son odomètre) : republiés au même moment.
+    await publish_vehicle_month(vehicle_id)
     from .db import SessionLocal
-    from .models import Transaction, Charger
+    from .models import Transaction, Charger, Vehicle
 
     db = SessionLocal()
     try:
@@ -366,6 +660,11 @@ async def publish_vehicle_last_charge(vehicle_id: int):
             values["odometer_km"] = last.odometer_km
         if km_since_last is not None:
             values["km_since_last"] = km_since_last
+        vehicle = db.query(Vehicle).filter(Vehicle.id == vehicle_id).first()
+        values.update(vehicle_efficiency(
+            last.energy_wh, last.cost, km_since_last,
+            vehicle.battery_capacity_kwh if vehicle else None,
+        ))
     finally:
         db.close()
 
@@ -390,6 +689,35 @@ async def publish_connector_state(charger_id: str, connector_id: int, **values):
     await publish_state(charger_id, **prefixed)
 
 
+async def publish_online(charger_id: str, online: bool):
+    await publish_state(charger_id, online="ON" if online else "OFF")
+
+
+async def publish_connector_session_idle(charger_id: str, connector_id: int):
+    """Connecteur libre (Available) : remet à zéro tout ce qui décrit une
+    session EN COURS. Sans ça, les valeurs retenues de la dernière session
+    (énergie, coût, durée, début) restaient affichées jusqu'à la charge
+    suivante, en doublon de « dernière charge », et la tension résiduelle
+    lue à vide (quelques volts) passait pour une mesure. Appelé au retour à
+    Available et non à la fin de la transaction : en Finishing (câble encore
+    branché) le bilan de la session reste donc lisible."""
+    await publish_connector_state(
+        charger_id, connector_id,
+        session_energy_wh=0, session_cost=0, session_duration_min=0,
+        session_start_time=UNKNOWN, power_w=0, current_a=0, voltage_v=UNKNOWN,
+    )
+
+
+async def publish_vehicle_session_idle(vehicle_id: int):
+    """Véhicule sans session en cours : même remise à zéro que pour le
+    connecteur, début de session compris."""
+    await publish_vehicle_state(
+        vehicle_id, is_charging="OFF", charging_at="Aucune",
+        session_energy_wh=0, session_cost=0, session_duration_min=0,
+        session_start_time=UNKNOWN,
+    )
+
+
 async def publish_charge_control_state(charger_id: str, connector_id: int, is_charging: bool):
     await publish_connector_state(
         charger_id, connector_id, **{"charge_control/state": "ON" if is_charging else "OFF"}
@@ -401,11 +729,13 @@ async def _handle_command(message: aiomqtt.Message):
 
     parts = str(message.topic).split("/")
     # ocppserver/{slug}/connector{N}/charge_control/set
+    # ocppserver/{slug}/connector{N}/vehicle/set
     if (
         len(parts) != 5
         or parts[0] != BASE_TOPIC
         or not parts[2].startswith("connector")
-        or parts[3:] != ["charge_control", "set"]
+        or parts[3] not in ("charge_control", "vehicle")
+        or parts[4] != "set"
     ):
         return
     slug = parts[1]
@@ -418,6 +748,14 @@ async def _handle_command(message: aiomqtt.Message):
     if not charger_id:
         logger.warning("Commande MQTT reçue pour une borne inconnue (%s)", slug)
         return
+    if parts[3] == "vehicle":
+        # Le choix du véhicule ne demande pas que la borne soit connectée.
+        name = message.payload.decode() if isinstance(message.payload, (bytes, bytearray)) else str(message.payload)
+        try:
+            await _handle_vehicle_select(charger_id, connector_id, name)
+        except Exception:
+            logger.exception("Erreur lors du choix du véhicule pour %s (connecteur %s)", charger_id, connector_id)
+        return
     cp = CONNECTED_CHARGERS.get(charger_id)
     if not cp:
         logger.warning("Commande MQTT pour %s ignorée : borne non connectée", charger_id)
@@ -426,7 +764,7 @@ async def _handle_command(message: aiomqtt.Message):
     payload = message.payload.decode() if isinstance(message.payload, (bytes, bytearray)) else str(message.payload)
     try:
         if payload == "ON":
-            await cp.trigger_remote_start(connector_id, "MQTT")
+            await cp.trigger_remote_start(connector_id, start_identity(charger_id, connector_id, "MQTT"))
         elif payload == "OFF":
             from .db import SessionLocal
             from .models import Transaction
@@ -469,8 +807,11 @@ async def republish_all():
             connectors_by_charger.setdefault(cs.charger_id, []).append(cs)
         vehicles = db.query(Vehicle).filter(Vehicle.deleted_at.is_(None)).all()
         active_by_vehicle: dict[int, Transaction] = {}
-        for txn in db.query(Transaction).filter(Transaction.status == "active", Transaction.vehicle_id.isnot(None)).all():
-            active_by_vehicle.setdefault(txn.vehicle_id, txn)
+        active_connectors: set[tuple] = set()
+        for txn in db.query(Transaction).filter(Transaction.status == "active").all():
+            active_connectors.add((txn.charger_id, txn.connector_id))
+            if txn.vehicle_id is not None:
+                active_by_vehicle.setdefault(txn.vehicle_id, txn)
     finally:
         db.close()
 
@@ -478,11 +819,20 @@ async def republish_all():
         await publish_discovery(charger.id, charger.mode.value, charger.display_name)
         if charger.status:
             await publish_state(charger.id, status=charger.status)
+        if charger.mode.value == "local":
+            # En mode relais la connexion n'est pas suivie dans
+            # CONNECTED_CHARGERS : la valeur retenue (publiée à la connexion
+            # et à la déconnexion, voir main.py) reste la référence.
+            from .csms_local import CONNECTED_CHARGERS
+            await publish_online(charger.id, charger.id in CONNECTED_CHARGERS)
         for cs in connectors_by_charger.get(charger.id, []):
             if cs.connector_id == 0:
                 continue
             await publish_connector_discovery(charger.id, cs.connector_id, charger.mode.value, charger.display_name)
             await publish_connector_state(charger.id, cs.connector_id, status=cs.status)
+            if cs.status == "Available" and (charger.id, cs.connector_id) not in active_connectors:
+                await publish_connector_session_idle(charger.id, cs.connector_id)
+            await publish_vehicle_select(charger.id, cs.connector_id)
 
     for vehicle in vehicles:
         await publish_vehicle_discovery(vehicle.id, vehicle.name)
@@ -497,10 +847,30 @@ async def republish_all():
                 charging_at=f"{label} / Connecteur {active.connector_id}",
             )
         else:
-            await publish_vehicle_state(
-                vehicle.id, is_charging="OFF", charging_at="Aucune",
-                session_energy_wh=0, session_cost=0, session_duration_min=0,
-            )
+            await publish_vehicle_session_idle(vehicle.id)
+        # Résumé « dernière charge » et indicateurs dérivés : republiés ici
+        # pour qu'ils existent dès la mise à jour, sans attendre une charge.
+        await publish_vehicle_last_charge(vehicle.id)
+
+
+async def _hourly_refresh():
+    """Les cumuls du mois repartent de zéro au changement de mois, même sans
+    nouvelle charge : republiés toutes les heures."""
+    from .db import SessionLocal
+    from .models import Vehicle
+
+    while True:
+        await asyncio.sleep(3600)
+        try:
+            db = SessionLocal()
+            try:
+                ids = [v.id for v in db.query(Vehicle).filter(Vehicle.deleted_at.is_(None)).all()]
+            finally:
+                db.close()
+            for vehicle_id in ids:
+                await publish_vehicle_month(vehicle_id)
+        except Exception:
+            logger.debug("Rafraîchissement horaire MQTT échoué", exc_info=True)
 
 
 async def run_mqtt_bridge():
@@ -525,11 +895,13 @@ async def run_mqtt_bridge():
                 logger.info("Connecté au broker MQTT %s:%s", MQTT_HOST, MQTT_PORT)
                 await republish_all()
                 await client.subscribe(f"{BASE_TOPIC}/+/+/charge_control/set")
+                await client.subscribe(f"{BASE_TOPIC}/+/+/vehicle/set")
                 # Envoi et réception de commandes tournent côte à côte ; si
                 # l'un échoue, l'autre est annulé et on se reconnecte.
                 async with asyncio.TaskGroup() as tg:
                     tg.create_task(_publisher(client, wakeup))
                     tg.create_task(_consume_commands(client))
+                    tg.create_task(_hourly_refresh())
         except Exception:
             logger.warning("Connexion MQTT indisponible, nouvelle tentative dans 10s", exc_info=True)
             _client = None

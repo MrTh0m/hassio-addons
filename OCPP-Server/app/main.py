@@ -150,7 +150,7 @@ async def on_startup():
     asyncio.create_task(run_scheduler())
 
 
-APP_VERSION = "0.19.41"
+APP_VERSION = "0.19.43"
 
 
 @app.get("/healthz")
@@ -222,8 +222,12 @@ async def ocpp_endpoint(websocket: WebSocket, charge_point_id: str):
                 logger.error("Borne %s en mode relais sans relay_url configurée", charge_point_id)
                 await websocket.close()
                 return
-            await run_relay(charge_point_id, relay_url, websocket, subprotocol,
-                            incoming_headers=websocket.headers)
+            await mqtt_bridge.publish_online(charge_point_id, True)
+            try:
+                await run_relay(charge_point_id, relay_url, websocket, subprotocol,
+                                incoming_headers=websocket.headers)
+            finally:
+                await mqtt_bridge.publish_online(charge_point_id, False)
         else:
             connection = StarletteWebSocketAdapter(websocket)
             cp = LocalChargePoint(charge_point_id, connection)
@@ -245,6 +249,7 @@ async def ocpp_endpoint(websocket: WebSocket, charge_point_id: str):
                     pass
             CONNECTED_CHARGERS[charge_point_id] = cp
             queue_watch.note_connect(charge_point_id)
+            await mqtt_bridge.publish_online(charge_point_id, True)
             try:
                 asyncio.create_task(_refresh_connector_statuses(cp, charge_point_id))
                 await cp.start()
@@ -257,6 +262,7 @@ async def ocpp_endpoint(websocket: WebSocket, charge_point_id: str):
                     CONNECTED_CHARGERS.pop(charge_point_id, None)
                     from .sse import sse_notify
                     sse_notify("charger_disconnected", {"charger_id": charge_point_id})
+                    await mqtt_bridge.publish_online(charge_point_id, False)
     except (ConnectionError, WebSocketDisconnect):
         logger.info("Borne %s déconnectée", charge_point_id)
     except Exception:

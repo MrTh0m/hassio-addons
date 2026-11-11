@@ -1736,10 +1736,8 @@ async def create_vehicle(body: VehicleCreate, db: Session = Depends(get_db), use
     # Valeurs par défaut immédiates (pas d'attente d'une reconnexion MQTT) :
     # un véhicule tout juste créé n'a évidemment pas de session active. Sans
     # ça, HA affiche « Inconnu » sur ces capteurs jusqu'à la première charge.
-    await mqtt_bridge.publish_vehicle_state(
-        vehicle.id, is_charging="OFF", charging_at="Aucune",
-        session_energy_wh=0, session_cost=0, session_duration_min=0,
-    )
+    await mqtt_bridge.publish_vehicle_session_idle(vehicle.id)
+    await mqtt_bridge.refresh_vehicle_selects()
     return {"id": vehicle.id}
 
 
@@ -1772,6 +1770,7 @@ async def update_vehicle(
     # un éventuel renommage, et battery_capacity_kwh peut avoir changé.
     await mqtt_bridge.publish_vehicle_discovery(vehicle.id, vehicle.name)
     await mqtt_bridge.publish_vehicle_state(vehicle.id, battery_capacity_kwh=vehicle.battery_capacity_kwh)
+    await mqtt_bridge.refresh_vehicle_selects()
     return {"status": "ok"}
 
 
@@ -1796,6 +1795,7 @@ async def delete_vehicle(vehicle_id: int, db: Session = Depends(get_db), user=De
     # pour retirer son idTag.
     for cid in affected_chargers:
         await sync_local_auth_list(cid)
+    await mqtt_bridge.refresh_vehicle_selects()
     return {"status": "ok"}
 
 
@@ -1817,6 +1817,7 @@ async def reactivate_vehicle(vehicle_id: int, db: Session = Depends(get_db), use
     # no-op côté _authorized_id_tags_for_charger jusqu'à sa resaisie.
     for cid in _vehicle_charger_ids(db, vehicle_id):
         await sync_local_auth_list(cid)
+    await mqtt_bridge.refresh_vehicle_selects()
     return {"status": "ok"}
 
 
@@ -1865,6 +1866,7 @@ async def hard_delete_vehicle(vehicle_id: int, db: Session = Depends(get_db), us
     await mqtt_bridge.unpublish_vehicle_discovery(vehicle_id)
     for cid in affected_chargers:
         await sync_local_auth_list(cid)
+    await mqtt_bridge.refresh_vehicle_selects()
     return {"status": "ok", "deleted_sessions": len(txn_ids), "kept_sessions": kept_sessions}
 
 
