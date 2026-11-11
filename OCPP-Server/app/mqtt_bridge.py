@@ -3,6 +3,7 @@ import json
 import logging
 import os
 from collections import deque
+from datetime import datetime, timezone
 
 import aiomqtt
 
@@ -154,6 +155,11 @@ _VEHICLE_SENSORS = {
     "consumption_kwh_100km": {"name": "Consommation estimée", "unit": "kWh/100km", "icon": "mdi:speedometer", "precision": 1},
     "cost_per_100km": {"name": "Coût aux 100 km", "unit": "EUR/100km", "icon": "mdi:cash", "precision": 2},
     "battery_capacity_kwh": {"name": "Capacité batterie", "unit": "kWh", "device_class": "energy_storage", "entity_category": "diagnostic"},
+    # Cumuls du mois civil en cours (fuseau d'affichage), charges terminées.
+    "month_charge_count": {"name": "Charges du mois", "icon": "mdi:counter"},
+    "month_energy_kwh": {"name": "Énergie du mois", "unit": "kWh", "device_class": "energy", "precision": 1},
+    "month_cost": {"name": "Coût du mois", "unit": "EUR", "device_class": "monetary", "precision": 2},
+    "month_km": {"name": "Distance du mois", "unit": "km", "device_class": "distance", "precision": 0},
 }
 
 
@@ -192,6 +198,236 @@ def vehicle_efficiency(energy_wh, cost, km_since_last, battery_capacity_kwh) -> 
     if battery_capacity_kwh and energy_wh is not None:
         out["last_session_battery_pct"] = round(energy_wh / 1000 / battery_capacity_kwh * 100)
     return out
+
+
+def vehicle_month_totals(db, vehicle_id: int, tz, now: datetime | None = None) -> dict:
+    """Cumuls du mois civil en cours pour un véhicule : même règle que les
+    agrégats mensuels de l'interface (api._monthly_from_rows). Seules les
+    charges terminées comptent, rattachées au mois de leur début dans le
+    fuseau d'affichage ; les km d'une charge sont ceux parcourus depuis la
+    charge précédente du véhicule."""
+    from .models import Transaction
+
+    local_now = (now or datetime.utcnow()).replace(tzinfo=timezone.utc).astimezone(tz)
+    count, energy_wh, cost, km_total = 0, 0.0, 0.0, 0.0
+    prev_odo = None
+    txns = db.query(Transaction).filter(
+        Transaction.vehicle_id == vehicle_id,
+        Transaction.start_time.isnot(None),
+    ).order_by(Transaction.start_time.asc()).all()
+    for txn in txns:
+        km = None
+        if txn.odometer_km is not None:
+            if prev_odo is not None and txn.odometer_km - prev_odo > 0:
+                km = txn.odometer_km - prev_odo
+            prev_odo = txn.odometer_km
+        if txn.status != "completed":
+            continue
+        start = txn.start_time.replace(tzinfo=timezone.utc).astimezone(tz)
+        if (start.year, start.month) != (local_now.year, local_now.month):
+            continue
+        count += 1
+        energy_wh += txn.energy_wh or 0.0
+        cost += txn.cost or 0.0
+        km_total += km or 0.0
+    return {
+        "month_charge_count": count,
+        "month_energy_kwh": round(energy_wh / 1000.0, 2),
+        "month_cost": round(cost, 2),
+        "month_km": round(km_total, 1),
+    }
+
+
+async def publish_vehicle_month(vehicle_id: int):
+    if _client is None:
+        return
+    from .db import SessionLocal
+    from .api import _get_display_tz
+
+    db = SessionLocal()
+    try:
+        values = vehicle_month_totals(db, vehicle_id, _get_display_tz(db))
+    finally:
+        db.close()
+    await publish_vehicle_state(vehicle_id, **values)
+
+
+# --- Choix du véhicule pour la prochaine charge (entité select par connecteur) ---
+
+NO_VEHICLE = "Aucun"
+# Véhicule choisi dans Home Assistant, par (borne, connecteur). En mémoire :
+# au redémarrage, le choix par défaut est recalculé (voir vehicle_select_view).
+SELECTED_VEHICLE: dict[tuple[str, int], int] = {}
+# Connecteurs dont le choix par défaut a déjà été proposé : au-delà, un
+# « Aucun » choisi par l'utilisateur est respecté et n'est pas remplacé.
+_select_defaulted: set[tuple[str, int]] = set()
+
+
+def _eligible_vehicles(db, charger_id: str) -> list:
+    """Véhicules actifs associés à la borne ; à défaut d'association, tous
+    les véhicules actifs (même tolérance que le démarrage depuis l'interface)."""
+    from .models import Vehicle, VehicleCharger
+
+    active = db.query(Vehicle).filter(Vehicle.deleted_at.is_(None))
+    linked = active.join(VehicleCharger, VehicleCharger.vehicle_id == Vehicle.id).filter(
+        VehicleCharger.charger_id == charger_id
+    ).order_by(Vehicle.name).all()
+    return linked or active.order_by(Vehicle.name).all()
+
+
+def vehicle_select_view(db, charger_id: str, connector_id: int) -> tuple[list, str]:
+    """Options et valeur courante du select « véhicule » d'un connecteur.
+    Pendant une session, la valeur est le véhicule de la session. Sinon c'est
+    le choix fait dans HA ; la première fois, le véhicule de la dernière
+    charge sur ce connecteur est proposé (ou l'unique véhicule possible)."""
+    from .models import Transaction, Vehicle
+
+    key = (charger_id, connector_id)
+    names = {v.id: v.name for v in _eligible_vehicles(db, charger_id)}
+    options = [NO_VEHICLE] + list(dict.fromkeys(names.values()))
+
+    active = db.query(Transaction).filter(
+        Transaction.charger_id == charger_id,
+        Transaction.connector_id == connector_id,
+        Transaction.status == "active",
+    ).order_by(Transaction.id.desc()).first()
+    if active is not None:
+        name = names.get(active.vehicle_id)
+        if name is None and active.vehicle_id:
+            vehicle = db.query(Vehicle).filter(Vehicle.id == active.vehicle_id).first()
+            if vehicle:
+                name = vehicle.name
+                if name not in options:
+                    options.append(name)
+        return options, name or NO_VEHICLE
+
+    selected = SELECTED_VEHICLE.get(key)
+    if selected not in names:
+        selected = None
+        if key not in _select_defaulted:
+            last = db.query(Transaction).filter(
+                Transaction.charger_id == charger_id,
+                Transaction.connector_id == connector_id,
+                Transaction.vehicle_id.isnot(None),
+                Transaction.status == "completed",
+            ).order_by(Transaction.start_time.desc()).first()
+            if last is not None and last.vehicle_id in names:
+                selected = last.vehicle_id
+            elif len(names) == 1:
+                selected = next(iter(names))
+    _select_defaulted.add(key)
+    if selected is None:
+        SELECTED_VEHICLE.pop(key, None)
+        return options, NO_VEHICLE
+    SELECTED_VEHICLE[key] = selected
+    return options, names[selected]
+
+
+async def publish_vehicle_select(charger_id: str, connector_id: int):
+    """Publie (découverte + valeur) le select « véhicule » d'un connecteur.
+    Mode local uniquement : en mode relais le serveur ne démarre pas les
+    charges, l'entité est retirée."""
+    if _client is None or connector_id == 0:
+        return
+    from .db import SessionLocal
+    from .models import Charger
+
+    slug = _slug(charger_id)
+    c = f"connector{connector_id}"
+    config_topic = f"{DISCOVERY_PREFIX}/select/{slug}_{c}_vehicle/config"
+    view = None
+    display_name = None
+    db = SessionLocal()
+    try:
+        charger = db.query(Charger).filter(Charger.id == charger_id).first()
+        if charger is not None and charger.mode.value == "local":
+            view = vehicle_select_view(db, charger_id, connector_id)
+            display_name = charger.display_name
+    finally:
+        db.close()
+    if view is None:
+        await _safe_publish(config_topic, "", retain=True)
+        return
+    options, state = view
+    _slug_to_id[slug] = charger_id
+    payload = {
+        "name": f"Connecteur {connector_id} véhicule",
+        "unique_id": f"ocppserver_{slug}_{c}_vehicle",
+        "state_topic": f"{BASE_TOPIC}/{slug}/{c}/vehicle/state",
+        "command_topic": f"{BASE_TOPIC}/{slug}/{c}/vehicle/set",
+        "options": options,
+        "icon": "mdi:car-electric",
+        "device": _device_info(charger_id, display_name),
+    }
+    await _safe_publish(config_topic, json.dumps(payload), retain=True)
+    await publish_connector_state(charger_id, connector_id, **{"vehicle/state": state})
+
+
+async def refresh_vehicle_selects():
+    """Republie tous les selects « véhicule » : à appeler quand la liste des
+    véhicules change (création, renommage, désactivation, association)."""
+    if _client is None:
+        return
+    from .db import SessionLocal
+    from .models import ConnectorStatus
+
+    db = SessionLocal()
+    try:
+        pairs = [(cs.charger_id, cs.connector_id) for cs in db.query(ConnectorStatus).all() if cs.connector_id != 0]
+    finally:
+        db.close()
+    for charger_id, connector_id in pairs:
+        await publish_vehicle_select(charger_id, connector_id)
+
+
+async def _handle_vehicle_select(charger_id: str, connector_id: int, name: str):
+    from .db import SessionLocal
+    from .models import Transaction
+
+    key = (charger_id, connector_id)
+    db = SessionLocal()
+    try:
+        has_active = db.query(Transaction).filter(
+            Transaction.charger_id == charger_id,
+            Transaction.connector_id == connector_id,
+            Transaction.status == "active",
+        ).first() is not None
+        # Pendant une session le véhicule est celui de la session : le choix
+        # est ignoré, et la republication ci-dessous remet la bonne valeur.
+        if not has_active:
+            match = next((v for v in _eligible_vehicles(db, charger_id) if v.name == name), None)
+            _select_defaulted.add(key)
+            if match is not None:
+                SELECTED_VEHICLE[key] = match.id
+            else:
+                SELECTED_VEHICLE.pop(key, None)
+    finally:
+        db.close()
+    await publish_vehicle_select(charger_id, connector_id)
+
+
+def start_identity(charger_id: str, connector_id: int, default_tag: str) -> str:
+    """idTag à utiliser pour un démarrage à distance lancé sans véhicule
+    explicite (interrupteur HA, démarrage automatique). Si un véhicule est
+    choisi pour ce connecteur, la charge lui est rattachée exactement comme
+    un démarrage depuis l'interface (voir api.start_charge)."""
+    vehicle_id = SELECTED_VEHICLE.get((charger_id, connector_id))
+    if not vehicle_id:
+        return default_tag
+    from .db import SessionLocal
+    from .models import Vehicle
+    from .csms_local import PENDING_REMOTE_STARTS
+
+    db = SessionLocal()
+    try:
+        vehicle = db.query(Vehicle).filter(Vehicle.id == vehicle_id, Vehicle.deleted_at.is_(None)).first()
+        if vehicle is None:
+            return default_tag
+        tag = vehicle.id_tag or f"REMOTE-{vehicle.id}"
+    finally:
+        db.close()
+    PENDING_REMOTE_STARTS[(charger_id, connector_id)] = vehicle_id
+    return tag
 
 
 async def publish_discovery(charger_id: str, mode: str, display_name: str | None = None):
@@ -353,6 +589,9 @@ async def unpublish_charger_discovery(charger_id: str, connector_ids: list[int])
         for key in _connector_sensors(connector_id):
             await _safe_publish(f"{DISCOVERY_PREFIX}/sensor/{slug}_{c}_{key}/config", "", retain=True)
         await _safe_publish(f"{DISCOVERY_PREFIX}/switch/{slug}_{c}_charge_control/config", "", retain=True)
+        await _safe_publish(f"{DISCOVERY_PREFIX}/select/{slug}_{c}_vehicle/config", "", retain=True)
+        SELECTED_VEHICLE.pop((charger_id, connector_id), None)
+        _select_defaulted.discard((charger_id, connector_id))
     _slug_to_id.pop(slug, None)
 
 
@@ -377,6 +616,9 @@ async def publish_vehicle_last_charge(vehicle_id: int):
     ce deuxième appelant est le cas d'usage le plus fréquent en pratique."""
     if _client is None:
         return
+    # Les cumuls du mois dépendent des mêmes événements (fin de session,
+    # édition d'une charge ou de son odomètre) : republiés au même moment.
+    await publish_vehicle_month(vehicle_id)
     from .db import SessionLocal
     from .models import Transaction, Charger, Vehicle
 
@@ -487,11 +729,13 @@ async def _handle_command(message: aiomqtt.Message):
 
     parts = str(message.topic).split("/")
     # ocppserver/{slug}/connector{N}/charge_control/set
+    # ocppserver/{slug}/connector{N}/vehicle/set
     if (
         len(parts) != 5
         or parts[0] != BASE_TOPIC
         or not parts[2].startswith("connector")
-        or parts[3:] != ["charge_control", "set"]
+        or parts[3] not in ("charge_control", "vehicle")
+        or parts[4] != "set"
     ):
         return
     slug = parts[1]
@@ -504,6 +748,14 @@ async def _handle_command(message: aiomqtt.Message):
     if not charger_id:
         logger.warning("Commande MQTT reçue pour une borne inconnue (%s)", slug)
         return
+    if parts[3] == "vehicle":
+        # Le choix du véhicule ne demande pas que la borne soit connectée.
+        name = message.payload.decode() if isinstance(message.payload, (bytes, bytearray)) else str(message.payload)
+        try:
+            await _handle_vehicle_select(charger_id, connector_id, name)
+        except Exception:
+            logger.exception("Erreur lors du choix du véhicule pour %s (connecteur %s)", charger_id, connector_id)
+        return
     cp = CONNECTED_CHARGERS.get(charger_id)
     if not cp:
         logger.warning("Commande MQTT pour %s ignorée : borne non connectée", charger_id)
@@ -512,7 +764,7 @@ async def _handle_command(message: aiomqtt.Message):
     payload = message.payload.decode() if isinstance(message.payload, (bytes, bytearray)) else str(message.payload)
     try:
         if payload == "ON":
-            await cp.trigger_remote_start(connector_id, "MQTT")
+            await cp.trigger_remote_start(connector_id, start_identity(charger_id, connector_id, "MQTT"))
         elif payload == "OFF":
             from .db import SessionLocal
             from .models import Transaction
@@ -580,6 +832,7 @@ async def republish_all():
             await publish_connector_state(charger.id, cs.connector_id, status=cs.status)
             if cs.status == "Available" and (charger.id, cs.connector_id) not in active_connectors:
                 await publish_connector_session_idle(charger.id, cs.connector_id)
+            await publish_vehicle_select(charger.id, cs.connector_id)
 
     for vehicle in vehicles:
         await publish_vehicle_discovery(vehicle.id, vehicle.name)
@@ -598,6 +851,26 @@ async def republish_all():
         # Résumé « dernière charge » et indicateurs dérivés : republiés ici
         # pour qu'ils existent dès la mise à jour, sans attendre une charge.
         await publish_vehicle_last_charge(vehicle.id)
+
+
+async def _hourly_refresh():
+    """Les cumuls du mois repartent de zéro au changement de mois, même sans
+    nouvelle charge : republiés toutes les heures."""
+    from .db import SessionLocal
+    from .models import Vehicle
+
+    while True:
+        await asyncio.sleep(3600)
+        try:
+            db = SessionLocal()
+            try:
+                ids = [v.id for v in db.query(Vehicle).filter(Vehicle.deleted_at.is_(None)).all()]
+            finally:
+                db.close()
+            for vehicle_id in ids:
+                await publish_vehicle_month(vehicle_id)
+        except Exception:
+            logger.debug("Rafraîchissement horaire MQTT échoué", exc_info=True)
 
 
 async def run_mqtt_bridge():
@@ -622,11 +895,13 @@ async def run_mqtt_bridge():
                 logger.info("Connecté au broker MQTT %s:%s", MQTT_HOST, MQTT_PORT)
                 await republish_all()
                 await client.subscribe(f"{BASE_TOPIC}/+/+/charge_control/set")
+                await client.subscribe(f"{BASE_TOPIC}/+/+/vehicle/set")
                 # Envoi et réception de commandes tournent côte à côte ; si
                 # l'un échoue, l'autre est annulé et on se reconnecte.
                 async with asyncio.TaskGroup() as tg:
                     tg.create_task(_publisher(client, wakeup))
                     tg.create_task(_consume_commands(client))
+                    tg.create_task(_hourly_refresh())
         except Exception:
             logger.warning("Connexion MQTT indisponible, nouvelle tentative dans 10s", exc_info=True)
             _client = None

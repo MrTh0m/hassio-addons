@@ -560,6 +560,9 @@ class LocalChargePoint(ChargePoint16):
                 # Connecteur libre : plus aucune session en cours à afficher
                 # (voir mqtt_bridge.publish_connector_session_idle).
                 await mqtt_bridge.publish_connector_session_idle(self.id, connector_id)
+            # Select « véhicule » : créé avec le connecteur, et remis sur le
+            # choix de l'utilisateur quand une session vient de se terminer.
+            await mqtt_bridge.publish_vehicle_select(self.id, connector_id)
             if last_vehicle_id:
                 # Véhicule = appareil MQTT indépendant de la borne (voir
                 # publish_vehicle_discovery) : sa « dernière charge » doit être
@@ -674,6 +677,9 @@ class LocalChargePoint(ChargePoint16):
                 session_cost=0,
                 session_duration_min=0,
             )
+
+        # Pendant la session, le select « véhicule » affiche celui de la session.
+        await mqtt_bridge.publish_vehicle_select(self.id, connector_id)
 
         if suspend_now:
             asyncio.create_task(self._suspend_for_schedule(connector_id))
@@ -975,7 +981,8 @@ class LocalChargePoint(ChargePoint16):
 
     async def _auto_start(self, connector_id: int):
         try:
-            await self.trigger_remote_start(connector_id, "WEBADMIN")
+            await self.trigger_remote_start(
+                connector_id, mqtt_bridge.start_identity(self.id, connector_id, "WEBADMIN"))
         except Exception:
             AUTO_START_ATTEMPTED.discard((self.id, connector_id))
 
