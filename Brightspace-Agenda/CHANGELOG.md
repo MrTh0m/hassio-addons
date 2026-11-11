@@ -1,5 +1,11 @@
 # Changelog - addon Brightspace Agenda
 
+## 1.2.1 - 2026-11-11
+
+Reconstruction pour embarquer l'`api.php` corrigé le même jour (après la
+1.2.0) : `days_until` en jours calendaires, nouvelle statistique `devoirs`,
+`urgents` hors devoirs rendus. Utilisé par l'intégration HACS 1.3.0.
+
 ## 1.2.0 - 2026-11-11
 
 Mise à jour de l'application embarquée vers la **v43** (branche `main` du
