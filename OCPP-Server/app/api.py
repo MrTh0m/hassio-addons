@@ -1736,10 +1736,7 @@ async def create_vehicle(body: VehicleCreate, db: Session = Depends(get_db), use
     # Valeurs par défaut immédiates (pas d'attente d'une reconnexion MQTT) :
     # un véhicule tout juste créé n'a évidemment pas de session active. Sans
     # ça, HA affiche « Inconnu » sur ces capteurs jusqu'à la première charge.
-    await mqtt_bridge.publish_vehicle_state(
-        vehicle.id, is_charging="OFF", charging_at="Aucune",
-        session_energy_wh=0, session_cost=0, session_duration_min=0,
-    )
+    await mqtt_bridge.publish_vehicle_session_idle(vehicle.id)
     return {"id": vehicle.id}
 
 

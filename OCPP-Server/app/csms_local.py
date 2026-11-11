@@ -282,7 +282,7 @@ async def finalize_orphan_transaction(charger_id: str, connector_id: int, stop_t
     if updates:
         await mqtt_bridge.publish_connector_state(charger_id, connector_id, **updates)
     if last_vehicle_id:
-        await mqtt_bridge.publish_vehicle_state(last_vehicle_id, is_charging="OFF", charging_at="Aucune")
+        await mqtt_bridge.publish_vehicle_session_idle(last_vehicle_id)
         await mqtt_bridge.publish_vehicle_last_charge(last_vehicle_id)
     sse_notify("transaction_stopped", {
         "charger_id": charger_id,
@@ -556,13 +556,17 @@ class LocalChargePoint(ChargePoint16):
                 closed_updates["last_session_cost"] = last_cost
             if closed_updates:
                 await mqtt_bridge.publish_connector_state(self.id, connector_id, **closed_updates)
+            if status == "Available":
+                # Connecteur libre : plus aucune session en cours à afficher
+                # (voir mqtt_bridge.publish_connector_session_idle).
+                await mqtt_bridge.publish_connector_session_idle(self.id, connector_id)
             if last_vehicle_id:
                 # Véhicule = appareil MQTT indépendant de la borne (voir
                 # publish_vehicle_discovery) : sa « dernière charge » doit être
                 # mise à jour ici aussi, même quand la transaction se termine
                 # par ce chemin (connecteur redevenu Available sans
                 # StopTransaction explicite) plutôt que via on_stop_transaction.
-                await mqtt_bridge.publish_vehicle_state(last_vehicle_id, is_charging="OFF", charging_at="Aucune")
+                await mqtt_bridge.publish_vehicle_session_idle(last_vehicle_id)
                 await mqtt_bridge.publish_vehicle_last_charge(last_vehicle_id)
 
         if do_auto_start:
@@ -766,7 +770,7 @@ class LocalChargePoint(ChargePoint16):
             if updates:
                 await mqtt_bridge.publish_connector_state(self.id, connector_id, **updates)
             if last_vehicle_id:
-                await mqtt_bridge.publish_vehicle_state(last_vehicle_id, is_charging="OFF", charging_at="Aucune")
+                await mqtt_bridge.publish_vehicle_session_idle(last_vehicle_id)
                 await mqtt_bridge.publish_vehicle_last_charge(last_vehicle_id)
 
         # SSE : transaction terminée
@@ -918,6 +922,11 @@ class LocalChargePoint(ChargePoint16):
                         mqtt_updates["session_cost"] = result["cost"]
                 except Exception:
                     logger.debug("Calcul du coût en direct échoué pour %s/%s", self.id, connector_id, exc_info=True)
+
+            if not our_txn:
+                # Hors session, la borne remonte une tension résiduelle de
+                # quelques volts : ce n'est pas une mesure utile côté HA.
+                mqtt_updates.pop("voltage_v", None)
 
             if late_hit and late_txn is not None:
                 try:
