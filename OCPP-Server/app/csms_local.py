@@ -18,6 +18,7 @@ from .pricing import freeze_transaction_cost, compute_session_cost, resolve_plan
 from . import mqtt_bridge
 from . import ocpp_logs
 from . import queue_watch
+from . import notifications
 from .sse import sse_notify
 
 logger = logging.getLogger("csms_local")
@@ -403,6 +404,7 @@ async def finalize_orphan_transaction(charger_id: str, connector_id: int, stop_t
             duration_min = round((end - txn.start_time).total_seconds() / 60, 1)
         db.flush()
         freeze_transaction_cost(db, txn)
+        notifications.notify_session_end(txn)
         db.commit()
         txn_id = txn.id
         last_energy_wh = txn.energy_wh
@@ -577,8 +579,17 @@ class LocalChargePoint(ChargePoint16):
                 entry = ConnectorStatus(charger_id=self.id, connector_id=connector_id)
                 db.add(entry)
             old_status = entry.status
+            old_error = entry.error_code
             entry.status = status
             entry.error_code = kwargs.get("error_code")
+            new_error = entry.error_code
+            in_fault = status == "Faulted" or (new_error not in (None, "", "NoError"))
+            was_fault = old_status == "Faulted" or (old_error not in (None, "", "NoError"))
+            if in_fault and (not was_fault or new_error != old_error):
+                label = "borne" if connector_id == 0 else f"connecteur {connector_id}"
+                info = kwargs.get("info") or kwargs.get("vendor_error_code")
+                detail = f"{label} en défaut ({new_error or status}{', ' + str(info) if info else ''})"
+                notifications.notify("connector_fault", self.id, connector_id or None, detail=detail)
             entry.updated_at = datetime.utcnow()
 
             # Première arrivée sur Finishing : on vérifiera dans un instant que
@@ -604,6 +615,7 @@ class LocalChargePoint(ChargePoint16):
                     now = datetime.utcnow()
                     if status == "Charging":
                         active_txn.charging_since = now
+                        notifications.notify_charge_started(active_txn)
                     elif old_status == "Charging" and active_txn.charging_since:
                         active_txn.charging_seconds = (active_txn.charging_seconds or 0.0) + (now - active_txn.charging_since).total_seconds()
                         active_txn.charging_since = None
@@ -654,6 +666,7 @@ class LocalChargePoint(ChargePoint16):
                     if blip:
                         closed_duration_min = None
                     else:
+                        notifications.notify_session_end(stale)
                         last_energy_wh = stale.energy_wh
                         last_cost = stale.cost
                         last_vehicle_id = stale.vehicle_id
@@ -868,6 +881,9 @@ class LocalChargePoint(ChargePoint16):
         if suspend_now:
             asyncio.create_task(self._suspend_for_schedule(connector_id))
 
+        if unauthorized:
+            notifications.notify("unauthorized_charge", self.id, connector_id, id_tag=id_tag)
+
         # SSE : nouvelle transaction (le champ unauthorized permet à l'UI de
         # la signaler distinctement, ex. bandeau ou badge, sans attendre le
         # prochain calcul de compute_health)
@@ -998,6 +1014,9 @@ class LocalChargePoint(ChargePoint16):
             txn = db.query(Transaction).filter(Transaction.id == retry["txn_id"]).first()
             if txn is not None:
                 vehicle_id = txn.vehicle_id
+                notifications.notify_session_end(
+                    txn, interrupted=True,
+                    reason_label="la borne a coupé la charge au démarrage et la relance n'a pas abouti")
                 if txn.start_time and txn.stop_time:
                     updates["session_duration_min"] = round((txn.stop_time - txn.start_time).total_seconds() / 60, 1)
                 if txn.energy_wh is not None:
@@ -1042,6 +1061,9 @@ class LocalChargePoint(ChargePoint16):
         try:
             txn = db.query(Transaction).filter(Transaction.id == transaction_id).first()
             if txn:
+                # Un arrêt rejoué pour une session déjà close par le serveur
+                # ne renotifie pas sa fin.
+                was_active = txn.status == "active"
                 connector_id = txn.connector_id
                 txn.meter_stop = meter_stop
                 # Date réelle de l'arrêt annoncée par la borne (voir _ocpp_ts) ;
@@ -1097,6 +1119,11 @@ class LocalChargePoint(ChargePoint16):
                                      "max": max_retries}
                         else:
                             aborted_start = False  # plus de relance : fin de session ordinaire
+                if was_active and not aborted_start:
+                    cap = _is_aborted_start(txn, kwargs.get("reason"))
+                    notifications.notify_session_end(
+                        txn, kwargs.get("reason"), interrupted=cap,
+                        reason_label="la borne a coupé la charge au démarrage, relances épuisées" if cap else None)
                 db.commit()
         finally:
             db.close()

@@ -518,3 +518,53 @@ def test_start_retry_setting_roundtrip(client, auth, monkeypatch):
 def test_start_retry_setting_requires_admin(client):
     assert client.get("/api/settings/start-retry").status_code == 401
     assert client.put("/api/settings/start-retry", json={"max_retries": 1}).status_code == 401
+
+
+# ---------------------------------------------------------------------------
+# Notifications par utilisateur (0.19.45)
+# ---------------------------------------------------------------------------
+
+def test_notification_settings_roundtrip(client, auth, monkeypatch):
+    monkeypatch.delenv("SUPERVISOR_TOKEN", raising=False)
+    r = client.get("/api/notifications/settings", headers=auth)
+    assert r.status_code == 200
+    d = r.json()
+    assert set(d["categories"]) == {"charge", "interrupted", "charger", "unauthorized"}
+    assert d["push_devices"] == 0 and len(d["vapid_public_key"]) >= 86
+    assert d["ha_available"] is False
+    r = client.put("/api/notifications/settings", headers=auth,
+                   json={"categories": ["charger"], "push_enabled": True, "ha_service": "notify.mobile_app_pixel"})
+    assert r.status_code == 200
+    assert r.json()["categories"] == ["charger"] and r.json()["ha_service"] == "mobile_app_pixel"
+    assert client.put("/api/notifications/settings", headers=auth, json={"categories": ["nope"]}).status_code == 400
+    assert client.put("/api/notifications/settings", headers=auth,
+                      json={"categories": [], "ha_service": "x/../y"}).status_code == 400
+    ha = client.get("/api/notifications/ha-services", headers=auth).json()
+    assert ha["available"] is False
+
+
+def test_push_subscribe_unsubscribe(client, auth):
+    sub = {"endpoint": "https://fcm.googleapis.com/fcm/send/abc", "keys": {"p256dh": "k", "auth": "a"}}
+    r = client.post("/api/notifications/push/subscribe", headers=auth, json=sub)
+    assert r.status_code == 200 and r.json()["push_devices"] == 1
+    assert client.post("/api/notifications/push/subscribe", headers=auth, json=sub).json()["push_devices"] == 1
+    assert client.post("/api/notifications/push/subscribe", headers=auth,
+                       json={"endpoint": "http://x", "keys": {}}).status_code == 400
+    r = client.post("/api/notifications/push/unsubscribe", headers=auth, json={"endpoint": sub["endpoint"]})
+    assert r.json()["push_devices"] == 0
+
+
+def test_notification_test_route(client, auth, monkeypatch):
+    import app.notifications as notif
+    calls = []
+    monkeypatch.setattr(notif, "_send_push", lambda info, payload, pem: calls.append(info["endpoint"]))
+    client.post("/api/notifications/push/subscribe", headers=auth,
+                json={"endpoint": "https://push.example/1", "keys": {"p256dh": "k", "auth": "a"}})
+    r = client.post("/api/notifications/test", headers=auth)
+    assert r.status_code == 200 and r.json()["push"] == 1
+    assert calls == ["https://push.example/1"]
+
+
+def test_notification_routes_require_login(client):
+    assert client.get("/api/notifications/settings").status_code == 401
+    assert client.post("/api/notifications/test").status_code == 401

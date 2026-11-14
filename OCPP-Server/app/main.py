@@ -21,6 +21,7 @@ from .scheduler import run_scheduler
 from . import mqtt_bridge
 from . import server_logs
 from . import queue_watch
+from . import notifications
 from .sse import sse_stream
 from .auth import get_current_user, oauth2_scheme
 from fastapi import Depends
@@ -172,7 +173,7 @@ async def on_startup():
     asyncio.create_task(_loop_watchdog())
 
 
-APP_VERSION = "0.19.44"
+APP_VERSION = "0.19.45"
 
 
 @app.get("/healthz")
@@ -271,6 +272,7 @@ async def ocpp_endpoint(websocket: WebSocket, charge_point_id: str):
                     pass
             CONNECTED_CHARGERS[charge_point_id] = cp
             queue_watch.note_connect(charge_point_id)
+            notifications.charger_connected(charge_point_id)
             await mqtt_bridge.publish_online(charge_point_id, True)
             try:
                 asyncio.create_task(_refresh_connector_statuses(cp, charge_point_id))
@@ -284,6 +286,7 @@ async def ocpp_endpoint(websocket: WebSocket, charge_point_id: str):
                     CONNECTED_CHARGERS.pop(charge_point_id, None)
                     from .sse import sse_notify
                     sse_notify("charger_disconnected", {"charger_id": charge_point_id})
+                    notifications.charger_disconnected(charge_point_id)
                     await mqtt_bridge.publish_online(charge_point_id, False)
     except (ConnectionError, WebSocketDisconnect):
         logger.info("Borne %s déconnectée", charge_point_id)

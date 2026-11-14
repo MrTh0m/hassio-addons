@@ -61,6 +61,16 @@ Il arrive qu'une borne coupe une charge quelques secondes après son démarrage 
 
 Sur une borne qui le permet, la clé OCPP `StopTransactionOnEVSideDisconnect` peut être passée à `false` (Configuration OCPP de la borne, redémarrage éventuel) : la borne garde alors sa transaction pendant ces micro-coupures. Le serveur clôt lui-même la session (arrêt demandé à la borne) si le connecteur reste libre plus de 30 s.
 
+## Notifications
+
+Chaque utilisateur règle ses notifications dans Réglages, section Notifications : les catégories reçues (début et fin de charge, charge interrompue, problème de borne, charge non autorisée) et les canaux. Il ne reçoit que ce qui concerne ses véhicules et ses bornes ; un administrateur reçoit tout.
+
+- **Application (push)** : « Activer sur cet appareil » abonne le téléphone ou l'ordinateur, y compris application fermée. Demande un accès HTTPS ; sur iPhone et iPad, installez d'abord l'application sur l'écran d'accueil.
+- **Home Assistant** : choisissez un service `notify` (par exemple celui de l'application Home Assistant de votre téléphone). Utilise l'API de Home Assistant, que l'add-on demande à cet effet (`homeassistant_api`).
+- **Automatisations** : chaque borne a une entité « Événements » (MQTT) déclenchée à chaque événement, avec le véhicule, l'énergie, le coût et la durée en attributs.
+
+Le bouton « Envoyer une notification de test » vérifie les canaux configurés.
+
 ## Sauvegarde et restauration
 
 Réglages → Données propose un export JSON complet (toutes les tables sauf les comptes utilisateurs) et un import en deux modes : **remplacer** (vide puis restaure à l'identique) ou **fusionner** (insère/met à jour sans rien supprimer). Une suppression totale de l'historique (irréversible) est aussi disponible en zone de danger, réservée admin.

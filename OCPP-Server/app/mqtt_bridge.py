@@ -468,6 +468,20 @@ async def publish_discovery(charger_id: str, mode: str, display_name: str | None
     }
     await _safe_publish(f"{DISCOVERY_PREFIX}/binary_sensor/{slug}_online/config", json.dumps(online), retain=True)
 
+    # Entité « Événements » (plateforme event de Home Assistant) : début et fin
+    # de charge, interruptions, problèmes de borne... Sert de déclencheur aux
+    # automatisations (voir notifications.py, publish_charger_event).
+    from .notifications import EVENTS as _EVENTS
+    event_cfg = {
+        "name": "Événements",
+        "unique_id": f"ocppserver_{slug}_event",
+        "state_topic": f"{BASE_TOPIC}/{slug}/event",
+        "event_types": [e for e in _EVENTS if e != "test"],
+        "icon": "mdi:bell-ring-outline",
+        "device": device,
+    }
+    await _safe_publish(f"{DISCOVERY_PREFIX}/event/{slug}_event/config", json.dumps(event_cfg), retain=True)
+
     # Nettoyage d'une entité obsolète : jusqu'en 0.7.0, le switch de pilotage
     # était publié au niveau de la borne (ocppserver_{slug}_charge_control).
     # Depuis 0.8.0 il est publié par connecteur ; l'ancienne entité reste
@@ -582,6 +596,7 @@ async def unpublish_charger_discovery(charger_id: str, connector_ids: list[int])
     await _safe_publish(f"{DISCOVERY_PREFIX}/sensor/{slug}_status/config", "", retain=True)
     await _safe_publish(f"{DISCOVERY_PREFIX}/binary_sensor/{slug}_online/config", "", retain=True)
     await _safe_publish(f"{DISCOVERY_PREFIX}/switch/{slug}_charge_control/config", "", retain=True)
+    await _safe_publish(f"{DISCOVERY_PREFIX}/event/{slug}_event/config", "", retain=True)
     for connector_id in connector_ids:
         if connector_id == 0:
             continue
@@ -687,6 +702,15 @@ async def publish_connector_state(charger_id: str, connector_id: int, **values):
         return
     prefixed = {f"connector{connector_id}/{k}": v for k, v in values.items()}
     await publish_state(charger_id, **prefixed)
+
+
+async def publish_charger_event(charger_id: str, event_type: str, attributes: dict):
+    """Déclenche l'entité « Événements » de la borne dans Home Assistant.
+    Non retenu : un événement passé ne doit pas se rejouer à la reconnexion."""
+    if _client is None:
+        return
+    payload = {"event_type": event_type, **{k: v for k, v in attributes.items() if v is not None}}
+    await _safe_publish(f"{BASE_TOPIC}/{_slug(charger_id)}/event", json.dumps(payload), retain=False)
 
 
 async def publish_online(charger_id: str, online: bool):

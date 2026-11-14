@@ -12,7 +12,7 @@
  * un accès HTTPS (Nabu Casa, reverse-proxy) ou en localhost. Une éventuelle
  * erreur d'enregistrement est sans conséquence : l'appli fonctionne comme avant.
  */
-const CACHE = "ocpp-shell-v0.19.44";
+const CACHE = "ocpp-shell-v0.19.45";
 const SHELL = ["icon.svg", "icon.png", "manifest.webmanifest"];
 
 self.addEventListener("install", (event) => {
@@ -28,6 +28,36 @@ self.addEventListener("activate", (event) => {
       const keys = await caches.keys();
       await Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k)));
       await self.clients.claim();
+    })()
+  );
+});
+
+// Notifications push (voir notifications.py côté serveur).
+self.addEventListener("push", (event) => {
+  let data = {};
+  try { data = event.data ? event.data.json() : {}; } catch (e) { data = { body: event.data ? event.data.text() : "" }; }
+  event.waitUntil(
+    self.registration.showNotification(data.title || "OCPP Server", {
+      body: data.body || "",
+      tag: data.tag || undefined,
+      icon: "icon.png",
+      badge: "icon.png",
+      data: { event: data.event, charger_id: data.charger_id },
+    })
+  );
+});
+
+// Clic sur une notification : ramène l'application au premier plan (ou l'ouvre).
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+  event.waitUntil(
+    (async () => {
+      const scope = self.registration.scope;
+      const wins = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
+      for (const w of wins) {
+        if (w.url.startsWith(scope) && "focus" in w) return w.focus();
+      }
+      return self.clients.openWindow(scope);
     })()
   );
 });

@@ -280,6 +280,8 @@ def evaluate(now: datetime | None = None) -> list[dict]:
             logger.warning("Borne %s connecteur %s : file de messages de transaction probablement bloquée (%s)",
                            cid, finding["connector_id"], finding["detail"])
             BLOCKED[cid] = {**finding, "detected_at": now}
+            from . import notifications
+            notifications.notify("queue_blocked", cid, finding["connector_id"], detail=finding["detail"])
         else:
             existing.update({"detail": finding["detail"], "connector_id": finding["connector_id"]})
     # Les blocages précédemment constatés restent (voir docstring du module) :

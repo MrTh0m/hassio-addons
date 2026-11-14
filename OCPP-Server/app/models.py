@@ -351,6 +351,36 @@ class ChargeConditionType(str, enum.Enum):
     ready_by = "ready_by"
 
 
+class NotificationSetting(Base):
+    """Réglages de notification d'un utilisateur (voir notifications.py)."""
+    __tablename__ = "notification_settings"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("users.id"), unique=True, nullable=False)
+    # Catégories reçues, séparées par des virgules : charge, interrupted,
+    # charger, unauthorized (voir notifications.CATEGORIES).
+    categories = Column(String, nullable=True)
+    # Notifications push sur les appareils abonnés (PushSubscription).
+    push_enabled = Column(Boolean, default=True, nullable=True)
+    # Service notify de Home Assistant (ex. "mobile_app_pixel"), vide = aucun.
+    ha_service = Column(String, nullable=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class PushSubscription(Base):
+    """Abonnement push Web d'un appareil (navigateur ou PWA installée)."""
+    __tablename__ = "push_subscriptions"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    endpoint = Column(String, unique=True, nullable=False)
+    p256dh = Column(String, nullable=False)
+    auth = Column(String, nullable=False)
+    user_agent = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    last_success_at = Column(DateTime, nullable=True)
+
+
 class ChargeCondition(Base):
     __tablename__ = "charge_conditions"
 

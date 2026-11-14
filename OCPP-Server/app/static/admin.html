@@ -153,6 +153,14 @@
   .section-title { font-size: .8rem; text-transform: uppercase; letter-spacing: .06em; color: var(--text-muted); font-weight: 650; margin: 1.15rem 0 .5rem; display:flex; align-items:center; justify-content:space-between; gap:.6rem; }
   .section-title:first-child { margin-top: .2rem; }
   .section-title .st-action { text-transform: none; letter-spacing: 0; }
+  /* Encart « Chiffres clés » : vue compacte dépliable */
+  .summary-toggle svg { transition: transform .15s; transform: rotate(90deg); }
+  .summary-toggle[aria-expanded="true"] svg { transform: rotate(-90deg); }
+  .summary-compact { display: flex; flex-wrap: wrap; align-items: baseline; gap: .25rem .9rem; cursor: pointer; }
+  .summary-compact .sc-period { font-size: .78rem; color: var(--text-muted); width: 100%; }
+  .summary-compact .sc-item { white-space: nowrap; }
+  .summary-compact .sc-item b { font-size: 1.05rem; }
+  .summary-compact .sc-delta { font-size: .75rem; color: var(--text-muted); margin-left: .2rem; }
 
   /* --- Badges / puces de statut --- */
   .badge {
@@ -441,7 +449,9 @@
       <section class="view active" id="view-home">
         <div id="home-alerts"></div>
         <div id="home-summary-wrap" style="display:none">
-          <div class="section-title">Chiffres clés</div>
+          <div class="section-title"><span>Chiffres clés</span>
+            <button type="button" class="btn btn-sm st-action summary-toggle" id="home-summary-toggle" aria-controls="home-summary" aria-expanded="false" onclick="toggleHomeSummary()">
+              <span id="home-summary-toggle-label">Détails</span><svg style="width:1em;height:1em"><use href="#i-chevron"/></svg></button></div>
           <div class="card" id="home-summary"></div>
         </div>
         <div class="section-title">Occupation de l'alimentation</div>
@@ -1271,12 +1281,52 @@ function renderHomeSummary(sum) {
   const keys = Object.keys(PERIOD_METRICS).filter(k => !PERIOD_METRICS[k].needsKm || hasKm);
   const months = periodRows(monthly, "month"), years = periodRows(monthly, "year");
   const cy = years[years.length - 1], mf = periodFocus(months, "month"), cm = mf.row;
-  el.innerHTML = `
-    <div class="tiny muted" style="margin-bottom:.3rem">${mf.idle ? `Dernier mois avec des charges · ${esc(cm.label)}` : `Ce mois-ci · ${esc(cm.label)}`} <span>· écart vs mois précédent</span></div>
+  const open = homeSummaryOpen();
+  const periodLabel = mf.idle ? `Dernier mois avec des charges · ${esc(cm.label)}` : `Ce mois-ci · ${esc(cm.label)}`;
+  if (open) {
+    el.innerHTML = `
+    <div class="tiny muted" style="margin-bottom:.3rem">${periodLabel} <span>· écart vs mois précédent</span></div>
     ${periodStatsGrid(cm, keys, "Écart par rapport au mois précédent")}
     <div class="tiny muted" style="margin:.8rem 0 .3rem">Année ${esc(cy.label)}${cy.partial ? " (à date)" : ""} <span>· écart vs ${cy.partial ? "même période de l'an dernier" : "année précédente"}</span></div>
     ${periodStatsGrid(cy, keys, "Écart par rapport à l'année précédente")}`;
+  } else {
+    // Vue réduite : le mois seulement, trois grandeurs et l'écart en %
+    // (le détail et l'année restent à un clic).
+    const pctDelta = k => {
+      const p = cm.prev ? cm.prev[k] : null, c = cm.vals[k];
+      if (p == null || !(p > 0)) return "";
+      const d = (c - p) / p * 100;
+      if (Math.abs(d) < 0.5) return "";
+      return `<span class="sc-delta">${d > 0 ? "▲ +" : "▼ -"}${Math.abs(d).toFixed(0)} %</span>`;
+    };
+    const items = ["charge_count", "energy_kwh", "cost"].map(k =>
+      `<span class="sc-item" title="${esc(PERIOD_METRICS[k].label)} (écart vs mois précédent)"><b>${PERIOD_METRICS[k].fmt(cm.vals[k])}</b>${k === "charge_count" ? (cm.vals[k] > 1 ? " charges" : " charge") : ""}${pctDelta(k)}</span>`).join("");
+    el.innerHTML = `<div class="summary-compact" onclick="toggleHomeSummary()" title="Afficher le détail">
+      <span class="sc-period">${periodLabel}</span>${items}</div>`;
+  }
+  const btn = document.getElementById("home-summary-toggle"), lab = document.getElementById("home-summary-toggle-label");
+  if (btn) btn.setAttribute("aria-expanded", open ? "true" : "false");
+  if (lab) lab.textContent = open ? "Réduire" : "Détails";
+  lastHomeSummary = sum;
   wrap.style.display = "";
+}
+
+/* État déplié/réduit de l'encart, mémorisé par appareil. Par défaut : réduit
+   sur téléphone, déplié sur grand écran. */
+let lastHomeSummary = null;
+const HOME_SUMMARY_KEY = "ocpp_home_summary_open";
+function homeSummaryOpen() {
+  try {
+    const v = localStorage.getItem(HOME_SUMMARY_KEY);
+    if (v === "1") return true;
+    if (v === "0") return false;
+  } catch (e) {}
+  return !window.matchMedia("(max-width: 720px)").matches;
+}
+function toggleHomeSummary() {
+  const next = !homeSummaryOpen();
+  try { localStorage.setItem(HOME_SUMMARY_KEY, next ? "1" : "0"); } catch (e) {}
+  if (lastHomeSummary) renderHomeSummary(lastHomeSummary);
 }
 
 /* Résume les conditions de programmation applicables à un connecteur donné
@@ -2912,6 +2962,10 @@ async function openSettingsModal() {
       ${isBuiltinAdmin ? `<p class="tiny muted" style="margin:.5rem 0 0">Géré par la configuration de l'add-on Home Assistant (option « admin_password »).</p>` : ""}
     </div>`;
 
+  const notifSection = `
+    <div class="section-title">Notifications</div>
+    <div class="card form-card" id="notif-card"><div class="tiny muted">Chargement…</div></div>`;
+
   let dataSection = "";
   if (hasPerm("can_export_import")) {
     dataSection = `
@@ -2990,11 +3044,132 @@ async function openSettingsModal() {
 
   const html = `<div class="modal-head"><h2><svg style="width:1.1em;height:1.1em;vertical-align:-.15em"><use href="#i-cog"/></svg> Réglages</h2>
     <button class="btn btn-icon btn-ghost" onclick="closeModal()"><svg><use href="#i-close"/></svg></button></div>
-    ${passwordSection}${dataSection}${usersSection}${advancedSection}${dangerSection}`;
+    ${passwordSection}${notifSection}${dataSection}${usersSection}${advancedSection}${dangerSection}`;
 
   openModal(html);
 
+  loadNotificationSettings();
   if (adminOnly) { loadSettingsUsers(); loadAutoResetSetting(); loadStartRetrySetting(); }
+}
+
+/* ========================= NOTIFICATIONS ========================= */
+/* Réglages par utilisateur : catégories, push sur cet appareil (PWA, même
+   application fermée) et service notify de Home Assistant. */
+let notifState = null;
+function pushSupport() {
+  if (!window.isSecureContext) return { ok: false, why: "Les notifications push demandent une connexion HTTPS (adresse externe ou Home Assistant en HTTPS)." };
+  if (!("serviceWorker" in navigator) || !("PushManager" in window) || !("Notification" in window)) {
+    const ios = /iPad|iPhone|iPod/.test(navigator.userAgent);
+    const standalone = window.matchMedia("(display-mode: standalone)").matches || navigator.standalone;
+    if (ios && !standalone) return { ok: false, why: "Sur iPhone et iPad, installez d'abord l'application sur l'écran d'accueil (Partager, « Sur l'écran d'accueil »), puis ouvrez-la depuis l'icône." };
+    return { ok: false, why: "Ce navigateur ne prend pas en charge les notifications push." };
+  }
+  return { ok: true };
+}
+async function currentPushSubscription() {
+  try {
+    const reg = await navigator.serviceWorker.getRegistration();
+    return reg ? await reg.pushManager.getSubscription() : null;
+  } catch (e) { return null; }
+}
+function b64urlToBytes(s) {
+  const pad = "=".repeat((4 - s.length % 4) % 4);
+  const raw = atob((s + pad).replace(/-/g, "+").replace(/_/g, "/"));
+  return Uint8Array.from(raw, c => c.charCodeAt(0));
+}
+async function loadNotificationSettings() {
+  const el = document.getElementById("notif-card");
+  if (!el) return;
+  try {
+    const [st, ha, sub] = await Promise.all([
+      fetch("api/notifications/settings", { headers: authHeaders() }).then(r => r.json()),
+      fetch("api/notifications/ha-services", { headers: authHeaders() }).then(r => r.json()).catch(() => ({ available: false, services: [] })),
+      pushSupport().ok ? currentPushSubscription() : Promise.resolve(null),
+    ]);
+    notifState = { st, ha, sub };
+    renderNotificationSettings();
+  } catch (e) {
+    el.innerHTML = `<div class="tiny muted">Réglages des notifications indisponibles.</div>`;
+  }
+}
+function renderNotificationSettings() {
+  const el = document.getElementById("notif-card");
+  if (!el || !notifState) return;
+  const { st, ha, sub } = notifState;
+  const sup = pushSupport();
+  const perm = ("Notification" in window) ? Notification.permission : "default";
+  const cats = st.available_categories.map(c => `
+      <label class="cluster center" style="gap:.45rem; cursor:pointer; margin:.15rem 0">
+        <input type="checkbox" class="notif-cat" value="${esc(c.key)}" ${st.categories.includes(c.key) ? "checked" : ""} onchange="saveNotificationSettings()">
+        <span>${esc(c.label)}</span></label>`).join("");
+  let device;
+  if (!sup.ok) device = `<p class="tiny muted" style="margin:.2rem 0 0">${esc(sup.why)}</p>`;
+  else if (perm === "denied") device = `<p class="tiny muted" style="margin:.2rem 0 0">Les notifications sont bloquées pour ce site dans les réglages du navigateur ou du téléphone.</p>`;
+  else device = `<div class="cluster" style="gap:.5rem; margin-top:.3rem">
+      ${sub ? `<span class="badge ok">Activées sur cet appareil</span><button class="btn btn-sm" onclick="disablePushHere()">Désactiver ici</button>`
+            : `<button class="btn btn-sm btn-primary" onclick="enablePushHere()">Activer sur cet appareil</button>`}</div>`;
+  const haSel = ha.available
+    ? `<select id="notif-ha" onchange="saveNotificationSettings()" style="width:240px">
+        <option value="">Aucun</option>
+        ${[...new Set([...(ha.services || []), ...(st.ha_service ? [st.ha_service] : [])])].map(s => `<option value="${esc(s)}" ${s === st.ha_service ? "selected" : ""}>notify.${esc(s)}</option>`).join("")}
+      </select>`
+    : `<p class="tiny muted" style="margin:.2rem 0 0">${esc(ha.detail || "Home Assistant indisponible")}</p>`;
+  el.innerHTML = `
+    <p class="small muted" style="margin:.1rem 0 .4rem">Vous ne recevez que ce qui concerne vos véhicules et vos bornes.</p>
+    ${cats}
+    <div style="margin-top:.8rem"><b class="small">Notifications de l'application</b>
+      <div class="tiny muted">Push, y compris application fermée. ${st.push_devices ? `${st.push_devices} appareil${st.push_devices > 1 ? "s" : ""} abonné${st.push_devices > 1 ? "s" : ""}.` : "Aucun appareil abonné."}</div>
+      ${device}</div>
+    <div style="margin-top:.8rem"><b class="small">Home Assistant</b>
+      <div class="tiny muted">Service de notification (par exemple l'application Home Assistant de votre téléphone).</div>
+      ${haSel}</div>
+    <div style="margin-top:.9rem"><button class="btn btn-sm" onclick="sendTestNotification()">Envoyer une notification de test</button></div>`;
+}
+async function saveNotificationSettings() {
+  if (!notifState) return;
+  const categories = [...document.querySelectorAll(".notif-cat")].filter(c => c.checked).map(c => c.value);
+  const haEl = document.getElementById("notif-ha");
+  const body = { categories, push_enabled: notifState.st.push_enabled, ha_service: haEl ? (haEl.value || null) : notifState.st.ha_service };
+  const { ok, data } = await apiCall("api/notifications/settings", { method: "PUT", headers: jsonHeaders(), body: JSON.stringify(body) }, "Notifications enregistrées");
+  if (ok) { notifState.st = data; }
+  renderNotificationSettings();
+}
+async function enablePushHere() {
+  try {
+    const perm = await Notification.requestPermission();
+    if (perm !== "granted") { toast("Autorisation refusée : les notifications restent désactivées", "err"); renderNotificationSettings(); return; }
+    const reg = await navigator.serviceWorker.register("sw.js");
+    await navigator.serviceWorker.ready;
+    const sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64urlToBytes(notifState.st.vapid_public_key) });
+    const j = sub.toJSON();
+    const { ok, data } = await apiCall("api/notifications/push/subscribe", { method: "POST", headers: jsonHeaders(),
+      body: JSON.stringify({ endpoint: j.endpoint, keys: j.keys, user_agent: navigator.userAgent }) }, "Notifications activées sur cet appareil");
+    if (ok) { notifState.sub = sub; notifState.st.push_devices = data.push_devices; }
+  } catch (e) {
+    toast("Activation impossible : " + (e && e.message ? e.message : e), "err");
+  }
+  renderNotificationSettings();
+}
+async function disablePushHere() {
+  const sub = notifState && notifState.sub;
+  if (!sub) return;
+  try {
+    const { ok, data } = await apiCall("api/notifications/push/unsubscribe", { method: "POST", headers: jsonHeaders(), body: JSON.stringify({ endpoint: sub.endpoint }) }, "Notifications désactivées sur cet appareil");
+    await sub.unsubscribe().catch(() => {});
+    if (ok) notifState.st.push_devices = data.push_devices;
+    notifState.sub = null;
+  } catch (e) {}
+  renderNotificationSettings();
+}
+async function sendTestNotification() {
+  const { ok, data } = await apiCall("api/notifications/test", { method: "POST", headers: jsonHeaders() });
+  if (!ok) return;
+  const parts = [];
+  if (data.push || data.push_failed) parts.push(`push : ${data.push} envoyée${data.push > 1 ? "s" : ""}${data.push_failed ? `, ${data.push_failed} en échec` : ""}`);
+  if (data.ha || data.ha_failed) parts.push(`Home Assistant : ${data.ha ? "envoyée" : "échec"}`);
+  if (!parts.length) { toast("Aucun canal configuré : activez cet appareil ou choisissez un service Home Assistant", "err"); return; }
+  const failed = data.push_failed || data.ha_failed;
+  toast("Test " + parts.join(" · ") + (data.errors && data.errors.length ? " (" + data.errors[0] + ")" : ""), failed ? "err" : "ok");
 }
 
 async function loadStartRetrySetting() {

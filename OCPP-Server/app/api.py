@@ -2737,3 +2737,117 @@ def delete_user(user_id: int, db: Session = Depends(get_db), user=Depends(requir
     u.deleted_at = datetime.utcnow()
     db.commit()
     return {"status": "ok"}
+
+
+# ---------------------------------------------------------------------------
+# Notifications par utilisateur (voir notifications.py)
+# ---------------------------------------------------------------------------
+
+from . import notifications as _notif
+from .models import NotificationSetting, PushSubscription
+
+
+def _require_uid(user: dict) -> int:
+    uid = get_user_id(user)
+    if uid is None:
+        raise HTTPException(status_code=400, detail="Compte sans identifiant : reconnectez-vous")
+    return uid
+
+
+@router.get("/notifications/settings")
+def get_notification_settings(db: Session = Depends(get_db), user=Depends(get_current_user)):
+    uid = _require_uid(user)
+    st = _notif.get_settings(db, uid)
+    _, public_key = _notif.vapid_keys(db)
+    devices = db.query(PushSubscription).filter(PushSubscription.user_id == uid).count()
+    db.commit()
+    return {
+        "categories": sorted(_notif.categories_of(st)),
+        "available_categories": [{"key": k, "label": v} for k, v in _notif.CATEGORIES.items()],
+        "push_enabled": st.push_enabled is not False,
+        "push_devices": devices,
+        "vapid_public_key": public_key,
+        "ha_available": _notif.supervisor_available(),
+        "ha_service": st.ha_service,
+    }
+
+
+class NotificationSettingsBody(BaseModel):
+    categories: list[str]
+    push_enabled: bool = True
+    ha_service: Optional[str] = None
+
+
+@router.put("/notifications/settings")
+def set_notification_settings(body: NotificationSettingsBody, db: Session = Depends(get_db), user=Depends(get_current_user)):
+    uid = _require_uid(user)
+    unknown = [c for c in body.categories if c not in _notif.CATEGORIES]
+    if unknown:
+        raise HTTPException(status_code=400, detail=f"Catégorie inconnue : {', '.join(unknown)}")
+    service = (body.ha_service or "").strip().removeprefix("notify.") or None
+    if service is not None and not all(ch.isalnum() or ch == "_" for ch in service):
+        raise HTTPException(status_code=400, detail="Nom de service notify invalide")
+    st = _notif.get_settings(db, uid)
+    st.categories = ",".join(c for c in _notif.CATEGORIES if c in body.categories)
+    st.push_enabled = body.push_enabled
+    st.ha_service = service
+    db.commit()
+    return get_notification_settings(db, user)
+
+
+class PushSubscriptionBody(BaseModel):
+    endpoint: str
+    keys: dict
+    user_agent: Optional[str] = None
+
+
+@router.post("/notifications/push/subscribe")
+def push_subscribe(body: PushSubscriptionBody, db: Session = Depends(get_db), user=Depends(get_current_user)):
+    uid = _require_uid(user)
+    p256dh, auth = body.keys.get("p256dh"), body.keys.get("auth")
+    if not body.endpoint.startswith("https://") or not p256dh or not auth:
+        raise HTTPException(status_code=400, detail="Abonnement push invalide")
+    row = db.query(PushSubscription).filter(PushSubscription.endpoint == body.endpoint).first()
+    if row is None:
+        row = PushSubscription(endpoint=body.endpoint, user_id=uid, p256dh=p256dh, auth=auth)
+        db.add(row)
+    # Même appareil repris par un autre compte : il change de propriétaire.
+    row.user_id, row.p256dh, row.auth = uid, p256dh, auth
+    row.user_agent = (body.user_agent or "")[:300] or None
+    db.commit()
+    return {"ok": True, "push_devices": db.query(PushSubscription).filter(PushSubscription.user_id == uid).count()}
+
+
+class PushUnsubscribeBody(BaseModel):
+    endpoint: str
+
+
+@router.post("/notifications/push/unsubscribe")
+def push_unsubscribe(body: PushUnsubscribeBody, db: Session = Depends(get_db), user=Depends(get_current_user)):
+    uid = _require_uid(user)
+    db.query(PushSubscription).filter(
+        PushSubscription.endpoint == body.endpoint, PushSubscription.user_id == uid,
+    ).delete(synchronize_session=False)
+    db.commit()
+    return {"ok": True, "push_devices": db.query(PushSubscription).filter(PushSubscription.user_id == uid).count()}
+
+
+@router.get("/notifications/ha-services")
+async def ha_notify_services(user=Depends(get_current_user)):
+    """Services notify de Home Assistant, pour le choix dans les réglages."""
+    if not _notif.supervisor_available():
+        return {"available": False, "services": [],
+                "detail": "API Home Assistant indisponible (serveur lancé hors add-on, ou option homeassistant_api absente)"}
+    try:
+        services = await asyncio.to_thread(_notif.list_ha_notify_services)
+    except Exception as exc:
+        return {"available": False, "services": [], "detail": f"Lecture des services impossible : {exc}"}
+    return {"available": True, "services": services}
+
+
+@router.post("/notifications/test")
+async def notification_test(user=Depends(get_current_user)):
+    """Envoie une notification de test à l'utilisateur connecté, sur tous ses
+    canaux, et renvoie le bilan par canal."""
+    uid = _require_uid(user)
+    return await _notif._dispatch("test", None, None, None, uid, {})
