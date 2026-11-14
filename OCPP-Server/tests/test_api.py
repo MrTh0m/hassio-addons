@@ -496,3 +496,25 @@ def test_dump_accepts_range_and_contains_readme(client, auth, qw_db):
     assert "LISEZMOI.txt" in names and "file-borne.json" in names
     r = client.get("/api/diagnostics/dump?since=2026-10-12T22:00:00Z&until=2026-10-13T01:00:00Z", headers=auth)
     assert r.status_code == 200
+
+
+# ---------------------------------------------------------------------------
+# Réglage des relances après un démarrage avorté (0.19.44)
+# ---------------------------------------------------------------------------
+
+def test_start_retry_setting_roundtrip(client, auth, monkeypatch):
+    import app.csms_local as _csms
+    monkeypatch.setattr(_csms, "SessionLocal", TestingSession)
+    r = client.get("/api/settings/start-retry", headers=auth)
+    assert r.status_code == 200
+    assert r.json() == {"max_retries": 3, "default": 3, "limit": 5}
+    r = client.put("/api/settings/start-retry", headers=auth, json={"max_retries": 1})
+    assert r.status_code == 200 and r.json()["max_retries"] == 1
+    assert client.get("/api/settings/start-retry", headers=auth).json()["max_retries"] == 1
+    assert client.put("/api/settings/start-retry", headers=auth, json={"max_retries": 6}).status_code == 400
+    assert client.put("/api/settings/start-retry", headers=auth, json={"max_retries": -1}).status_code == 400
+
+
+def test_start_retry_setting_requires_admin(client):
+    assert client.get("/api/settings/start-retry").status_code == 401
+    assert client.put("/api/settings/start-retry", json={"max_retries": 1}).status_code == 401

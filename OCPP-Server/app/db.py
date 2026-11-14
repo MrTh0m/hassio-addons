@@ -1,7 +1,7 @@
 import logging
 import os
 
-from sqlalchemy import create_engine, inspect, text
+from sqlalchemy import create_engine, event, inspect, text
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.schema import CreateTable
 
@@ -14,7 +14,60 @@ DATA_DIR = os.environ.get("OCPP_DATA_DIR", "/data")
 os.makedirs(DATA_DIR, exist_ok=True)
 DB_PATH = os.path.join(DATA_DIR, "ocpp_server.sqlite")
 
-engine = create_engine(f"sqlite:///{DB_PATH}", connect_args={"check_same_thread": False})
+# Réserve de connexions. Incident du 14/11 vers 00:05 : « QueuePool limit of
+# size 5 overflow 10 reached, connection timed out, timeout 30.00 ». Les routes
+# synchrones de l'API tournent dans des threads (40 au plus) et prennent
+# chacune une connexion ; avec la réserve par défaut (15), il suffisait que la
+# base ralentisse pour que tout soit pris. Les gestionnaires OCPP, le
+# planificateur et le pont MQTT, eux, tournent dans la boucle asyncio : leur
+# attente d'une connexion (30 s par appel) gelait alors tout le serveur, d'où
+# la borne et MQTT déconnectés. La réserve dépasse maintenant le nombre de
+# threads possibles, et l'attente est courte : mieux vaut une erreur rapide
+# qu'une boucle gelée.
+POOL_SIZE = 10
+POOL_MAX_OVERFLOW = 50
+POOL_TIMEOUT_S = 5
+# Attente max d'un verrou SQLite avant « database is locked » (ms).
+SQLITE_BUSY_TIMEOUT_MS = 5000
+
+
+def make_engine(url: str):
+    """Crée le moteur SQLite du serveur (réserve de connexions et réglages
+    SQLite, voir _sqlite_pragmas)."""
+    eng = create_engine(
+        url,
+        connect_args={"check_same_thread": False},
+        pool_size=POOL_SIZE,
+        max_overflow=POOL_MAX_OVERFLOW,
+        pool_timeout=POOL_TIMEOUT_S,
+    )
+    event.listen(eng, "connect", _sqlite_pragmas)
+    return eng
+
+
+def _sqlite_pragmas(dbapi_conn, _record):
+    """Réglages appliqués à chaque nouvelle connexion SQLite.
+
+    journal_mode=WAL : un lecteur ne bloque plus l'écrivain et inversement.
+    Avec le journal par défaut, une lecture longue (historique, statistiques,
+    dump) faisait attendre l'écriture d'un message OCPP dans la boucle du
+    serveur. synchronous=NORMAL est le réglage recommandé avec WAL (une
+    coupure de courant peut perdre les toutes dernières écritures, jamais
+    corrompre la base). Deux fichiers apparaissent à côté de la base
+    (-wal et -shm) : c'est normal."""
+    cur = dbapi_conn.cursor()
+    try:
+        cur.execute(f"PRAGMA busy_timeout={SQLITE_BUSY_TIMEOUT_MS}")
+        try:
+            cur.execute("PRAGMA journal_mode=WAL")
+            cur.execute("PRAGMA synchronous=NORMAL")
+        except Exception:
+            logger.warning("Mode WAL indisponible sur cette base, journal par défaut conservé", exc_info=True)
+    finally:
+        cur.close()
+
+
+engine = make_engine(f"sqlite:///{DB_PATH}")
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
 
 
@@ -34,6 +87,17 @@ def _migrate_schema():
                 col_type = column.type.compile(engine.dialect)
                 logger.info("Migration : ajout de la colonne %s.%s (%s)", table.name, column.name, col_type)
                 conn.execute(text(f'ALTER TABLE "{table.name}" ADD COLUMN "{column.name}" {col_type}'))
+
+
+def _ensure_indexes():
+    """Crée les index déclarés dans les modèles et absents de la base
+    (create_all ne les ajoute pas à une table qui existe déjà)."""
+    for table in Base.metadata.sorted_tables:
+        for index in table.indexes:
+            try:
+                index.create(engine, checkfirst=True)
+            except Exception:
+                logger.warning("Création de l'index %s impossible", index.name, exc_info=True)
 
 
 def _migrate_relax_not_null(table_name: str) -> bool:
@@ -125,6 +189,8 @@ def init_db():
     # externes) mais une base créée avant ce changement garde l'ancienne
     # contrainte NOT NULL en dur dans le schéma SQLite : à corriger une fois.
     _migrate_relax_not_null("transactions")
+    # Après la recréation éventuelle de la table ci-dessus (qui perd ses index).
+    _ensure_indexes()
     db = SessionLocal()
     try:
         if db.query(User).count() == 0:

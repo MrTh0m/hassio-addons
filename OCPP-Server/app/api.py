@@ -254,6 +254,27 @@ def set_queue_watch_settings(body: QueueWatchSettings, user=Depends(require_admi
     return {"auto_reset": queue_watch.auto_reset_enabled()}
 
 
+class StartRetrySettings(BaseModel):
+    max_retries: int
+
+
+@router.get("/settings/start-retry")
+def get_start_retry_settings(user=Depends(require_admin)):
+    """Nombre de relances automatiques d'une charge coupée par la borne
+    quelques secondes après son démarrage (voir csms_local.ABORTED_START_MAX_S).
+    0 désactive la relance."""
+    from .csms_local import start_retry_max, START_RETRY_MAX, START_RETRY_MAX_LIMIT
+    return {"max_retries": start_retry_max(), "default": START_RETRY_MAX, "limit": START_RETRY_MAX_LIMIT}
+
+
+@router.put("/settings/start-retry")
+def set_start_retry_settings(body: StartRetrySettings, user=Depends(require_admin)):
+    from .csms_local import set_start_retry_max, START_RETRY_MAX_LIMIT
+    if body.max_retries < 0 or body.max_retries > START_RETRY_MAX_LIMIT:
+        raise HTTPException(status_code=400, detail=f"Valeur attendue entre 0 et {START_RETRY_MAX_LIMIT}")
+    return {"max_retries": set_start_retry_max(body.max_retries)}
+
+
 class ServerRestartBody(BaseModel):
     force: bool = False
 
@@ -1101,6 +1122,9 @@ def _serialize_session(s: Transaction, db: Session, prev_odometer: Optional[floa
         # "reconciled" | "finishing" : clôturée par le serveur faute de
         # StopTransaction, données de fin possiblement incomplètes.
         "close_reason": s.close_reason,
+        # Nombre de tentatives de démarrage regroupées dans cette charge
+        # (plus de 1 : un démarrage avorté a été relancé puis fusionné).
+        "start_attempts": getattr(s, "start_attempts", None) or 1,
     }
 
 

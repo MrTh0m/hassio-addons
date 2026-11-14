@@ -142,15 +142,37 @@ def _reconcile_stale_transactions():
         db.close()
 
 
+# Seuil au-delà duquel un gel de la boucle asyncio est signalé dans les logs
+# serveur. Tout le trafic OCPP passe par cette boucle : gelée plus de
+# quelques secondes, la borne ne reçoit plus de réponse et finit par se
+# déconnecter (incident du 14/11 vers 00:05, gel de plusieurs minutes).
+LOOP_LAG_WARN_S = 3.0
+
+
+async def _loop_watchdog(interval: float = 1.0):
+    """Mesure le retard de la boucle asyncio et le signale (WARNING) quand il
+    dépasse LOOP_LAG_WARN_S, avec sa durée : sans cette trace, un gel du
+    serveur ne se voyait qu'à ses conséquences (borne déconnectée)."""
+    loop = asyncio.get_running_loop()
+    while True:
+        before = loop.time()
+        await asyncio.sleep(interval)
+        lag = loop.time() - before - interval
+        if lag > LOOP_LAG_WARN_S:
+            logger.warning("Serveur gelé pendant %.1f s (boucle asyncio bloquée) : "
+                           "les bornes n'ont reçu aucune réponse pendant ce temps", lag)
+
+
 @app.on_event("startup")
 async def on_startup():
     init_db()
     _reconcile_stale_transactions()
     asyncio.create_task(mqtt_bridge.run_mqtt_bridge())
     asyncio.create_task(run_scheduler())
+    asyncio.create_task(_loop_watchdog())
 
 
-APP_VERSION = "0.19.43"
+APP_VERSION = "0.19.44"
 
 
 @app.get("/healthz")

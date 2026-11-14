@@ -55,6 +55,12 @@ Depuis la fiche de configuration d'une borne, une ou plusieurs conditions peuven
 
 La programmation repose sur le support SmartCharging de la borne (limitation de puissance à 0 W pour mettre la charge en pause sans jamais clore la transaction, ce qui préserve l'historique). Le support est détecté automatiquement à la connexion ; si une borne déclare explicitement ne pas le supporter, la création de conditions lui est refusée plutôt que de proposer un repli brutal par démarrage/arrêt.
 
+## Démarrage avorté et relance automatique
+
+Il arrive qu'une borne coupe une charge quelques secondes après son démarrage parce qu'elle croit le véhicule débranché (fréquent avec un véhicule en veille, raison `EVDisconnected`). Le serveur relance alors la charge de lui-même, avec le même véhicule, jusqu'à 3 fois (réglable de 0 à 5 dans Réglages, Avancé), et regroupe les tentatives en une seule charge dans l'historique (pastille « N essais »). Rien n'est relancé si le connecteur reste libre (vrai débranchement) ou si l'arrêt a une autre cause.
+
+Sur une borne qui le permet, la clé OCPP `StopTransactionOnEVSideDisconnect` peut être passée à `false` (Configuration OCPP de la borne, redémarrage éventuel) : la borne garde alors sa transaction pendant ces micro-coupures. Le serveur clôt lui-même la session (arrêt demandé à la borne) si le connecteur reste libre plus de 30 s.
+
 ## Sauvegarde et restauration
 
 Réglages → Données propose un export JSON complet (toutes les tables sauf les comptes utilisateurs) et un import en deux modes : **remplacer** (vide puis restaure à l'identique) ou **fusionner** (insère/met à jour sans rien supprimer). Une suppression totale de l'historique (irréversible) est aussi disponible en zone de danger, réservée admin.

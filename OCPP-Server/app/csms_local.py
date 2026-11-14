@@ -13,7 +13,7 @@ from ocpp.v16.enums import (
 )
 
 from .db import SessionLocal
-from .models import Charger, ChargerMode, Transaction, MeterValue, ConfigurationKey, ConnectorStatus, Vehicle, VehicleCharger
+from .models import Charger, ChargerMode, Transaction, MeterValue, ConfigurationKey, ConnectorStatus, Vehicle, VehicleCharger, AppSetting
 from .pricing import freeze_transaction_cost, compute_session_cost, resolve_plan_for_charger
 from . import mqtt_bridge
 from . import ocpp_logs
@@ -41,6 +41,143 @@ PENDING_REBOOT_KEYS: dict[str, dict[str, datetime]] = {}
 # valeurs que celles utilisées par le planificateur (scheduler.py) pour
 # décider si un connecteur est "plugged".
 OCCUPIED_CONNECTOR_STATUSES = ("Preparing", "Charging", "SuspendedEV", "SuspendedEVSE", "Finishing")
+
+# --- Relance automatique d'un démarrage avorté ---
+# Observé sur la Schneider (dump du 14/11 : 10 cas en un mois, toujours après
+# un long repos du véhicule) : quelques secondes après le StartTransaction, la
+# borne voit le véhicule comme débranché (connecteur Available puis Preparing
+# 2 s plus tard) et clôt la transaction avec reason EVDisconnected, à 0 Wh. La
+# tentative lancée juste après fonctionne. Le serveur relance donc lui-même
+# la charge, avec le même idTag et le même véhicule, et fusionne la tentative
+# avortée dans la suivante pour qu'elles ne forment qu'une seule charge.
+ABORTED_START_MAX_S = 30        # durée max d'une tentative avortée (dates de la borne)
+ABORTED_START_MAX_WH = 20.0     # énergie max d'une tentative avortée
+START_RETRY_MAX = 3             # relances au plus pour une même charge, par défaut
+START_RETRY_MAX_LIMIT = 5       # valeur maximale acceptée par le réglage
+# Réglage administrateur (Réglages, Avancé) : nombre de relances, 0 = aucune.
+START_RETRY_SETTING_KEY = "start_retry_max"
+START_RETRY_DELAY_S = 3         # pause avant de relancer
+START_RETRY_WAIT_PREPARING_S = 20   # attente du retour du connecteur sur Preparing
+START_RETRY_WAIT_START_S = 30   # attente du StartTransaction après la relance
+START_RETRY_TTL_S = 120         # au-delà, une nouvelle charge n'est plus fusionnée
+# Tentative avortée en attente de fusion, par connecteur :
+# {"txn_id": id de la transaction avortée, "at": date de son arrêt}.
+START_RETRIES: dict[tuple[str, int], dict] = {}
+
+# --- Borne réglée avec StopTransactionOnEVSideDisconnect = false ---
+# La borne garde alors sa transaction ouverte quand le véhicule est vu comme
+# débranché. Le serveur ne clôt donc plus la session dès Available/Preparing :
+# il attend EV_DISCONNECT_GRACE_S, et si le connecteur est toujours libre il
+# demande l'arrêt à la borne (RemoteStopTransaction) puis, sans arrêt reçu
+# après EV_DISCONNECT_STOP_WAIT_S, clôt la session lui-même.
+EV_DISCONNECT_GRACE_S = 30
+EV_DISCONNECT_STOP_WAIT_S = 15
+EV_DISCONNECT_PENDING: set[tuple[str, int]] = set()
+
+
+def start_retry_max(db=None) -> int:
+    """Nombre de relances automatiques après un démarrage avorté (réglage
+    administrateur, START_RETRY_MAX par défaut). 0 désactive la relance ; une
+    relance faite à la main dans les START_RETRY_TTL_S reste fusionnée."""
+    own = db is None
+    db = db or SessionLocal()
+    try:
+        row = db.query(AppSetting).filter(AppSetting.key == START_RETRY_SETTING_KEY).first()
+        try:
+            value = int(row.value) if row and row.value is not None else START_RETRY_MAX
+        except ValueError:
+            value = START_RETRY_MAX
+        return max(0, min(START_RETRY_MAX_LIMIT, value))
+    finally:
+        if own:
+            db.close()
+
+
+def set_start_retry_max(value: int) -> int:
+    value = max(0, min(START_RETRY_MAX_LIMIT, int(value)))
+    db = SessionLocal()
+    try:
+        row = db.query(AppSetting).filter(AppSetting.key == START_RETRY_SETTING_KEY).first()
+        if row:
+            row.value = str(value)
+        else:
+            db.add(AppSetting(key=START_RETRY_SETTING_KEY, value=str(value)))
+        db.commit()
+    finally:
+        db.close()
+    return value
+
+
+def _is_aborted_start(txn, reason, now: datetime | None = None) -> bool:
+    """Vrai si cette transaction, qui vient d'être arrêtée par la borne, est
+    un démarrage avorté (voir ABORTED_START_MAX_S) : arrêt EVDisconnected,
+    quelques secondes après le début, sans énergie. Un arrêt rejoué longtemps
+    après (file de la borne) n'en est pas un : il n'y a plus rien à relancer."""
+    if txn is None or reason != "EVDisconnected":
+        return False
+    if txn.unauthorized or txn.is_external:
+        return False
+    if not txn.start_time or not txn.stop_time:
+        return False
+    if (txn.stop_time - txn.start_time).total_seconds() > ABORTED_START_MAX_S:
+        return False
+    if txn.meter_start is not None and txn.meter_stop is not None \
+            and (txn.meter_stop - txn.meter_start) > ABORTED_START_MAX_WH:
+        return False
+    now = now or datetime.utcnow()
+    return (now - txn.stop_time).total_seconds() <= START_RETRY_TTL_S
+
+
+def _absorb_aborted_start(db, txn, prev) -> bool:
+    """Fusionne la tentative avortée ``prev`` dans la transaction ``txn`` qui
+    la relance : ``txn`` reprend le début, le relevé de départ, le véhicule et
+    les saisies de ``prev``, ses relevés lui sont rattachés, puis ``prev`` est
+    supprimée. L'historique, les statistiques et Home Assistant ne voient
+    ainsi qu'une seule charge."""
+    if prev is None or txn is None or prev.id == txn.id:
+        return False
+    if prev.start_time and (txn.start_time is None or prev.start_time < txn.start_time):
+        txn.start_time = prev.start_time
+    if prev.meter_start is not None and (txn.meter_start is None or prev.meter_start < txn.meter_start):
+        txn.meter_start = prev.meter_start
+    txn.start_attempts = (prev.start_attempts or 1) + (txn.start_attempts or 1)
+    if txn.vehicle_id is None and prev.vehicle_id is not None:
+        txn.vehicle_id = prev.vehicle_id
+    for field in ("odometer_km", "battery_percent_start"):
+        if getattr(txn, field) is None and getattr(prev, field) is not None:
+            setattr(txn, field, getattr(prev, field))
+    db.query(MeterValue).filter(MeterValue.transaction_id == prev.id).update(
+        {MeterValue.transaction_id: txn.id}, synchronize_session=False)
+    db.delete(prev)
+    return True
+
+
+def _ev_disconnect_keeps_transaction(db, charger_id: str) -> bool:
+    """Vrai si la borne est réglée avec StopTransactionOnEVSideDisconnect =
+    false (elle garde sa transaction quand le véhicule est vu débranché)."""
+    row = db.query(ConfigurationKey).filter(
+        ConfigurationKey.charger_id == charger_id,
+        ConfigurationKey.key == "StopTransactionOnEVSideDisconnect",
+    ).first()
+    return row is not None and (row.value or "").strip().lower() == "false"
+
+
+def _connector_snapshot(charger_id: str, connector_id: int) -> tuple[str | None, int | None]:
+    """Statut du connecteur et id de sa transaction active (None si aucune)."""
+    db = SessionLocal()
+    try:
+        row = db.query(ConnectorStatus).filter(
+            ConnectorStatus.charger_id == charger_id,
+            ConnectorStatus.connector_id == connector_id,
+        ).first()
+        txn = db.query(Transaction).filter(
+            Transaction.charger_id == charger_id,
+            Transaction.connector_id == connector_id,
+            Transaction.status == "active",
+        ).order_by(Transaction.id.desc()).first()
+        return (row.status if row else None), (txn.id if txn else None)
+    finally:
+        db.close()
 
 
 def _charger_occupied(db, charger_id: str) -> bool:
@@ -209,11 +346,17 @@ def _last_register_wh(db, charger_id: str, connector_id: int, transaction_id: in
 FINISHING_STOP_GRACE_S = 45
 
 
-async def finalize_orphan_transaction(charger_id: str, connector_id: int, stop_time: datetime | None = None) -> bool:
+async def finalize_orphan_transaction(charger_id: str, connector_id: int, stop_time: datetime | None = None,
+                                      expected_statuses: tuple = ("Finishing",), reason: str = "finishing",
+                                      only_txn_id: int | None = None) -> bool:
     """Clôt côté serveur la transaction active d'un connecteur resté sur
     "Finishing" sans StopTransaction reçu. En OCPP 1.6, "Finishing" signifie
     que la session de charge est terminée, donc la transaction ne peut plus
     être légitimement active.
+
+    Sert aussi (expected_statuses, reason, only_txn_id) à clore la session
+    d'un connecteur resté libre quand la borne garde sa transaction ouverte
+    (voir EV_DISCONNECT_GRACE_S).
 
     Ne fait rien (retourne False) si le connecteur n'est plus sur Finishing ou
     s'il n'y a pas de transaction active. meter_stop est le dernier relevé
@@ -232,14 +375,14 @@ async def finalize_orphan_transaction(charger_id: str, connector_id: int, stop_t
             ConnectorStatus.charger_id == charger_id,
             ConnectorStatus.connector_id == connector_id,
         ).first()
-        if row is None or row.status != "Finishing":
+        if row is None or row.status not in expected_statuses:
             return False
         txn = db.query(Transaction).filter(
             Transaction.charger_id == charger_id,
             Transaction.connector_id == connector_id,
             Transaction.status == "active",
         ).order_by(Transaction.id.desc()).first()
-        if txn is None:
+        if txn is None or (only_txn_id is not None and txn.id != only_txn_id):
             return False
 
         end = stop_time or datetime.utcnow()
@@ -251,7 +394,7 @@ async def finalize_orphan_transaction(charger_id: str, connector_id: int, stop_t
 
         txn.stop_time = end
         txn.status = "completed"
-        txn.close_reason = "finishing"
+        txn.close_reason = reason
         txn.deferred_until = None
         if txn.charging_since:
             txn.charging_seconds = (txn.charging_seconds or 0.0) + max(0.0, (end - txn.charging_since).total_seconds())
@@ -268,8 +411,8 @@ async def finalize_orphan_transaction(charger_id: str, connector_id: int, stop_t
     finally:
         db.close()
 
-    logger.info("Borne %s connecteur %s : transaction %s clôturée côté serveur (Finishing sans StopTransaction)",
-                charger_id, connector_id, txn_id)
+    logger.info("Borne %s connecteur %s : transaction %s clôturée côté serveur (%s sans StopTransaction)",
+                charger_id, connector_id, txn_id, "/".join(expected_statuses))
 
     await mqtt_bridge.publish_charge_control_state(charger_id, connector_id, False)
     updates = {}
@@ -421,6 +564,7 @@ class LocalChargePoint(ChargePoint16):
         last_vehicle_id = None
         do_auto_start = False
         check_finishing = False
+        ev_disconnect_txn_id = None
         try:
             charger = self._get_or_create_charger(db)
             charger.last_seen = datetime.utcnow()
@@ -479,6 +623,14 @@ class LocalChargePoint(ChargePoint16):
                     Transaction.connector_id == connector_id,
                     Transaction.status == "active",
                 ).first()
+                if stale and _ev_disconnect_keeps_transaction(db, self.id):
+                    # La borne garde sa transaction ouverte malgré le véhicule
+                    # vu débranché : on ne clôt rien tout de suite (voir
+                    # EV_DISCONNECT_GRACE_S), la charge peut reprendre.
+                    if (self.id, connector_id) not in EV_DISCONNECT_PENDING:
+                        EV_DISCONNECT_PENDING.add((self.id, connector_id))
+                        ev_disconnect_txn_id = stale.id
+                    stale = None
                 if stale:
                     stale.stop_time = datetime.utcnow()
                     if stale.meter_stop is None:
@@ -489,9 +641,22 @@ class LocalChargePoint(ChargePoint16):
                         closed_duration_min = round((stale.stop_time - stale.start_time).total_seconds() / 60, 1)
                     db.flush()
                     freeze_transaction_cost(db, stale)
-                    last_energy_wh = stale.energy_wh
-                    last_cost = stale.cost
-                    last_vehicle_id = stale.vehicle_id
+                    # Démarrage avorté (voir ABORTED_START_MAX_S) : le
+                    # StopTransaction de la borne suit dans quelques secondes
+                    # et la charge va être relancée. On ne publie donc pas
+                    # cette tentative à 0 Wh comme « dernière charge ».
+                    blip = (
+                        not stale.unauthorized
+                        and stale.start_time is not None
+                        and (stale.stop_time - stale.start_time).total_seconds() <= ABORTED_START_MAX_S
+                        and (stale.energy_wh or 0.0) <= ABORTED_START_MAX_WH
+                    )
+                    if blip:
+                        closed_duration_min = None
+                    else:
+                        last_energy_wh = stale.energy_wh
+                        last_cost = stale.cost
+                        last_vehicle_id = stale.vehicle_id
 
             if connector_id != 0:
                 if status == "Available":
@@ -578,6 +743,9 @@ class LocalChargePoint(ChargePoint16):
         if check_finishing:
             asyncio.create_task(self._close_if_no_stop_after_finishing(connector_id, datetime.utcnow()))
 
+        if ev_disconnect_txn_id is not None:
+            asyncio.create_task(self._reconcile_after_ev_disconnect(connector_id, ev_disconnect_txn_id))
+
         if light_transition:
             asyncio.create_task(self.apply_light_intensity())
 
@@ -647,6 +815,22 @@ class LocalChargePoint(ChargePoint16):
                 deferred_until=deferred_label if suspend_now else None,
             )
             db.add(txn)
+            db.flush()
+            # Relance d'un démarrage avorté (automatique ou manuelle) : la
+            # tentative précédente est fusionnée dans cette transaction.
+            retry_ctx = START_RETRIES.pop((self.id, connector_id), None)
+            if retry_ctx and not unauthorized \
+                    and (datetime.utcnow() - retry_ctx["at"]).total_seconds() <= START_RETRY_TTL_S:
+                prev = db.query(Transaction).filter(
+                    Transaction.id == retry_ctx["txn_id"],
+                    Transaction.charger_id == self.id,
+                    Transaction.connector_id == connector_id,
+                    Transaction.status == "completed",
+                ).first()
+                if _absorb_aborted_start(db, txn, prev):
+                    vehicle_id_for_mqtt = txn.vehicle_id
+                    logger.info("Borne %s connecteur %s : démarrage avorté (transaction %s) fusionné dans la transaction %s, %d tentatives",
+                                self.id, connector_id, retry_ctx["txn_id"], txn.id, txn.start_attempts)
             db.commit()
             db.refresh(txn)
             txn_id = txn.id
@@ -712,6 +896,129 @@ class LocalChargePoint(ChargePoint16):
         except Exception:
             logger.debug("Clôture serveur après Finishing échouée sur %s/%s", self.id, connector_id, exc_info=True)
 
+    async def _reconcile_after_ev_disconnect(self, connector_id: int, txn_id: int):
+        """Borne réglée avec StopTransactionOnEVSideDisconnect = false : le
+        connecteur est repassé sur Available/Preparing alors que la
+        transaction reste ouverte. Si la charge n'a pas repris après
+        EV_DISCONNECT_GRACE_S, on demande l'arrêt à la borne, puis on clôt la
+        session nous-mêmes si elle n'envoie pas son StopTransaction."""
+        key = (self.id, connector_id)
+        try:
+            await asyncio.sleep(EV_DISCONNECT_GRACE_S)
+            status, active_id = _connector_snapshot(self.id, connector_id)
+            if active_id != txn_id or status not in ("Available", "Preparing"):
+                return  # la charge a repris, ou la borne a arrêté d'elle-même
+            logger.info("Borne %s connecteur %s : toujours %s %d s après la déconnexion du véhicule, arrêt de la transaction %s demandé",
+                        self.id, connector_id, status, EV_DISCONNECT_GRACE_S, txn_id)
+            cp = CONNECTED_CHARGERS.get(self.id) or self
+            try:
+                await cp.trigger_remote_stop(txn_id)
+            except Exception:
+                logger.debug("RemoteStop après déconnexion véhicule échoué sur %s/%s", self.id, connector_id, exc_info=True)
+            await asyncio.sleep(EV_DISCONNECT_STOP_WAIT_S)
+            await finalize_orphan_transaction(
+                self.id, connector_id,
+                expected_statuses=("Available", "Preparing"), reason="reconciled", only_txn_id=txn_id)
+        except Exception:
+            logger.warning("Clôture après déconnexion véhicule échouée sur %s/%s", self.id, connector_id, exc_info=True)
+        finally:
+            EV_DISCONNECT_PENDING.discard(key)
+
+    async def _retry_aborted_start(self, connector_id: int, retry: dict):
+        """Relance une charge dont le démarrage vient d'avorter (voir
+        ABORTED_START_MAX_S), avec le même idTag et le même véhicule. La
+        fusion des deux tentatives est faite par on_start_transaction."""
+        key = (self.id, connector_id)
+        txn_id = retry["txn_id"]
+
+        def _superseded() -> bool:
+            ctx = START_RETRIES.get(key)
+            return not ctx or ctx.get("txn_id") != txn_id
+
+        try:
+            await asyncio.sleep(START_RETRY_DELAY_S)
+            waited = 0
+            while True:
+                if _superseded():
+                    return  # déjà relancée (à la main ou démarrage automatique) et fusionnée
+                status, active_id = _connector_snapshot(self.id, connector_id)
+                if active_id is not None:
+                    START_RETRIES.pop(key, None)
+                    return
+                if status == "Preparing":
+                    break
+                if waited >= START_RETRY_WAIT_PREPARING_S:
+                    await self._give_up_retry(connector_id, retry, f"connecteur resté sur {status}")
+                    return
+                await asyncio.sleep(1)
+                waited += 1
+
+            cp = CONNECTED_CHARGERS.get(self.id) or self
+            if retry.get("vehicle_id"):
+                PENDING_REMOTE_STARTS[key] = retry["vehicle_id"]
+            logger.info("Borne %s connecteur %s : démarrage avorté (transaction %s, EVDisconnected), relance automatique %d/%d",
+                        self.id, connector_id, txn_id, retry["attempt"], retry["max"])
+            ocpp_logs.record(self.id, "out", "RemoteStartTransaction.retry",
+                             summary=f"conn {connector_id}, relance {retry['attempt']}/{retry['max']} après démarrage avorté (txn {txn_id})",
+                             payload={"connectorId": connector_id, "idTag": retry["id_tag"],
+                                      "abortedTransactionId": txn_id, "attempt": retry["attempt"]},
+                             connector_id=connector_id)
+            resp = await cp.trigger_remote_start(connector_id, retry["id_tag"] or "WEBADMIN")
+            if getattr(resp.status, "value", resp.status) != "Accepted":
+                PENDING_REMOTE_STARTS.pop(key, None)
+                await self._give_up_retry(connector_id, retry, "relance refusée par la borne")
+                return
+
+            waited = 0
+            while waited < START_RETRY_WAIT_START_S:
+                if _superseded():
+                    return
+                await asyncio.sleep(1)
+                waited += 1
+            await self._give_up_retry(connector_id, retry, "aucun StartTransaction après la relance")
+        except Exception:
+            logger.warning("Relance après démarrage avorté échouée sur %s/%s", self.id, connector_id, exc_info=True)
+            try:
+                await self._give_up_retry(connector_id, retry, "erreur pendant la relance")
+            except Exception:
+                logger.debug("Abandon de la relance échoué sur %s/%s", self.id, connector_id, exc_info=True)
+
+    async def _give_up_retry(self, connector_id: int, retry: dict, why: str):
+        """La relance n'a pas abouti : la tentative avortée reste dans
+        l'historique et est publiée comme une fin de session ordinaire (ces
+        publications avaient été retenues dans l'attente de la relance). Le
+        contexte de fusion est conservé jusqu'à START_RETRY_TTL_S : une
+        relance manuelle dans ce délai sera encore fusionnée."""
+        logger.warning("Borne %s connecteur %s : relance après démarrage avorté abandonnée (%s)",
+                       self.id, connector_id, why)
+        db = self._db()
+        updates = {}
+        vehicle_id = None
+        try:
+            txn = db.query(Transaction).filter(Transaction.id == retry["txn_id"]).first()
+            if txn is not None:
+                vehicle_id = txn.vehicle_id
+                if txn.start_time and txn.stop_time:
+                    updates["session_duration_min"] = round((txn.stop_time - txn.start_time).total_seconds() / 60, 1)
+                if txn.energy_wh is not None:
+                    updates["last_session_energy_wh"] = txn.energy_wh
+                if txn.cost is not None:
+                    updates["last_session_cost"] = txn.cost
+        finally:
+            db.close()
+        if updates:
+            await mqtt_bridge.publish_connector_state(self.id, connector_id, **updates)
+        if vehicle_id:
+            await mqtt_bridge.publish_vehicle_session_idle(vehicle_id)
+            await mqtt_bridge.publish_vehicle_last_charge(vehicle_id)
+        await mqtt_bridge.publish_vehicle_select(self.id, connector_id)
+        sse_notify("start_retry_failed", {
+            "charger_id": self.id,
+            "connector_id": connector_id,
+            "transaction_id": retry["txn_id"],
+            "reason": why,
+        })
+
     async def _suspend_for_schedule(self, connector_id: int):
         try:
             await self.set_charging_limit(connector_id, 0)
@@ -730,6 +1037,8 @@ class LocalChargePoint(ChargePoint16):
         last_energy_wh = None
         last_cost = None
         last_vehicle_id = None
+        aborted_start = False   # démarrage avorté : fin de session non publiée
+        retry = None            # relance automatique à lancer
         try:
             txn = db.query(Transaction).filter(Transaction.id == transaction_id).first()
             if txn:
@@ -757,10 +1066,38 @@ class LocalChargePoint(ChargePoint16):
                     duration_min = round((txn.stop_time - txn.start_time).total_seconds() / 60, 1)
                 db.flush()
                 freeze_transaction_cost(db, txn)
-                db.commit()
                 last_energy_wh = txn.energy_wh
                 last_cost = txn.cost
                 last_vehicle_id = txn.vehicle_id
+                # Démarrage avorté (voir ABORTED_START_MAX_S) : la charge va
+                # être relancée et cette tentative fusionnée dans la suivante.
+                if connector_id is not None and _is_aborted_start(txn, kwargs.get("reason")):
+                    aborted_start = True
+                    key = (self.id, connector_id)
+                    newer = db.query(Transaction).filter(
+                        Transaction.charger_id == self.id,
+                        Transaction.connector_id == connector_id,
+                        Transaction.status == "active",
+                        Transaction.id > txn.id,
+                    ).order_by(Transaction.id.desc()).first()
+                    if newer is not None and not newer.unauthorized:
+                        # La charge a déjà été relancée (démarrage automatique
+                        # ou relance manuelle arrivée avant cet arrêt).
+                        aborted_id = txn.id
+                        _absorb_aborted_start(db, newer, txn)
+                        logger.info("Borne %s connecteur %s : démarrage avorté (transaction %s) fusionné dans la transaction %s déjà relancée",
+                                    self.id, connector_id, aborted_id, newer.id)
+                    else:
+                        START_RETRIES[key] = {"txn_id": txn.id, "at": datetime.utcnow()}
+                        attempts = txn.start_attempts or 1
+                        max_retries = start_retry_max(db)
+                        if attempts <= max_retries:
+                            retry = {"txn_id": txn.id, "id_tag": txn.id_tag,
+                                     "vehicle_id": txn.vehicle_id, "attempt": attempts,
+                                     "max": max_retries}
+                        else:
+                            aborted_start = False  # plus de relance : fin de session ordinaire
+                db.commit()
         finally:
             db.close()
 
@@ -773,11 +1110,16 @@ class LocalChargePoint(ChargePoint16):
                 updates["last_session_energy_wh"] = last_energy_wh
             if last_cost is not None:
                 updates["last_session_cost"] = last_cost
-            if updates:
+            # Démarrage avorté : rien n'est publié comme « dernière charge »,
+            # la relance suit (sinon _give_up_retry publiera cette fin).
+            if updates and not aborted_start:
                 await mqtt_bridge.publish_connector_state(self.id, connector_id, **updates)
-            if last_vehicle_id:
+            if last_vehicle_id and not aborted_start:
                 await mqtt_bridge.publish_vehicle_session_idle(last_vehicle_id)
                 await mqtt_bridge.publish_vehicle_last_charge(last_vehicle_id)
+
+        if retry is not None:
+            asyncio.create_task(self._retry_aborted_start(connector_id, retry))
 
         # SSE : transaction terminée
         sse_notify("transaction_stopped", {

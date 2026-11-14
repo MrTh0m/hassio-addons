@@ -2727,7 +2727,7 @@ function renderHistory() {
       const canEditSession = isAdmin() || (currentUser.vehicle_ids && s.vehicle_id && currentUser.vehicle_ids.includes(s.vehicle_id));
       return `<tr>
       <td data-label="Borne">${bornCell}</td><td data-label="Conn.">${s.connector_id ?? "–"}</td><td data-label="Véhicule">${esc(s.vehicle_name || "–")}${s.vehicle_deleted ? ' <span class="badge off" style="padding:.05rem .35rem">suppr.</span>' : ""}</td>
-      <td data-label="Début">${formatDateTime(s.start_time)}</td><td data-label="Fin">${endCell}${s.close_reason ? ` <span class="badge warn" style="padding:.05rem .35rem" title="Session clôturée par le serveur faute de fin reçue de la borne : les données de fin (énergie, coût) peuvent être incomplètes. Elles sont corrigées automatiquement si les relevés arrivent en retard.">auto</span>` : ""}</td><td data-label="Charge">${chargeDur}</td><td data-label="Branché" class="muted">${pluggedDur}</td>
+      <td data-label="Début">${formatDateTime(s.start_time)}${s.start_attempts > 1 ? ` <span class="badge" style="padding:.05rem .35rem" title="La borne a coupé la charge quelques secondes après le démarrage (véhicule vu comme débranché). Le serveur l'a relancée et a regroupé les tentatives en une seule charge.">${s.start_attempts} essais</span>` : ""}</td><td data-label="Fin">${endCell}${s.close_reason ? ` <span class="badge warn" style="padding:.05rem .35rem" title="Session clôturée par le serveur faute de fin reçue de la borne : les données de fin (énergie, coût) peuvent être incomplètes. Elles sont corrigées automatiquement si les relevés arrivent en retard.">auto</span>` : ""}</td><td data-label="Charge">${chargeDur}</td><td data-label="Branché" class="muted">${pluggedDur}</td>
       <td data-label="kWh">${kWh(s.energy_wh)}</td><td data-label="P. max">${kW(s.power_max_w)}</td><td data-label="Coût">${eur(s.cost)}</td><td data-label="Tarif">${esc(s.tariff_plan_name || "–")}</td>
       <td data-label="km">${num(s.odometer_km)}</td><td data-label="km parc.">${num(s.km_since_last)}</td><td data-label="kWh/100">${s.kwh_per_100km != null ? s.kwh_per_100km : "–"}</td>
       <td data-label="% init.">${num(s.battery_percent_start)}</td><td data-label="% fin">${num(s.battery_percent_end)}${est}</td>
@@ -2962,6 +2962,14 @@ async function openSettingsModal() {
       </label>
       <p class="tiny muted" style="margin:.4rem 0 0">Désactivé par défaut. Quand il est activé, le serveur redémarre la borne (reset logiciel) uniquement si aucune charge n'est en cours sur elle, et au plus une fois toutes les 30 minutes. Sans cette option, le défaut est seulement signalé à tous les utilisateurs.</p>
     </div>
+    <div class="card form-card" style="margin-top:.6rem">
+      <label class="field"><span>Relances automatiques d'une charge coupée au démarrage</span>
+        <select id="set-start-retry" disabled onchange="saveStartRetry(this.value)" style="width:220px">
+          ${[0, 1, 2, 3, 4, 5].map(n => `<option value="${n}">${n === 0 ? "Aucune (désactivé)" : n + (n === 1 ? " relance" : " relances")}${n === 3 ? " (par défaut)" : ""}</option>`).join("")}
+        </select>
+      </label>
+      <p class="tiny muted" style="margin:.4rem 0 0">Quand la borne coupe la charge quelques secondes après son démarrage en croyant le véhicule débranché (fréquent avec un véhicule en veille), le serveur la relance avec le même véhicule, jusqu'à ce nombre de fois. Les tentatives sont regroupées en une seule charge dans l'historique, y compris quand la charge est relancée à la main dans les 2 minutes (même avec la relance désactivée).</p>
+    </div>
     <div class="card form-card" style="margin-top:.6rem; border-left:3px solid var(--warn)">
       <div class="spread">
         <div><b>Redémarrer le serveur</b><div class="tiny muted">Redémarre l'add-on via Home Assistant. Les bornes se déconnectent puis se reconnectent d'elles-mêmes, l'application se recharge automatiquement quand le serveur est de retour (environ 30 s à 1 min).</div></div>
@@ -2986,7 +2994,25 @@ async function openSettingsModal() {
 
   openModal(html);
 
-  if (adminOnly) { loadSettingsUsers(); loadAutoResetSetting(); }
+  if (adminOnly) { loadSettingsUsers(); loadAutoResetSetting(); loadStartRetrySetting(); }
+}
+
+async function loadStartRetrySetting() {
+  const sel = document.getElementById("set-start-retry");
+  if (!sel) return;
+  try {
+    const d = await fetch("api/settings/start-retry", { headers: authHeaders() }).then(r => r.json());
+    sel.value = String(d.max_retries);
+    sel.dataset.current = String(d.max_retries);
+    sel.disabled = false;
+  } catch (e) {}
+}
+async function saveStartRetry(value) {
+  const sel = document.getElementById("set-start-retry");
+  const n = parseInt(value, 10);
+  const { ok } = await apiCall("api/settings/start-retry", { method: "PUT", headers: jsonHeaders(), body: JSON.stringify({ max_retries: n }) },
+    n === 0 ? "Relance automatique désactivée" : `Relance automatique : ${n} au plus`);
+  if (sel) { if (ok) sel.dataset.current = String(n); else sel.value = sel.dataset.current || "3"; }
 }
 
 async function loadAutoResetSetting() {

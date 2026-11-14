@@ -2,7 +2,7 @@ import enum
 from datetime import datetime
 
 from sqlalchemy import (
-    Column, String, Integer, Float, Boolean, DateTime, ForeignKey, Enum, UniqueConstraint, Text
+    Column, String, Integer, Float, Boolean, DateTime, ForeignKey, Enum, UniqueConstraint, Text, Index
 )
 from sqlalchemy.orm import declarative_base, relationship
 
@@ -186,6 +186,14 @@ class Transaction(Base):
     # StopTransaction de la borne arrive (par exemple rejoué après un reset).
     close_reason = Column(String, nullable=True)
 
+    # Nombre de tentatives de démarrage regroupées dans cette charge. Vaut 1
+    # en temps normal. Quand la borne coupe une transaction quelques secondes
+    # après son démarrage (reason EVDisconnected, voir
+    # csms_local.ABORTED_START_MAX_S) et que la charge est relancée, la
+    # tentative avortée est fusionnée dans la suivante au lieu de rester une
+    # session à 0 Wh dans l'historique : ce compteur en garde la trace.
+    start_attempts = Column(Integer, default=1, nullable=True)
+
     is_external = Column(Boolean, default=False)
     location_label = Column(String, nullable=True)
 
@@ -223,6 +231,14 @@ class Transaction(Base):
 
 class MeterValue(Base):
     __tablename__ = "meter_values"
+    # Sans index, chaque MeterValues reçu (toutes les 30 s en charge) et
+    # chaque calcul de coût ou de statistiques parcourait toute la table
+    # (145 000 lignes en novembre 2026), dans la boucle du serveur. Créés sur
+    # une base existante par db._ensure_indexes().
+    __table_args__ = (
+        Index("ix_meter_values_txn", "transaction_id"),
+        Index("ix_meter_values_charger_conn_ts", "charger_id", "connector_id", "timestamp"),
+    )
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     charger_id = Column(String, ForeignKey("chargers.id"), nullable=False)
